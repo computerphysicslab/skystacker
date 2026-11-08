@@ -1,21 +1,21 @@
 # Build artifacts
 /skystacker
 /skystacker.exe
-*.exe
 *.test
-skystacker/v0/skystacker
-skystacker/skystacker
 
-# Output from runs
+# Run outputs
 skystacker_results/
 *.tmp
 
-# Editor / OS noise
+# Backups and intermediate files
+*.bak
+*.go.txt
+patch_*.py
+
+# Editors and OS
 .DS_Store
 *.swp
-*~
+*.swo
 .idea/
 .vscode/
-skystacker
-v0/skystacker
-**/skystacker
+*.code-workspace

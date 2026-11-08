@@ -10,7 +10,7 @@
 
 SkyStacker is an open-source command-line tool written in Go that discovers and stacks astronomical images (currently JPG/JPEG) into integrated outputs. It emphasizes numerical precision, bounded memory use, reproducibility, and a minimal user experience. Version 0.1 performs pixel-wise sum and arithmetic mean in the existing coordinate system (no automatic registration or calibration yet).
 
-**Current status:** Early MVP implementation available under `skystacker/v0/`. Suitable for testing with pre-aligned frames. Not a full replacement for mature suites.
+**Current status:** Implementation is in `main.go` at the repo root.. Suitable for testing with pre-aligned frames. Not a full replacement for mature suites.
 
 ## Why SkyStacker?
 
@@ -40,7 +40,6 @@ SkyStacker automates frame discovery, alignment, stacking, and an advanced post-
 
 ### Build
 ```bash
-cd skystacker/v0
 go build -o skystacker ./cmd/skystacker
 ```
 
@@ -111,7 +110,6 @@ Learn from and coexist with established tools:
 ## Building and Development
 
 ```bash
-cd skystacker/v0
 go test ./...
 go build -o skystacker ./cmd/skystacker
 ```
