@@ -40,7 +40,7 @@ import (
 	"time"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 // =========================================================================
 // CLI
@@ -56,6 +56,15 @@ type cliOptions struct {
 	Help      bool
 	SelfTest  bool
 	Register  bool
+	PostProcess   bool
+	StackOnly     bool
+	PostOnly      bool
+	NoColorCalib  bool
+	NoSharpen     bool
+	BGDegree      int
+	StretchFactor float64
+	SharpenAmount float64
+	SharpenRadius float64
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -71,6 +80,17 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Version, "version", false, "print version and exit")
 	fs.BoolVar(&o.SelfTest, "selftest", false, "run internal self-tests and exit")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
+	var noPostProcess bool
+	var stackOnly, postOnly bool
+	fs.BoolVar(&noPostProcess, "no-postprocess", false, "alias for --stack-only")
+	fs.BoolVar(&stackOnly, "stack-only", false, "run stacking only, skip post-processing")
+	fs.BoolVar(&postOnly, "post-only", false, "run post-processing only using existing TIFFs")
+	fs.BoolVar(&o.NoColorCalib, "no-color-calib", false, "skip color calibration step")
+	fs.BoolVar(&o.NoSharpen, "no-sharpen", false, "skip sharpening step")
+	fs.IntVar(&o.BGDegree, "bg-degree", 2, "background polynomial degree (1-3)")
+	fs.Float64Var(&o.StretchFactor, "stretch", 10.0, "asinh stretch factor")
+	fs.Float64Var(&o.SharpenAmount, "sharpen-amount", 0.8, "unsharp mask amount")
+	fs.Float64Var(&o.SharpenRadius, "sharpen-radius", 1.5, "unsharp mask radius in pixels")
 
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -80,6 +100,24 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, err
 	}
 	o.Register = !noRegister
+	o.PostProcess = !noPostProcess && !stackOnly
+	if stackOnly && postOnly {
+		return nil, fmt.Errorf("--stack-only and --post-only are mutually exclusive")
+	}
+	o.StackOnly = stackOnly
+	o.PostOnly = postOnly
+	if o.BGDegree < 1 || o.BGDegree > 3 {
+		return nil, fmt.Errorf("--bg-degree must be 1, 2 or 3, got %d", o.BGDegree)
+	}
+	if o.StretchFactor < 0 {
+		return nil, fmt.Errorf("--stretch must be >= 0, got %g", o.StretchFactor)
+	}
+	if o.SharpenAmount < 0 || o.SharpenAmount > 5 {
+		return nil, fmt.Errorf("--sharpen-amount must be in [0, 5], got %g", o.SharpenAmount)
+	}
+	if o.SharpenRadius <= 0 || o.SharpenRadius > 20 {
+		return nil, fmt.Errorf("--sharpen-radius must be in (0, 20], got %g", o.SharpenRadius)
+	}
 	rest := fs.Args()
 	if len(rest) > 1 {
 		return nil, fmt.Errorf("unexpected arguments: %v", rest[1:])
@@ -110,6 +148,15 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --recursive       search subdirectories")
 	fmt.Fprintln(w, "  --overwrite       permit replacing files in the output directory")
 	fmt.Fprintln(w, "  --no-register     disable star registration (v0.2 behaviour)")
+	fmt.Fprintln(w, "  --stack-only      run stacking only, skip post-processing")
+	fmt.Fprintln(w, "  --post-only       run post-processing only using existing TIFFs")
+	fmt.Fprintln(w, "  --no-postprocess  alias for --stack-only")
+	fmt.Fprintln(w, "  --no-color-calib  skip color calibration step")
+	fmt.Fprintln(w, "  --no-sharpen      skip sharpening step")
+	fmt.Fprintln(w, "  --bg-degree N     background polynomial degree (1-3, default 2)")
+	fmt.Fprintln(w, "  --stretch F       asinh stretch factor (default 10)")
+	fmt.Fprintln(w, "  --sharpen-amount F  unsharp mask amount (default 0.8)")
+	fmt.Fprintln(w, "  --sharpen-radius F  unsharp mask radius (default 1.5)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -1421,6 +1468,12 @@ type processingReport struct {
 	RegistrationFails []string
 	CropRect          image.Rectangle
 	SumNormalization  float32
+	PostProcessApplied bool
+	BGDegree           int
+	StretchFactor      float64
+	SharpenApplied     bool
+	SharpenAmount      float64
+	SharpenRadius      float64
 	OutputFiles       []string
 	Workers           int
 	Duration          time.Duration
@@ -1473,7 +1526,17 @@ func (r *processingReport) writeTo(w io.Writer) error {
 	}
 	ew.printf("\n")
 
-	ew.printf("Sum TIFF normalisation: %g\n\n", r.SumNormalization)
+	ew.printf("Sum TIFF normalisation: %g\n", r.SumNormalization)
+	if r.PostProcessApplied {
+		ew.printf("Post-processing:    ON\n")
+		ew.printf("  Background removal: polynomial degree %d\n", r.BGDegree)
+		ew.printf("  Contrast stretch:   asinh f=%g\n", r.StretchFactor)
+		ew.printf("  Sharpening:         %v (amount=%g, radius=%g)\n",
+			r.SharpenApplied, r.SharpenAmount, r.SharpenRadius)
+	} else {
+		ew.printf("Post-processing:    OFF\n")
+	}
+	ew.printf("\n")
 
 	ew.printf("Output files:\n")
 	for _, f := range r.OutputFiles {
@@ -1544,6 +1607,15 @@ type runOptions struct {
 	Recursive bool
 	Overwrite bool
 	Register  bool
+	PostProcess   bool
+	StackOnly     bool
+	PostOnly      bool
+	NoColorCalib  bool
+	NoSharpen     bool
+	BGDegree      int
+	StretchFactor float64
+	SharpenAmount float64
+	SharpenRadius float64
 }
 
 func logf(format string, args ...any) {
@@ -1582,6 +1654,23 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if filepath.Clean(outputDir) == filepath.Clean(inputDir) {
 		return fmt.Errorf("output directory must differ from input directory")
 	}
+	if opts.PostOnly {
+		if _, err := os.Stat(outputDir); err != nil {
+			return fmt.Errorf("--post-only: output directory does not exist: %w", err)
+		}
+		meanPath := filepath.Join(outputDir, "stacked_mean.tiff")
+		if _, err := os.Stat(meanPath); err != nil {
+			return fmt.Errorf("--post-only: %s not found: %w", meanPath, err)
+		}
+		logf("Post-only mode: reading %s", meanPath)
+		postOutputs, err := runPostProcessing(outputDir, opts)
+		if err != nil {
+			return fmt.Errorf("post-processing: %w", err)
+		}
+		logf("Post-processing complete: %d files", len(postOutputs))
+		return nil
+	}
+
 	if info, err := os.Stat(outputDir); err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("output path exists and is not a directory: %s", outputDir)
@@ -1902,6 +1991,22 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("write no_correction_mean jpg: %w", err)
 	}
 
+	// Post-processing pipeline
+	var postOutputs []string
+	if opts.PostProcess && !opts.StackOnly {
+		logf("Post-processing pipeline: bg-degree=%d stretch=%g colorCalib=%v sharpen=%v",
+			opts.BGDegree, opts.StretchFactor, !opts.NoColorCalib, !opts.NoSharpen)
+		outs, err := runPostProcessing(outputDir, opts)
+		if err != nil {
+			logf("WARNING: post-processing failed: %v", err)
+		} else {
+			postOutputs = outs
+			logf("Post-processing complete: %d files", len(outs))
+		}
+	} else if opts.StackOnly {
+		logf("Skipping post-processing (--stack-only)")
+	}
+
 	// Report
 	notes := []string{
 		"No calibration (dark, flat, bias) was performed.",
@@ -1951,16 +2056,21 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		RegistrationFails: regFailures,
 		CropRect:          cropRect,
 		SumNormalization:  sumMax,
-		OutputFiles: []string{
+		OutputFiles: append([]string{
 			sumTiff, sumJPG,
 			meanTiff, meanJPG,
 			noCorrTiff, noCorrJPG,
 			previewJPG,
-			reportTxt,
-		},
+		}, append(postOutputs, reportTxt)...),
 		Workers:  workers,
 		Duration: time.Since(start),
-		Notes:    notes,
+		PostProcessApplied: opts.PostProcess && !opts.StackOnly,
+		BGDegree:           opts.BGDegree,
+		StretchFactor:      opts.StretchFactor,
+		SharpenApplied:     opts.PostProcess && !opts.StackOnly && !opts.NoSharpen,
+		SharpenAmount:      opts.SharpenAmount,
+		SharpenRadius:      opts.SharpenRadius,
+		Notes:              notes,
 	}
 	if err := writeFileAtomic(reportTxt, func(w io.Writer) error {
 		return rep.writeTo(w)
@@ -2017,6 +2127,13 @@ func runSelfTests() int {
 		{"bilinear sampling", testBilinearSample},
 		{"resample identity", testResampleIdentity},
 		{"safe crop", testSafeCrop},
+		{"postprocess polynomial basis", testPolyBasis},
+		{"postprocess linear solve", testSolveLinear},
+		{"postprocess background removal", testBackgroundRemoval},
+		{"postprocess contrast stretch", testContrastStretch},
+		{"postprocess color calibration", testColorCalibration},
+		{"postprocess gaussian blur", testGaussianBlur},
+		{"postprocess unsharp mask", testUnsharpMask},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -2476,6 +2593,782 @@ func testSafeCrop() error {
 }
 
 // =========================================================================
+// POST-PROCESSING PIPELINE (v0.4.0)
+// =========================================================================
+//
+// Reads stacked_mean.tiff and produces:
+//   post_step1_background_removed.jpg
+//   post_step2_contrast_stretched.jpg
+//   post_step3_color_calibrated.jpg
+//   post_step4_sharpened.jpg
+//   stacked_processed.tiff
+//
+// Each step is independent and reversible in isolation — you can inspect
+// the intermediate JPEGs to see exactly what each stage contributes.
+
+// --- Polynomial helpers (used by background removal) ---
+
+func nCoeff(degree int) int { return (degree + 1) * (degree + 2) / 2 }
+
+// polyBasis returns the monomial basis vector for a 2D polynomial of the
+// given degree. Ordering: 1, x, y, x², xy, y², x³, x²y, xy², y³.
+func polyBasis(x, y float64, degree int) []float64 {
+	switch degree {
+	case 1:
+		return []float64{1, x, y}
+	case 2:
+		return []float64{1, x, y, x * x, x * y, y * y}
+	case 3:
+		return []float64{1, x, y, x * x, x * y, y * y, x * x * x, x * x * y, x * y * y, y * y * y}
+	}
+	return []float64{1}
+}
+
+func evalPoly(coeffs []float64, x, y float64, degree int) float64 {
+	b := polyBasis(x, y, degree)
+	var sum float64
+	for i := range b {
+		if i < len(coeffs) {
+			sum += coeffs[i] * b[i]
+		}
+	}
+	return sum
+}
+
+// solveLinear solves A·x = b for x via Gauss-Jordan with partial pivoting.
+// Returns zeros if the matrix is singular.
+func solveLinear(A [][]float64, b []float64, n int) []float64 {
+	M := make([][]float64, n)
+	for i := 0; i < n; i++ {
+		M[i] = make([]float64, n+1)
+		copy(M[i], A[i])
+		M[i][n] = b[i]
+	}
+	for col := 0; col < n; col++ {
+		pivot := col
+		for row := col + 1; row < n; row++ {
+			if math.Abs(M[row][col]) > math.Abs(M[pivot][col]) {
+				pivot = row
+			}
+		}
+		if math.Abs(M[pivot][col]) < 1e-12 {
+			return make([]float64, n)
+		}
+		M[col], M[pivot] = M[pivot], M[col]
+		pv := M[col][col]
+		for j := col; j <= n; j++ {
+			M[col][j] /= pv
+		}
+		for row := 0; row < n; row++ {
+			if row == col {
+				continue
+			}
+			f := M[row][col]
+			if f == 0 {
+				continue
+			}
+			for j := col; j <= n; j++ {
+				M[row][j] -= f * M[col][j]
+			}
+		}
+	}
+	x := make([]float64, n)
+	for i := 0; i < n; i++ {
+		x[i] = M[i][n]
+	}
+	return x
+}
+
+func percentile(sorted []float32, pct float64) float32 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := int(pct * float64(len(sorted)-1) / 100)
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
+}
+
+// --- Step 1: background gradient removal ---
+
+type bgSample struct {
+	x, y float64    // normalised [-1, 1]
+	v    [3]float64 // per-channel background estimate
+}
+
+func removeBackground(f *frame, degree int) *frame {
+	if degree < 1 || degree > 3 {
+		degree = 2
+	}
+	blockSize := 32
+	if f.Width/8 < blockSize {
+		blockSize = f.Width / 8
+	}
+	if f.Height/8 < blockSize {
+		blockSize = f.Height / 8
+	}
+	if blockSize < 8 {
+		blockSize = 8
+	}
+	nbx := (f.Width + blockSize - 1) / blockSize
+	nby := (f.Height + blockSize - 1) / blockSize
+
+	var samples []bgSample
+	const subsample = 4
+	for by := 0; by < nby; by++ {
+		for bx := 0; bx < nbx; bx++ {
+			x0 := bx * blockSize
+			y0 := by * blockSize
+			x1 := x0 + blockSize
+			y1 := y0 + blockSize
+			if x1 > f.Width {
+				x1 = f.Width
+			}
+			if y1 > f.Height {
+				y1 = f.Height
+			}
+			var rV, gV, bV []float32
+			for y := y0; y < y1; y += subsample {
+				for x := x0; x < x1; x += subsample {
+					i := (y*f.Width + x) * 3
+					rV = append(rV, f.Pix[i])
+					gV = append(gV, f.Pix[i+1])
+					bV = append(bV, f.Pix[i+2])
+				}
+			}
+			if len(rV) < 8 {
+				continue
+			}
+			sort.Slice(rV, func(i, j int) bool { return rV[i] < rV[j] })
+			sort.Slice(gV, func(i, j int) bool { return gV[i] < gV[j] })
+			sort.Slice(bV, func(i, j int) bool { return bV[i] < bV[j] })
+			cx := float64(x0+x1) / 2.0 / float64(f.Width) * 2.0 - 1.0
+			cy := float64(y0+y1) / 2.0 / float64(f.Height) * 2.0 - 1.0
+			samples = append(samples, bgSample{
+				x: cx,
+				y: cy,
+				v: [3]float64{
+					float64(percentile(rV, 20)),
+					float64(percentile(gV, 20)),
+					float64(percentile(bV, 20)),
+				},
+			})
+		}
+	}
+	if len(samples) < nCoeff(degree)*2 {
+		return f // not enough blocks — skip step
+	}
+
+	// Robust polynomial fit per channel
+	coeffs := make([][]float64, 3)
+	for c := 0; c < 3; c++ {
+		active := make([]bool, len(samples))
+		for i := range active {
+			active[i] = true
+		}
+		n := nCoeff(degree)
+		const iters = 3
+		for iter := 0; iter < iters; iter++ {
+			A := make([][]float64, n)
+			for i := range A {
+				A[i] = make([]float64, n)
+			}
+			b := make([]float64, n)
+			count := 0
+			for i := range samples {
+				if !active[i] {
+					continue
+				}
+				basis := polyBasis(samples[i].x, samples[i].y, degree)
+				for j := 0; j < n; j++ {
+					for k := 0; k < n; k++ {
+						A[j][k] += basis[j] * basis[k]
+					}
+					b[j] += basis[j] * samples[i].v[c]
+				}
+				count++
+			}
+			if count < n {
+				coeffs[c] = make([]float64, n)
+				break
+			}
+			coeffs[c] = solveLinear(A, b, n)
+			if iter < iters-1 {
+				var residuals []float64
+				for i := range samples {
+					if !active[i] {
+						continue
+					}
+					pred := evalPoly(coeffs[c], samples[i].x, samples[i].y, degree)
+					residuals = append(residuals, samples[i].v[c]-pred)
+				}
+				var mean, sq float64
+				for _, r := range residuals {
+					mean += r
+				}
+				mean /= float64(len(residuals))
+				for _, r := range residuals {
+					sq += (r - mean) * (r - mean)
+				}
+				sigma := math.Sqrt(sq / float64(len(residuals)))
+				if sigma < 1e-9 {
+					sigma = 1e-9
+				}
+				// Reject samples that are significantly BRIGHTER than the
+				// fit (those are nebulae/stars, not background).
+				kept := 0
+				for i := range samples {
+					if !active[i] {
+						continue
+					}
+					pred := evalPoly(coeffs[c], samples[i].x, samples[i].y, degree)
+					if samples[i].v[c]-pred > 2.0*sigma {
+						active[i] = false
+					} else {
+						kept++
+					}
+				}
+				if kept < n {
+					break
+				}
+			}
+		}
+	}
+
+	// Apply: subtract the fitted surface
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	invW := 2.0 / float64(f.Width-1)
+	invH := 2.0 / float64(f.Height-1)
+	for y := 0; y < f.Height; y++ {
+		ny := float64(y)*invH - 1.0
+		for x := 0; x < f.Width; x++ {
+			nx := float64(x)*invW - 1.0
+			i := (y*f.Width + x) * 3
+			for c := 0; c < 3; c++ {
+				bg := evalPoly(coeffs[c], nx, ny, degree)
+				result.Pix[i+c] = f.Pix[i+c] - float32(bg)
+			}
+		}
+	}
+	return result
+}
+
+// --- Step 2: contrast stretch (asinh) ---
+
+func stretchContrast(f *frame, stretch float64) *frame {
+	if stretch <= 0 {
+		stretch = 10
+	}
+	// Sample luminance for percentile computation
+	var lums []float32
+	const step = 4
+	for y := 0; y < f.Height; y += step {
+		for x := 0; x < f.Width; x += step {
+			i := (y*f.Width + x) * 3
+			lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
+		}
+	}
+	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+	pBlack := float64(percentile(lums, 0.5))
+	pWhite := float64(percentile(lums, 99.5))
+	if pWhite <= pBlack {
+		pWhite = pBlack + 1e-4
+	}
+	invRange := 1.0 / (pWhite - pBlack)
+	asinhF := math.Asinh(stretch)
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for i := range f.Pix {
+		v := (float64(f.Pix[i]) - pBlack) * invRange
+		if v < 0 {
+			v = 0
+		} else if v > 1 {
+			v = 1
+		}
+		out := math.Asinh(stretch*v) / asinhF
+		result.Pix[i] = float32(out)
+	}
+	return result
+}
+
+// --- Step 3: color calibration / background neutralisation ---
+
+func calibrateColor(f *frame) *frame {
+	// Find darkest 20% by luminance
+	var lums []float32
+	const step = 4
+	for y := 0; y < f.Height; y += step {
+		for x := 0; x < f.Width; x += step {
+			i := (y*f.Width + x) * 3
+			lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
+		}
+	}
+	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+	thresh := percentile(lums, 20)
+
+	var sumR, sumG, sumB float64
+	var n int
+	for i := 0; i < len(f.Pix); i += 3 {
+		l := 0.299*f.Pix[i] + 0.587*f.Pix[i+1] + 0.114*f.Pix[i+2]
+		if l <= thresh {
+			sumR += float64(f.Pix[i])
+			sumG += float64(f.Pix[i+1])
+			sumB += float64(f.Pix[i+2])
+			n++
+		}
+	}
+	if n == 0 {
+		return f
+	}
+	meanR := sumR / float64(n)
+	meanG := sumG / float64(n)
+	meanB := sumB / float64(n)
+	const eps = 1e-4
+	if meanR < eps {
+		meanR = eps
+	}
+	if meanG < eps {
+		meanG = eps
+	}
+	if meanB < eps {
+		meanB = eps
+	}
+	target := (meanR + meanG + meanB) / 3.0
+	scaleR := clampFloat(target/meanR, 0.5, 2.0)
+	scaleG := clampFloat(target/meanG, 0.5, 2.0)
+	scaleB := clampFloat(target/meanB, 0.5, 2.0)
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for i := 0; i < len(f.Pix); i += 3 {
+		r := float64(f.Pix[i]) * scaleR
+		g := float64(f.Pix[i+1]) * scaleG
+		b := float64(f.Pix[i+2]) * scaleB
+		if r > 1 {
+			r = 1
+		}
+		if g > 1 {
+			g = 1
+		}
+		if b > 1 {
+			b = 1
+		}
+		if r < 0 {
+			r = 0
+		}
+		if g < 0 {
+			g = 0
+		}
+		if b < 0 {
+			b = 0
+		}
+		result.Pix[i] = float32(r)
+		result.Pix[i+1] = float32(g)
+		result.Pix[i+2] = float32(b)
+	}
+	return result
+}
+
+func clampFloat(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// --- Step 4: unsharp mask ---
+
+func gaussianBlur(f *frame, sigma float64) *frame {
+	if sigma <= 0 {
+		sigma = 1.5
+	}
+	radius := int(math.Ceil(sigma * 3))
+	if radius < 1 {
+		radius = 1
+	}
+	kernelSize := radius*2 + 1
+	kernel := make([]float32, kernelSize)
+	var sum float32
+	for i := 0; i < kernelSize; i++ {
+		off := float64(i - radius)
+		kernel[i] = float32(math.Exp(-off * off / (2 * sigma * sigma)))
+		sum += kernel[i]
+	}
+	for i := range kernel {
+		kernel[i] /= sum
+	}
+	// Horizontal pass
+	tmp := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for y := 0; y < f.Height; y++ {
+		for x := 0; x < f.Width; x++ {
+			for c := 0; c < 3; c++ {
+				var acc float32
+				for k := 0; k < kernelSize; k++ {
+					sx := x + k - radius
+					if sx < 0 {
+						sx = 0
+					} else if sx >= f.Width {
+						sx = f.Width - 1
+					}
+					acc += kernel[k] * f.Pix[(y*f.Width+sx)*3+c]
+				}
+				tmp.Pix[(y*f.Width+x)*3+c] = acc
+			}
+		}
+	}
+	// Vertical pass
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for y := 0; y < f.Height; y++ {
+		for x := 0; x < f.Width; x++ {
+			for c := 0; c < 3; c++ {
+				var acc float32
+				for k := 0; k < kernelSize; k++ {
+					sy := y + k - radius
+					if sy < 0 {
+						sy = 0
+					} else if sy >= f.Height {
+						sy = f.Height - 1
+					}
+					acc += kernel[k] * tmp.Pix[(sy*f.Width+x)*3+c]
+				}
+				result.Pix[(y*f.Width+x)*3+c] = acc
+			}
+		}
+	}
+	return result
+}
+
+func unsharpMask(f *frame, amount, radius float64) *frame {
+	blurred := gaussianBlur(f, radius)
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	amt := float32(amount)
+	for i := range f.Pix {
+		o := f.Pix[i]
+		b := blurred.Pix[i]
+		v := o + amt*(o-b)
+		if v < 0 {
+			v = 0
+		} else if v > 1 {
+			v = 1
+		}
+		result.Pix[i] = v
+	}
+	return result
+}
+
+// --- Pipeline driver ---
+
+func writePostPreview(dir, name string, f *frame) error {
+	return writeFileAtomic(filepath.Join(dir, name), func(w io.Writer) error {
+		return writeAutoNormalizedPreviewJPEG(w, f.Width, f.Height, f.Pix)
+	})
+}
+
+func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
+	meanPath := filepath.Join(outputDir, "stacked_mean.tiff")
+	fh, err := os.Open(meanPath)
+	if err != nil {
+		return nil, fmt.Errorf("post-process: open mean tiff: %w", err)
+	}
+	w, h, pix, err := readFloat32RGB(fh)
+	fh.Close()
+	if err != nil {
+		return nil, fmt.Errorf("post-process: read mean tiff: %w", err)
+	}
+	src := &frame{Width: w, Height: h, Pix: pix}
+
+	var outputs []string
+
+	// Step 1: background removal
+	logf("  post step 1: background removal (degree %d)", opts.BGDegree)
+	s1 := removeBackground(src, opts.BGDegree)
+	p1 := filepath.Join(outputDir, "post_step1_background_removed.jpg")
+	if err := writePostPreview(outputDir, "post_step1_background_removed.jpg", s1); err != nil {
+		logf("  WARNING: step1 preview: %v", err)
+	}
+	outputs = append(outputs, p1)
+
+	// Step 2: contrast stretch
+	logf("  post step 2: contrast stretch (asinh f=%g)", opts.StretchFactor)
+	s2 := stretchContrast(s1, opts.StretchFactor)
+	p2 := filepath.Join(outputDir, "post_step2_contrast_stretched.jpg")
+	if err := writePostPreview(outputDir, "post_step2_contrast_stretched.jpg", s2); err != nil {
+		logf("  WARNING: step2 preview: %v", err)
+	}
+	outputs = append(outputs, p2)
+
+	// Step 3: color calibration
+	var s3 *frame
+	if opts.NoColorCalib {
+		logf("  post step 3: skipped (--no-color-calib)")
+		s3 = s2
+	} else {
+		logf("  post step 3: color calibration")
+		s3 = calibrateColor(s2)
+	}
+	p3 := filepath.Join(outputDir, "post_step3_color_calibrated.jpg")
+	if err := writePostPreview(outputDir, "post_step3_color_calibrated.jpg", s3); err != nil {
+		logf("  WARNING: step3 preview: %v", err)
+	}
+	outputs = append(outputs, p3)
+
+	// Step 4: sharpening
+	var s4 *frame
+	if opts.NoSharpen {
+		logf("  post step 4: skipped (--no-sharpen)")
+		s4 = s3
+	} else {
+		logf("  post step 4: unsharp mask (amount=%g radius=%g)", opts.SharpenAmount, opts.SharpenRadius)
+		s4 = unsharpMask(s3, opts.SharpenAmount, opts.SharpenRadius)
+	}
+	p4 := filepath.Join(outputDir, "post_step4_sharpened.jpg")
+	if err := writePostPreview(outputDir, "post_step4_sharpened.jpg", s4); err != nil {
+		logf("  WARNING: step4 preview: %v", err)
+	}
+	outputs = append(outputs, p4)
+
+	// Final TIFF
+	tiffPath := filepath.Join(outputDir, "stacked_processed.tiff")
+	if err := writeFileAtomic(tiffPath, func(w io.Writer) error {
+		return writeFloat32RGB(w, s4.Width, s4.Height, s4.Pix)
+	}); err != nil {
+		return outputs, fmt.Errorf("post-process: write final tiff: %w", err)
+	}
+	outputs = append(outputs, tiffPath)
+
+	return outputs, nil
+}
+
+// =========================================================================
+// POST-PROCESSING SELF-TESTS
+// =========================================================================
+
+func testPolyBasis() error {
+	b := polyBasis(2, 3, 2)
+	want := []float64{1, 2, 3, 4, 6, 9}
+	if len(b) != len(want) {
+		return fmt.Errorf("len=%d want %d", len(b), len(want))
+	}
+	for i := range want {
+		if math.Abs(b[i]-want[i]) > 1e-9 {
+			return fmt.Errorf("b[%d]=%v want %v", i, b[i], want[i])
+		}
+	}
+	b3 := polyBasis(2, 3, 3)
+	if len(b3) != 10 {
+		return fmt.Errorf("degree 3 len=%d want 10", len(b3))
+	}
+	if nCoeff(1) != 3 || nCoeff(2) != 6 || nCoeff(3) != 10 {
+		return fmt.Errorf("nCoeff wrong")
+	}
+	return nil
+}
+
+func testSolveLinear() error {
+	// 2×2 system: 2x + y = 5; x + 3y = 10  → x=1, y=3
+	A := [][]float64{{2, 1}, {1, 3}}
+	b := []float64{5, 10}
+	x := solveLinear(A, b, 2)
+	if math.Abs(x[0]-1) > 1e-9 || math.Abs(x[1]-3) > 1e-9 {
+		return fmt.Errorf("got %v, want [1 3]", x)
+	}
+	return nil
+}
+
+func testBackgroundRemoval() error {
+	const w, h = 128, 128
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	// Linear gradient background: 0.10 → 0.60
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			bg := float32(0.10 + 0.30*float64(x)/float64(w) + 0.20*float64(y)/float64(h))
+			i := (y*w + x) * 3
+			f.Pix[i] = bg
+			f.Pix[i+1] = bg
+			f.Pix[i+2] = bg
+		}
+	}
+	// A few synthetic stars
+	stars := []point2D{{20, 20}, {100, 30}, {60, 90}, {30, 100}, {110, 110}}
+	for _, s := range stars {
+		for dy := -2; dy <= 2; dy++ {
+			for dx := -2; dx <= 2; dx++ {
+				x, y := int(s.X)+dx, int(s.Y)+dy
+				if x < 0 || y < 0 || x >= w || y >= h {
+					continue
+				}
+				d2 := float64(dx*dx + dy*dy)
+				v := float32(0.5 * math.Exp(-d2))
+				i := (y*w + x) * 3
+				f.Pix[i] += v
+				f.Pix[i+1] += v
+				f.Pix[i+2] += v
+			}
+		}
+	}
+	result := removeBackground(f, 2)
+	// Residuals should be small away from stars
+	var sumRes float64
+	var nRes int
+	for y := 8; y < h-8; y += 8 {
+		for x := 8; x < w-8; x += 8 {
+			nearStar := false
+			for _, s := range stars {
+				if math.Hypot(float64(x)-s.X, float64(y)-s.Y) < 5 {
+					nearStar = true
+					break
+				}
+			}
+			if nearStar {
+				continue
+			}
+			i := (y*w + x) * 3
+			sumRes += math.Abs(float64(result.Pix[i]))
+			nRes++
+		}
+	}
+	if nRes == 0 {
+		return errors.New("no residual samples")
+	}
+	avg := sumRes / float64(nRes)
+	if avg > 0.02 {
+		return fmt.Errorf("avg residual %.4f too high (want < 0.02)", avg)
+	}
+	return nil
+}
+
+func testContrastStretch() error {
+	const w, h = 100, 100
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w*h; i++ {
+		var v float32
+		switch {
+		case i%100 == 0:
+			v = 0.5
+		case i%10 == 0:
+			v = 0.2
+		default:
+			v = 0.1
+		}
+		f.Pix[i*3] = v
+		f.Pix[i*3+1] = v
+		f.Pix[i*3+2] = v
+	}
+	result := stretchContrast(f, 10)
+	var bgSum, midSum, brSum float32
+	var nBg, nMid, nBr int
+	for i := 0; i < w*h; i++ {
+		switch {
+		case i%100 == 0:
+			brSum += result.Pix[i*3]
+			nBr++
+		case i%10 == 0:
+			midSum += result.Pix[i*3]
+			nMid++
+		default:
+			bgSum += result.Pix[i*3]
+			nBg++
+		}
+	}
+	bg := bgSum / float32(nBg)
+	mid := midSum / float32(nMid)
+	br := brSum / float32(nBr)
+	if mid < 0.3 {
+		return fmt.Errorf("mid not lifted: %v (want > 0.3)", mid)
+	}
+	if br < 0.85 {
+		return fmt.Errorf("bright not stretched: %v (want > 0.85)", br)
+	}
+	if bg > 0.1 {
+		return fmt.Errorf("background leaked: %v (want < 0.1)", bg)
+	}
+	return nil
+}
+
+func testColorCalibration() error {
+	const w, h = 32, 32
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w*h; i++ {
+		// Red cast: R mean 0.2, G mean 0.1, B mean 0.1
+		f.Pix[i*3] = 0.2
+		f.Pix[i*3+1] = 0.1
+		f.Pix[i*3+2] = 0.1
+	}
+	result := calibrateColor(f)
+	// Compute means after
+	var sr, sg, sb float64
+	for i := 0; i < len(result.Pix); i += 3 {
+		sr += float64(result.Pix[i])
+		sg += float64(result.Pix[i+1])
+		sb += float64(result.Pix[i+2])
+	}
+	n := float64(len(result.Pix) / 3)
+	mr, mg, mb := sr/n, sg/n, sb/n
+	// After calibration, the three channel means should be closer together
+	maxDiff := math.Max(math.Abs(mr-mg), math.Max(math.Abs(mg-mb), math.Abs(mr-mb)))
+	if maxDiff > 0.02 {
+		return fmt.Errorf("channels not neutralised: means %.3f %.3f %.3f", mr, mg, mb)
+	}
+	return nil
+}
+
+func testGaussianBlur() error {
+	const w, h = 9, 9
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	f.Pix[(4*w+4)*3] = 1.0 // single bright pixel
+	result := gaussianBlur(f, 1.5)
+	// Neighbours should be positive, sum should be ~1
+	var total float32
+	for i := 0; i < len(result.Pix); i += 3 {
+		total += result.Pix[i]
+	}
+	if math.Abs(float64(total-1)) > 0.01 {
+		return fmt.Errorf("total energy %.4f want ~1", total)
+	}
+	neighbour := result.Pix[(4*w+5)*3]
+	if neighbour <= 0 {
+		return errors.New("neighbour not blurred")
+	}
+	if neighbour >= 0.5 {
+		return fmt.Errorf("neighbour too bright: %v", neighbour)
+	}
+	return nil
+}
+
+func testUnsharpMask() error {
+	const w, h = 16, 1
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	// Step edge at x=8
+	for x := 0; x < w; x++ {
+		v := float32(0.2)
+		if x >= 8 {
+			v = 0.6
+		}
+		f.Pix[x*3] = v
+		f.Pix[x*3+1] = v
+		f.Pix[x*3+2] = v
+	}
+	result := unsharpMask(f, 0.8, 1.5)
+	// Edge contrast should be enhanced: value just after edge higher, value just before lower
+	beforeEdge := result.Pix[7*3]
+	afterEdge := result.Pix[8*3]
+	if afterEdge-beforeEdge < 0.4 {
+		return fmt.Errorf("edge contrast not enhanced: before=%v after=%v", beforeEdge, afterEdge)
+	}
+	// Values should be clipped to [0, 1]
+	for i, v := range result.Pix {
+		if v < 0 || v > 1.0001 {
+			return fmt.Errorf("out-of-range value at %d: %v", i, v)
+		}
+	}
+	return nil
+}
+
+// =========================================================================
 // main
 // =========================================================================
 
@@ -2501,12 +3394,21 @@ func main() {
 		return
 	}
 	err = runPipeline(context.Background(), runOptions{
-		InputDir:  opts.InputDir,
-		OutputDir: opts.OutputDir,
-		Workers:   opts.Workers,
-		Recursive: opts.Recursive,
-		Overwrite: opts.Overwrite,
-		Register:  opts.Register,
+		InputDir:      opts.InputDir,
+		OutputDir:     opts.OutputDir,
+		Workers:       opts.Workers,
+		Recursive:     opts.Recursive,
+		Overwrite:     opts.Overwrite,
+		Register:      opts.Register,
+		PostProcess:   opts.PostProcess,
+		StackOnly:     opts.StackOnly,
+		PostOnly:      opts.PostOnly,
+		NoColorCalib:  opts.NoColorCalib,
+		NoSharpen:     opts.NoSharpen,
+		BGDegree:      opts.BGDegree,
+		StretchFactor: opts.StretchFactor,
+		SharpenAmount: opts.SharpenAmount,
+		SharpenRadius: opts.SharpenRadius,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
