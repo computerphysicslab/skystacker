@@ -118,6 +118,65 @@ go build -o skystacker ./cmd/skystacker
 
 Module path: `github.com/skystacker/skystacker` (adjust if needed for your fork).
 
+---
+
+## 🚀 Usage & Command Line Interface (CLI)
+
+SkyStacker is designed as a lightweight, fast command-line tool. You can execute it directly by pointing it to your directory of raw frames.
+
+### Basic Syntax
+
+```bash
+skystacker [flags]
+
+```
+
+### Available CLI Flags
+
+| Flag | Shorthand | Description | Default |
+| --- | --- | --- | --- |
+| `--input` | `-i` | Path to the directory containing raw frames (RAW/TIFF) | `./input` |
+| `--output` | `-o` | Path and filename for the final stacked output (TIFF) | `./output/stacked.tiff` |
+| `--method` | `-m` | Stacking algorithm (`mean`, `median`, `clipped-mean`) | `mean` |
+| `--postprocess` | `-p` | Enable/disable the advanced post-processing pipeline | `true` |
+| `--bg-removal` | `-b` | Enable background gradient/light pollution removal | `true` |
+| `--sharpen` | `-s` | Apply final unsharp masking / sharpening filter | `true` |
+| `--export-steps` | `-e` | Export intermediate JPEG snapshots after each processing stage | `true` |
+| `--help` | `-h` | Display help and usage information | `false` |
+
+---
+
+### Examples of Usage
+
+#### 1. Standard Run with Full Post-Processing Pipeline
+
+To stack all frames using the default mean algorithm and automatically execute the post-processing pipeline (generating intermediate JPEGs and the final cleaned image):
+
+```bash
+skystacker --input ./data/raw_frames --output ./output/final_result.tiff
+
+```
+
+#### 2. Fast Stacking without Post-Processing
+
+If you only want the raw stacked image without applying gradient correction or contrast stretching:
+
+```bash
+skystacker --input ./data/raw_frames --output ./output/raw_stack.tiff --postprocess=false
+
+```
+
+#### 3. Using Median Stacking for Noise Reduction
+
+To reduce cosmic rays or satellite trails using the median stacking operator before running the enhancement steps:
+
+```bash
+skystacker --input ./data/raw_frames --output ./output/median_stack.tiff --method median
+
+```
+
+---
+
 ## Design Principles
 
 1. Correctness before speed.
@@ -128,6 +187,79 @@ Module path: `github.com/skystacker/skystacker` (adjust if needed for your fork)
 6. Measured optimisation.
 
 See `TECHNICAL_SPEC.md` for the full design document.
+
+---
+
+### ⚙️ Architecture & Processing Pipeline
+
+SkyStacker follows a modular, high-performance processing pipeline designed in Go. The architecture separates frame discovery, alignment, accumulation, and advanced post-processing into discrete, testable stages.
+
+#### Pipeline Flow Diagram
+
+```text
+[ Raw Image Set (RAW/TIFF) ]
+           │
+           ▼
+  ┌──────────────────┐
+  │  Frame Discovery │ ──> Scans directory, detects valid frames & metadata
+  └──────────────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │ Alignment & Mesh │ ──> Detects stars, calculates offsets & geometric alignment
+  └──────────────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │   Accumulation   │ ──> Merges frames via Mean/Median stacking algorithms
+  └──────────────────┘
+           │
+           ▼ (Outputs high-dynamic-range intermediate stack)
+  ┌────────────────────────────────────────────────────────┐
+  │              Post-Processing Pipeline                  │
+  │  ┌──────────────────────────────────────────────────┐  │
+  │  │ 1. Background Gradient Removal (Light Pollution) │  │
+  │  ├──────────────────────────────────────────────────┤  │
+  │  │ 2. Histogram Stretch & Contrast Optimization     │  │
+  │  ├──────────────────────────────────────────────────┤  │
+  │  │ 3. Color Calibration & Background Neutralization │  │
+  │  ├──────────────────────────────────────────────────┤  │
+  │  │ 4. Sharpness Filter (Unsharp Masking / Details)  │  │
+  │  └──────────────────────────────────────────────────┘  │
+  └────────────────────────────────────────────────────────┘
+           │
+           ├───────────────────────────────┬───────────────────────────────┐
+           ▼                               ▼                               ▼
+ [ `post_step1_...jpg` ]       [ `post_step2_...jpg` ]       [ Final Processed TIFF & JPEG ]
+
+```
+
+#### Stage Breakdown
+
+1. **Discovery (`internal/discovery`)**:
+* Automatically inspects the target directory, validates input file headers, and filters usable astrophotography frames.
+
+
+2. **Alignment (`internal/discovery` / `internal/imaging`)**:
+* Detects stellar centroids and computes spatial transformation matrices to correct telescope drift between exposures.
+
+
+3. **Accumulation (`internal/stack`)**:
+* Combines aligned frames using robust statistical operators (such as clipped mean or median) to maximize signal-to-noise ratio (SNR) while rejecting cosmic rays or satellite trails.
+
+
+4. **Post-Processing Pipeline**:
+* **Background Subtraction:** Fits and subtracts smooth background gradients caused by light pollution or atmospheric scattering, isolating deep-sky objects.
+
+
+* **Contrast Optimization:** Applies non-linear histogram stretching curves to reveal faint nebulae and spiral structures without clipping highlights.
+* **Color Calibration:** Neutralizes unwanted color casts (e.g., magenta/red background glow) by balancing RGB black points.
+* **Sharpening:** Enhances high-frequency details (star edges and galactic cores) using controlled unsharp masking filters.
+* **Progressive JPEG Export:** Dumps an inspection snapshot (`.jpg`) after each step to allow real-time visual auditing of the processing stages.
+
+
+
+---
 
 ## License
 
