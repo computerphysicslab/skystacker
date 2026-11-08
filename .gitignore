@@ -3,6 +3,8 @@
 /skystacker.exe
 *.exe
 *.test
+skystacker/v0/skystacker
+skystacker/skystacker
 
 # Output from runs
 skystacker_results/
@@ -11,3 +13,9 @@ skystacker_results/
 # Editor / OS noise
 .DS_Store
 *.swp
+*~
+.idea/
+.vscode/
+skystacker
+v0/skystacker
+**/skystacker
