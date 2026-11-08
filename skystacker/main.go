@@ -1,16 +1,18 @@
-// SkyStacker v0.2.0 — single-file monolithic build.
-//
-// Combine JPG/JPEG astrophotography frames into sum, mean and
-// no-correction-mean images with matching previews and a text report.
+// SkyStacker v0.3.0 — single-file build with star registration.
 //
 // Build:  go build -o skystacker main.go
 // Test:   ./skystacker --selftest
 // Run:    ./skystacker [flags] [input-directory]
 //
-// v0.2 change: stacked_sum.tiff is now normalised by its global
-// maximum so ordinary image viewers display it (previously the raw sum
-// values could exceed 1.0, which most viewers clamp to white). The
-// scale factor is written to report.txt; raw_sum = tiff_value * max.
+// v0.3.0 adds the 0.2 milestone (registration):
+//   - Star detection with sub-pixel centroiding
+//   - Reference-frame selection by star count
+//   - Triangle-invariant star matching with RANSAC similarity estimation
+//   - Bilinear sub-pixel resampling
+//   - Safe crop to the largest fully-valid axis-aligned rectangle
+//
+// Frames that fail registration are reported and excluded from the
+// registered stack (they remain in the no-correction mean).
 
 package main
 
@@ -38,7 +40,7 @@ import (
 	"time"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 // =========================================================================
 // CLI
@@ -53,6 +55,7 @@ type cliOptions struct {
 	Version   bool
 	Help      bool
 	SelfTest  bool
+	Register  bool
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -60,12 +63,14 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.SetOutput(io.Discard)
 
 	o := &cliOptions{}
+	var noRegister bool
 	fs.StringVar(&o.OutputDir, "output", "", "output directory (default: <input>/skystacker_results)")
 	fs.IntVar(&o.Workers, "workers", runtime.NumCPU(), "maximum concurrent workers")
 	fs.BoolVar(&o.Recursive, "recursive", false, "search subdirectories")
 	fs.BoolVar(&o.Overwrite, "overwrite", false, "permit replacing files in the output directory")
 	fs.BoolVar(&o.Version, "version", false, "print version and exit")
 	fs.BoolVar(&o.SelfTest, "selftest", false, "run internal self-tests and exit")
+	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
 
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -74,6 +79,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		}
 		return nil, err
 	}
+	o.Register = !noRegister
 	rest := fs.Args()
 	if len(rest) > 1 {
 		return nil, fmt.Errorf("unexpected arguments: %v", rest[1:])
@@ -92,9 +98,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: skystacker [flags] [input-directory]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Combine JPG/JPEG astrophotography frames into sum, mean and")
-	fmt.Fprintln(w, "no-correction-mean images. No star registration or calibration")
-	fmt.Fprintln(w, "is performed.")
+	fmt.Fprintln(w, "Combine JPG/JPEG astrophotography frames with optional star-based")
+	fmt.Fprintln(w, "registration into sum, mean and no-correction-mean images.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Arguments:")
 	fmt.Fprintln(w, "  input-directory   directory containing JPG/JPEG files (default: .)")
@@ -104,6 +109,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --workers int     maximum concurrent workers (default: NumCPU)")
 	fmt.Fprintln(w, "  --recursive       search subdirectories")
 	fmt.Fprintln(w, "  --overwrite       permit replacing files in the output directory")
+	fmt.Fprintln(w, "  --no-register     disable star registration (v0.2 behaviour)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -126,7 +132,6 @@ func discoverFiles(root string, recursive bool, exclude []string) ([]string, err
 		}
 		excludes[abs] = true
 	}
-
 	var files []string
 	err = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -168,11 +173,10 @@ func discoverFiles(root string, recursive bool, exclude []string) ([]string, err
 // Imaging
 // =========================================================================
 
-// frame holds interleaved float32 RGB samples in [0, 1].
 type frame struct {
 	Width  int
 	Height int
-	Pix    []float32
+	Pix    []float32 // interleaved RGB in [0, 1], unless a pixel was marked invalid (-1)
 }
 
 func decodeImageConfig(path string) (image.Config, error) {
@@ -234,8 +238,625 @@ func frameFromImage(img image.Image) (*frame, error) {
 	return f, nil
 }
 
+// grayscale returns a luminance image in [0, 1].
+func grayscale(f *frame) []float32 {
+	n := f.Width * f.Height
+	g := make([]float32, n)
+	for i := 0; i < n; i++ {
+		g[i] = 0.299*f.Pix[i*3] + 0.587*f.Pix[i*3+1] + 0.114*f.Pix[i*3+2]
+	}
+	return g
+}
+
 // =========================================================================
-// Stack
+// Star detection
+// =========================================================================
+
+type star struct {
+	X, Y float64 // sub-pixel centroid
+	Flux float64 // background-subtracted integrated intensity
+}
+
+// estimateBackgroundNoise uses a 256-bin histogram over a subsample to
+// return the median (background level) and an IQR-based Gaussian sigma.
+func estimateBackgroundNoise(gray []float32) (bg, noise float64) {
+	const numBins = 256
+	var hist [numBins]int64
+	total := int64(0)
+	step := 4
+	for i := 0; i < len(gray); i += step {
+		v := gray[i]
+		if v < 0 {
+			v = 0
+		} else if v >= 1 {
+			v = 0.999999
+		}
+		hist[int(v*numBins)]++
+		total++
+	}
+	if total == 0 {
+		return 0, 1e-6
+	}
+	p25, p50, p75 := int64(0), int64(0), int64(0)
+	want := []int64{total * 25 / 100, total * 50 / 100, total * 75 / 100}
+	cum := int64(0)
+	idx := 0
+	for i := 0; i < numBins && idx < 3; i++ {
+		cum += hist[i]
+		for idx < 3 && cum >= want[idx] {
+			switch idx {
+			case 0:
+				p25 = int64(i)
+			case 1:
+				p50 = int64(i)
+			case 2:
+				p75 = int64(i)
+			}
+			idx++
+		}
+	}
+	bg = float64(p50) / numBins
+	iqr := float64(p75-p25) / numBins
+	noise = iqr / 1.349
+	if noise < 1e-6 {
+		noise = 1e-6
+	}
+	return bg, noise
+}
+
+// detectStars returns up to maxStars stars sorted by decreasing flux.
+func detectStars(f *frame, maxStars int) []star {
+	w, h := f.Width, f.Height
+	gray := grayscale(f)
+	bg, noise := estimateBackgroundNoise(gray)
+	// The histogram returns the lower edge of the median bin. Add one
+	// bin width (1/256) so that background pixels — which may lie
+	// anywhere within the median bin — fall below the threshold rather
+	// than leak through as one giant connected component.
+	bg += 1.0 / 256.0
+	threshold := float32(bg + 5*noise)
+	bg32 := float32(bg)
+
+	visited := make([]bool, w*h)
+	type comp struct {
+		pixels []int
+	}
+	var comps []comp
+
+	// Iterative flood fill for 8-connectivity
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := y*w + x
+			if visited[i] || gray[i] <= threshold {
+				continue
+			}
+			// BFS
+			stack := []int{i}
+			visited[i] = true
+			var pixels []int
+			for len(stack) > 0 {
+				p := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				pixels = append(pixels, p)
+				py, px := p/w, p%w
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						if dx == 0 && dy == 0 {
+							continue
+						}
+						nx, ny := px+dx, py+dy
+						if nx < 0 || ny < 0 || nx >= w || ny >= h {
+							continue
+						}
+						ni := ny*w + nx
+						if visited[ni] || gray[ni] <= threshold {
+							continue
+						}
+						visited[ni] = true
+						stack = append(stack, ni)
+					}
+				}
+			}
+			if len(pixels) >= 2 && len(pixels) <= 200 {
+				comps = append(comps, comp{pixels: pixels})
+			}
+		}
+	}
+
+	stars := make([]star, 0, len(comps))
+	const margin = 3
+	for _, c := range comps {
+		var sumW, sumX, sumY, sumFlux float64
+		minX, minY, maxX, maxY := w, h, -1, -1
+		for _, p := range c.pixels {
+			py, px := p/w, p%w
+			val := float64(gray[p] - bg32)
+			if val < 0 {
+				val = 0
+			}
+			sumW += val
+			sumX += float64(px) * val
+			sumY += float64(py) * val
+			sumFlux += val
+			if px < minX {
+				minX = px
+			}
+			if px > maxX {
+				maxX = px
+			}
+			if py < minY {
+				minY = py
+			}
+			if py > maxY {
+				maxY = py
+			}
+		}
+		if sumW == 0 {
+			continue
+		}
+		cx := sumX / sumW
+		cy := sumY / sumW
+		if cx < margin || cy < margin || cx > float64(w-margin) || cy > float64(h-margin) {
+			continue
+		}
+		// Shape filter: reject very elongated blobs
+		bw, bh := maxX-minX+1, maxY-minY+1
+		aspect := float64(bw) / float64(bh)
+		if aspect < 0.33 || aspect > 3.0 {
+			continue
+		}
+		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux})
+	}
+	sort.Slice(stars, func(i, j int) bool { return stars[i].Flux > stars[j].Flux })
+	if len(stars) > maxStars {
+		stars = stars[:maxStars]
+	}
+	return stars
+}
+
+// =========================================================================
+// Similarity transform
+// =========================================================================
+
+type point2D struct {
+	X, Y float64
+}
+
+// similarity represents p' = s·R·p + t, encoded as:
+//
+//	p'.X = SC·p.X - SS·p.Y + Tx
+//	p'.Y = SS·p.X + SC·p.Y + Ty
+//
+// with s = sqrt(SC² + SS²), θ = atan2(SS, SC).
+type similarity struct {
+	SC, SS, Tx, Ty float64
+}
+
+var identitySimilarity = similarity{SC: 1, SS: 0, Tx: 0, Ty: 0}
+
+func (s similarity) apply(p point2D) point2D {
+	return point2D{
+		X: s.SC*p.X - s.SS*p.Y + s.Tx,
+		Y: s.SS*p.X + s.SC*p.Y + s.Ty,
+	}
+}
+
+func (s similarity) inverse() similarity {
+	det := s.SC*s.SC + s.SS*s.SS
+	if det < 1e-12 {
+		return identitySimilarity
+	}
+	invSC := s.SC / det
+	invSS := -s.SS / det
+	return similarity{
+		SC: invSC,
+		SS: invSS,
+		Tx: -(invSC*s.Tx - invSS*s.Ty),
+		Ty: -(invSS*s.Tx + invSC*s.Ty),
+	}
+}
+
+func (s similarity) scale() float64 {
+	return math.Sqrt(s.SC*s.SC + s.SS*s.SS)
+}
+
+func (s similarity) rotation() float64 {
+	return math.Atan2(s.SS, s.SC)
+}
+
+// estimateSimilarity returns the least-squares similarity mapping src→dst.
+func estimateSimilarity(src, dst []point2D) similarity {
+	n := len(src)
+	if n < 2 || n != len(dst) {
+		return identitySimilarity
+	}
+	var scX, scY, dcX, dcY float64
+	for i := 0; i < n; i++ {
+		scX += src[i].X
+		scY += src[i].Y
+		dcX += dst[i].X
+		dcY += dst[i].Y
+	}
+	scX /= float64(n)
+	scY /= float64(n)
+	dcX /= float64(n)
+	dcY /= float64(n)
+	var num1, num2, den float64
+	for i := 0; i < n; i++ {
+		sx := src[i].X - scX
+		sy := src[i].Y - scY
+		dx := dst[i].X - dcX
+		dy := dst[i].Y - dcY
+		num1 += sx*dx + sy*dy
+		num2 += sx*dy - sy*dx
+		den += sx*sx + sy*sy
+	}
+	if den < 1e-12 {
+		return identitySimilarity
+	}
+	sc := num1 / den
+	ss := num2 / den
+	return similarity{
+		SC: sc,
+		SS: ss,
+		Tx: dcX - (sc*scX - ss*scY),
+		Ty: dcY - (ss*scX + sc*scY),
+	}
+}
+
+// =========================================================================
+// Triangle-based star matching
+// =========================================================================
+
+type triangle struct {
+	A, B, C int     // canonical vertex indices: A opposite shortest side, C opposite longest
+	R1, R2  float64 // side ratios (short/long, mid/long)
+}
+
+func dist2(a, b star) float64 {
+	dx := a.X - b.X
+	dy := a.Y - b.Y
+	return dx*dx + dy*dy
+}
+
+// buildTriangles forms canonical triangles from the top-N brightest stars.
+func buildTriangles(stars []star) []triangle {
+	n := len(stars)
+	if n > 30 {
+		n = 30
+	}
+	if n < 3 {
+		return nil
+	}
+	var out []triangle
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			dij2 := dist2(stars[i], stars[j])
+			if dij2 < 25 { // reject very short sides
+				continue
+			}
+			for k := j + 1; k < n; k++ {
+				dik2 := dist2(stars[i], stars[k])
+				djk2 := dist2(stars[j], stars[k])
+				if dik2 < 25 || djk2 < 25 {
+					continue
+				}
+				// sides[] = (length, opposite-vertex-index)
+				sides := [3][2]float64{
+					{math.Sqrt(djk2), float64(i)}, // opposite i
+					{math.Sqrt(dik2), float64(j)}, // opposite j
+					{math.Sqrt(dij2), float64(k)}, // opposite k
+				}
+				// Sort ascending by length
+				if sides[1][0] < sides[0][0] {
+					sides[0], sides[1] = sides[1], sides[0]
+				}
+				if sides[2][0] < sides[1][0] {
+					sides[1], sides[2] = sides[2], sides[1]
+				}
+				if sides[1][0] < sides[0][0] {
+					sides[0], sides[1] = sides[1], sides[0]
+				}
+				// Reject near-isosceles top two (ambiguous ordering)
+				if sides[2][0]-sides[1][0] < 0.05*sides[2][0] {
+					continue
+				}
+				// Reject elongated triangles
+				if sides[0][0] < 0.15*sides[2][0] {
+					continue
+				}
+				out = append(out, triangle{
+					A:  int(sides[0][1]),
+					B:  int(sides[1][1]),
+					C:  int(sides[2][1]),
+					R1: sides[0][0] / sides[2][0],
+					R2: sides[1][0] / sides[2][0],
+				})
+			}
+		}
+	}
+	return out
+}
+
+type triangleMatch struct {
+	Ref, Tgt [3]int // star indices in ref / target frame
+}
+
+// chirality returns the sign of (B-A) × (C-A).
+func chirality(stars []star, a, b, c int) float64 {
+	ax, ay := stars[a].X, stars[a].Y
+	bx, by := stars[b].X, stars[b].Y
+	cx, cy := stars[c].X, stars[c].Y
+	return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax)
+}
+
+func matchTriangles(refStars, tgtStars []star) []triangleMatch {
+	refTris := buildTriangles(refStars)
+	tgtTris := buildTriangles(tgtStars)
+	if len(refTris) == 0 || len(tgtTris) == 0 {
+		return nil
+	}
+	// Bucket reference triangles by descriptor into a 0.01 grid.
+	const grid = 100
+	bucket := make(map[[2]int][]int, len(refTris))
+	for i, rt := range refTris {
+		k := [2]int{int(rt.R1 * grid), int(rt.R2 * grid)}
+		bucket[k] = append(bucket[k], i)
+	}
+	const descTol = 0.02
+	var out []triangleMatch
+	for _, tt := range tgtTris {
+		key := [2]int{int(tt.R1 * grid), int(tt.R2 * grid)}
+		for dx := -1; dx <= 1; dx++ {
+			for dy := -1; dy <= 1; dy++ {
+				for _, ri := range bucket[[2]int{key[0] + dx, key[1] + dy}] {
+					rt := refTris[ri]
+					d1 := rt.R1 - tt.R1
+					d2 := rt.R2 - tt.R2
+					if d1*d1+d2*d2 > descTol*descTol {
+						continue
+					}
+					// Chirality must agree for a proper similarity.
+					refChir := chirality(refStars, rt.A, rt.B, rt.C)
+					tgtChir := chirality(tgtStars, tt.A, tt.B, tt.C)
+					if (refChir > 0) != (tgtChir > 0) {
+						continue
+					}
+					out = append(out, triangleMatch{
+						Ref: [3]int{rt.A, rt.B, rt.C},
+						Tgt: [3]int{tt.A, tt.B, tt.C},
+					})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// countInliers returns the number of target stars whose transformed position
+// lies within tol of a reference star. Uses a simple linear scan; fine for
+// ~100 stars.
+func countInliers(sim similarity, tgtStars, refStars []star, tol float64) int {
+	tol2 := tol * tol
+	n := 0
+	for _, ts := range tgtStars {
+		p := sim.apply(point2D{ts.X, ts.Y})
+		for _, rs := range refStars {
+			dx := p.X - rs.X
+			dy := p.Y - rs.Y
+			if dx*dx+dy*dy <= tol2 {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+// collectInliers returns matched (src, dst) point pairs under sim within tol.
+func collectInliers(sim similarity, tgtStars, refStars []star, tol float64) ([]point2D, []point2D) {
+	tol2 := tol * tol
+	var src, dst []point2D
+	used := make([]bool, len(refStars))
+	for _, ts := range tgtStars {
+		p := sim.apply(point2D{ts.X, ts.Y})
+		bestJ, bestD := -1, tol2
+		for j, rs := range refStars {
+			if used[j] {
+				continue
+			}
+			dx := p.X - rs.X
+			dy := p.Y - rs.Y
+			d := dx*dx + dy*dy
+			if d <= bestD {
+				bestJ = j
+				bestD = d
+			}
+		}
+		if bestJ >= 0 {
+			used[bestJ] = true
+			src = append(src, point2D{ts.X, ts.Y})
+			dst = append(dst, point2D{refStars[bestJ].X, refStars[bestJ].Y})
+		}
+	}
+	return src, dst
+}
+
+// matchStarsToReference returns the similarity that maps target stars onto
+// reference stars, plus the inlier count. Returns ok=false if the match is
+// not confident enough.
+func matchStarsToReference(refStars, tgtStars []star) (similarity, int, bool) {
+	const tol = 3.0
+	matches := matchTriangles(refStars, tgtStars)
+	if len(matches) == 0 {
+		return identitySimilarity, 0, false
+	}
+	bestInliers := 0
+	bestSim := identitySimilarity
+	for _, m := range matches {
+		src := []point2D{
+			{tgtStars[m.Tgt[0]].X, tgtStars[m.Tgt[0]].Y},
+			{tgtStars[m.Tgt[1]].X, tgtStars[m.Tgt[1]].Y},
+			{tgtStars[m.Tgt[2]].X, tgtStars[m.Tgt[2]].Y},
+		}
+		dst := []point2D{
+			{refStars[m.Ref[0]].X, refStars[m.Ref[0]].Y},
+			{refStars[m.Ref[1]].X, refStars[m.Ref[1]].Y},
+			{refStars[m.Ref[2]].X, refStars[m.Ref[2]].Y},
+		}
+		sim := estimateSimilarity(src, dst)
+		if sim.scale() < 0.5 || sim.scale() > 2.0 {
+			continue
+		}
+		ni := countInliers(sim, tgtStars, refStars, tol)
+		if ni > bestInliers {
+			bestInliers = ni
+			bestSim = sim
+		}
+	}
+	if bestInliers < 4 {
+		return identitySimilarity, bestInliers, false
+	}
+	// Refine with all inliers
+	src, dst := collectInliers(bestSim, tgtStars, refStars, tol)
+	if len(src) >= 2 {
+		bestSim = estimateSimilarity(src, dst)
+		bestInliers = len(src)
+	}
+	return bestSim, bestInliers, true
+}
+
+// =========================================================================
+// Resampling and cropping
+// =========================================================================
+
+// sampleBilinear samples f at sub-pixel (x, y). Returns ok=false if (x, y)
+// lies outside the source bounds.
+func sampleBilinear(f *frame, x, y float64) (r, g, b float32, ok bool) {
+	if x < 0 || x > float64(f.Width-1) || y < 0 || y > float64(f.Height-1) {
+		return 0, 0, 0, false
+	}
+	x0 := int(x)
+	y0 := int(y)
+	fx := float32(x - float64(x0))
+	fy := float32(y - float64(y0))
+	x1 := x0 + 1
+	if x1 >= f.Width {
+		x1 = f.Width - 1
+	}
+	y1 := y0 + 1
+	if y1 >= f.Height {
+		y1 = f.Height - 1
+	}
+	i00 := (y0*f.Width + x0) * 3
+	i10 := (y0*f.Width + x1) * 3
+	i01 := (y1*f.Width + x0) * 3
+	i11 := (y1*f.Width + x1) * 3
+	w00 := (1 - fx) * (1 - fy)
+	w10 := fx * (1 - fy)
+	w01 := (1 - fx) * fy
+	w11 := fx * fy
+	r = w00*f.Pix[i00] + w10*f.Pix[i10] + w01*f.Pix[i01] + w11*f.Pix[i11]
+	g = w00*f.Pix[i00+1] + w10*f.Pix[i10+1] + w01*f.Pix[i01+1] + w11*f.Pix[i11+1]
+	b = w00*f.Pix[i00+2] + w10*f.Pix[i10+2] + w01*f.Pix[i01+2] + w11*f.Pix[i11+2]
+	return r, g, b, true
+}
+
+// resampleToReference produces a refW×refH frame in the reference coordinate
+// system. Pixels with no source are marked -1.
+func resampleToReference(f *frame, sim similarity, refW, refH, workers int) *frame {
+	out := &frame{Width: refW, Height: refH, Pix: make([]float32, refW*refH*3)}
+	inv := sim.inverse()
+	rowBand := func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			fy := float64(y)
+			rowBase := y * refW * 3
+			for x := 0; x < refW; x++ {
+				fx := float64(x)
+				sx := inv.SC*fx - inv.SS*fy + inv.Tx
+				sy := inv.SS*fx + inv.SC*fy + inv.Ty
+				i := rowBase + x*3
+				r, g, b, ok := sampleBilinear(f, sx, sy)
+				if ok {
+					out.Pix[i] = r
+					out.Pix[i+1] = g
+					out.Pix[i+2] = b
+				} else {
+					out.Pix[i] = -1
+					out.Pix[i+1] = -1
+					out.Pix[i+2] = -1
+				}
+			}
+		}
+	}
+	if workers <= 1 || refH < workers {
+		rowBand(0, refH)
+		return out
+	}
+	var wg sync.WaitGroup
+	rowsPerWorker := (refH + workers - 1) / workers
+	for w := 0; w < workers; w++ {
+		y0 := w * rowsPerWorker
+		if y0 >= refH {
+			break
+		}
+		y1 := y0 + rowsPerWorker
+		if y1 > refH {
+			y1 = refH
+		}
+		wg.Add(1)
+		go func(y0, y1 int) {
+			defer wg.Done()
+			rowBand(y0, y1)
+		}(y0, y1)
+	}
+	wg.Wait()
+	return out
+}
+
+// findSafeCrop returns the largest axis-aligned rectangle in which every
+// pixel has validCount == requiredCount. Uses maximal-rectangle-in-histogram.
+func findSafeCrop(validCount []int32, w, h int, requiredCount int32) image.Rectangle {
+	heights := make([]int, w)
+	bestArea := 0
+	best := image.Rect(0, 0, 0, 0)
+	for y := 0; y < h; y++ {
+		rowBase := y * w
+		for x := 0; x < w; x++ {
+			if validCount[rowBase+x] == requiredCount {
+				heights[x]++
+			} else {
+				heights[x] = 0
+			}
+		}
+		stack := []int{-1}
+		for x := 0; x <= w; x++ {
+			hx := 0
+			if x < w {
+				hx = heights[x]
+			}
+			for len(stack) > 1 && heights[stack[len(stack)-1]] > hx {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				left := stack[len(stack)-1] + 1
+				hgt := heights[top]
+				area := hgt * (x - left)
+				if area > bestArea {
+					bestArea = area
+					best = image.Rect(left, y-hgt+1, x, y+1)
+				}
+			}
+			stack = append(stack, x)
+		}
+	}
+	if bestArea == 0 {
+		return image.Rect(0, 0, w, h)
+	}
+	return best
+}
+
+// =========================================================================
+// Accumulator
 // =========================================================================
 
 type accumulator struct {
@@ -254,38 +875,80 @@ func (a *accumulator) addFrame(f *frame, workers int) error {
 			f.Width, f.Height, a.Width, a.Height)
 	}
 	if len(f.Pix) != len(a.Pix) {
-		return fmt.Errorf("pixel buffer length %d does not match accumulator %d",
-			len(f.Pix), len(a.Pix))
+		return fmt.Errorf("pixel buffer length mismatch")
+	}
+	addRows := func(start, end int) {
+		for i := start; i < end; i++ {
+			a.Pix[i] += f.Pix[i]
+		}
 	}
 	if workers <= 1 || a.Height < workers {
-		for i, v := range f.Pix {
-			a.Pix[i] += v
-		}
-		a.Count++
-		return nil
-	}
-	rowsPerWorker := (a.Height + workers - 1) / workers
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		y0 := w * rowsPerWorker
-		if y0 >= a.Height {
-			break
-		}
-		y1 := y0 + rowsPerWorker
-		if y1 > a.Height {
-			y1 = a.Height
-		}
-		start := y0 * a.Width * 3
-		end := y1 * a.Width * 3
-		wg.Add(1)
-		go func(s, e int) {
-			defer wg.Done()
-			for i := s; i < e; i++ {
-				a.Pix[i] += f.Pix[i]
+		addRows(0, len(a.Pix))
+	} else {
+		var wg sync.WaitGroup
+		rowsPerWorker := (a.Height + workers - 1) / workers
+		for w := 0; w < workers; w++ {
+			y0 := w * rowsPerWorker
+			if y0 >= a.Height {
+				break
 			}
-		}(start, end)
+			y1 := y0 + rowsPerWorker
+			if y1 > a.Height {
+				y1 = a.Height
+			}
+			wg.Add(1)
+			go func(y0, y1 int) {
+				defer wg.Done()
+				addRows(y0*a.Width*3, y1*a.Width*3)
+			}(y0, y1)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
+	a.Count++
+	return nil
+}
+
+// addFrameMasked skips pixels marked -1 and increments validCount per pixel.
+func (a *accumulator) addFrameMasked(f *frame, workers int, validCount []int32) error {
+	if f.Width != a.Width || f.Height != a.Height {
+		return fmt.Errorf("frame dimensions mismatch")
+	}
+	addRows := func(startPix, endPix int) {
+		for p := startPix; p < endPix; p++ {
+			r := f.Pix[p*3]
+			g := f.Pix[p*3+1]
+			b := f.Pix[p*3+2]
+			if r >= 0 && g >= 0 && b >= 0 {
+				a.Pix[p*3] += r
+				a.Pix[p*3+1] += g
+				a.Pix[p*3+2] += b
+				validCount[p]++
+			}
+		}
+	}
+	nPix := a.Width * a.Height
+	if workers <= 1 || a.Height < workers {
+		addRows(0, nPix)
+	} else {
+		var wg sync.WaitGroup
+		rowsPerWorker := (a.Height + workers - 1) / workers
+		for w := 0; w < workers; w++ {
+			y0 := w * rowsPerWorker
+			if y0 >= a.Height {
+				break
+			}
+			y1 := y0 + rowsPerWorker
+			if y1 > a.Height {
+				y1 = a.Height
+			}
+			wg.Add(1)
+			go func(y0, y1 int) {
+				defer wg.Done()
+				addRows(y0*a.Width, y1*a.Width)
+			}(y0, y1)
+		}
+		wg.Wait()
+	}
 	a.Count++
 	return nil
 }
@@ -300,6 +963,17 @@ func (a *accumulator) divide() {
 	}
 }
 
+func (a *accumulator) divideByCount(counts []int32) {
+	for i := 0; i < len(a.Pix); i++ {
+		c := counts[i/3]
+		if c > 0 {
+			a.Pix[i] /= float32(c)
+		} else {
+			a.Pix[i] = 0
+		}
+	}
+}
+
 func (a *accumulator) maxValue() float32 {
 	m := float32(0)
 	for _, v := range a.Pix {
@@ -308,6 +982,28 @@ func (a *accumulator) maxValue() float32 {
 		}
 	}
 	return m
+}
+
+func cropAccumulator(a *accumulator, r image.Rectangle) *accumulator {
+	w, h := r.Dx(), r.Dy()
+	out := newAccumulator(w, h)
+	for y := 0; y < h; y++ {
+		srcOff := ((r.Min.Y+y)*a.Width + r.Min.X) * 3
+		dstOff := y * w * 3
+		copy(out.Pix[dstOff:dstOff+w*3], a.Pix[srcOff:srcOff+w*3])
+	}
+	return out
+}
+
+func cropCounts(c []int32, w int, r image.Rectangle) []int32 {
+	cw, ch := r.Dx(), r.Dy()
+	out := make([]int32, cw*ch)
+	for y := 0; y < ch; y++ {
+		srcOff := (r.Min.Y+y)*w + r.Min.X
+		dstOff := y * cw
+		copy(out[dstOff:dstOff+cw], c[srcOff:srcOff+cw])
+	}
+	return out
 }
 
 // =========================================================================
@@ -343,22 +1039,17 @@ const (
 	ifdEntryCount = 14
 )
 
-// writeFloat32RGB writes pix unchanged.
 func writeFloat32RGB(w io.Writer, width, height int, pix []float32) error {
 	return writeFloat32RGBScaled(w, width, height, pix, 1.0)
 }
 
-// writeFloat32RGBScaled writes each sample divided by divisor. Values are
-// not clipped; the caller is responsible for choosing a divisor that puts
-// the output in [0, 1] for viewers.
 func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, divisor float32) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("tiff: invalid dimensions %dx%d", width, height)
 	}
 	n := width * height * 3
 	if len(pix) != n {
-		return fmt.Errorf("tiff: pixel buffer length %d does not match %dx%dx3 = %d",
-			len(pix), width, height, n)
+		return fmt.Errorf("tiff: pixel buffer length %d does not match %dx%dx3 = %d", len(pix), width, height, n)
 	}
 	if divisor == 0 {
 		return errors.New("tiff: divisor must be non-zero")
@@ -372,13 +1063,11 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 	ifdSize := uint32(2 + ifdEntryCount*12 + 4)
 	ifdOffset := uint32(8)
 	auxOffset := ifdOffset + ifdSize
-
 	bitsOffset := auxOffset
 	sfOffset := bitsOffset + 6
 	xResOffset := sfOffset + 6
 	yResOffset := xResOffset + 8
 	auxEnd := yResOffset + 8
-
 	pixelOffset := auxEnd
 	if rem := pixelOffset % 4; rem != 0 {
 		pixelOffset += 4 - rem
@@ -416,7 +1105,6 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 		binary.LittleEndian.PutUint32(ifd[pos+8:], offset)
 		pos += 12
 	}
-
 	putLong(tagImageWidth, uint32(width))
 	putLong(tagImageLength, uint32(height))
 	putOffset(tagBitsPerSample, typeShort, 3, bitsOffset)
@@ -431,7 +1119,6 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 	putShort(tagPlanarConfig, planarChunky)
 	putShort(tagResolutionUnit, resolutionUnitNone)
 	putOffset(tagSampleFormat, typeShort, 3, sfOffset)
-
 	binary.LittleEndian.PutUint32(ifd[pos:], 0)
 	if _, err := w.Write(ifd); err != nil {
 		return err
@@ -480,27 +1167,25 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 	return nil
 }
 
-// readFloat32RGB is a minimal TIFF reader for self-tests and diagnostics.
 func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return 0, 0, nil, err
 	}
 	if len(data) < 8 || data[0] != 'I' || data[1] != 'I' {
-		return 0, 0, nil, errors.New("tiff: not a little-endian TIFF")
+		return 0, 0, nil, errors.New("tiff: not little-endian")
 	}
 	if v := binary.LittleEndian.Uint16(data[2:]); v != 42 {
-		return 0, 0, nil, fmt.Errorf("tiff: unexpected version %d", v)
+		return 0, 0, nil, fmt.Errorf("tiff: version %d", v)
 	}
 	ifdOff := int(binary.LittleEndian.Uint32(data[4:]))
 	if ifdOff+2 > len(data) {
-		return 0, 0, nil, errors.New("tiff: IFD offset out of range")
+		return 0, 0, nil, errors.New("tiff: IFD out of range")
 	}
 	nEntries := int(binary.LittleEndian.Uint16(data[ifdOff:]))
 	if ifdOff+2+nEntries*12+4 > len(data) {
 		return 0, 0, nil, errors.New("tiff: IFD truncated")
 	}
-
 	var (
 		w, h     uint32
 		bps, sf  []uint16
@@ -510,17 +1195,15 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 		stripOff []uint32
 		stripLen []uint32
 	)
-
 	for i := 0; i < nEntries; i++ {
 		off := ifdOff + 2 + i*12
 		tag := binary.LittleEndian.Uint16(data[off:])
 		typ := binary.LittleEndian.Uint16(data[off+2:])
 		count := int(binary.LittleEndian.Uint32(data[off+4:]))
 		valField := off + 8
-
 		readShorts := func() ([]uint16, error) {
 			if typ != typeShort {
-				return nil, fmt.Errorf("tiff: tag %d: expected SHORT, got type %d", tag, typ)
+				return nil, fmt.Errorf("tiff: tag %d type %d", tag, typ)
 			}
 			out := make([]uint16, count)
 			if count*2 <= 4 {
@@ -530,7 +1213,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 			} else {
 				o := int(binary.LittleEndian.Uint32(data[valField:]))
 				if o+count*2 > len(data) {
-					return nil, fmt.Errorf("tiff: tag %d: value out of range", tag)
+					return nil, errors.New("tiff: offset out of range")
 				}
 				for k := 0; k < count; k++ {
 					out[k] = binary.LittleEndian.Uint16(data[o+k*2:])
@@ -540,7 +1223,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 		}
 		readLongs := func() ([]uint32, error) {
 			if typ != typeLong {
-				return nil, fmt.Errorf("tiff: tag %d: expected LONG, got type %d", tag, typ)
+				return nil, fmt.Errorf("tiff: tag %d type %d", tag, typ)
 			}
 			out := make([]uint32, count)
 			if count*4 <= 4 {
@@ -548,7 +1231,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 			} else {
 				o := int(binary.LittleEndian.Uint32(data[valField:]))
 				if o+count*4 > len(data) {
-					return nil, fmt.Errorf("tiff: tag %d: value out of range", tag)
+					return nil, errors.New("tiff: offset out of range")
 				}
 				for k := 0; k < count; k++ {
 					out[k] = binary.LittleEndian.Uint32(data[o+k*4:])
@@ -556,7 +1239,6 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 			}
 			return out, nil
 		}
-
 		switch tag {
 		case tagImageWidth:
 			v, e := readLongs()
@@ -614,7 +1296,6 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 			sf = v
 		}
 	}
-
 	if w == 0 || h == 0 || spp != 3 || photo != photometricRGB || planar != planarChunky {
 		return 0, 0, nil, errors.New("tiff: unexpected header fields")
 	}
@@ -622,7 +1303,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 		return 0, 0, nil, errors.New("tiff: unexpected sample format")
 	}
 	if len(stripOff) != 1 || len(stripLen) != 1 {
-		return 0, 0, nil, errors.New("tiff: expected a single strip")
+		return 0, 0, nil, errors.New("tiff: expected single strip")
 	}
 	nPix := int(w) * int(h) * 3
 	if int(stripLen[0]) != nPix*4 {
@@ -721,25 +1402,29 @@ type rejection struct {
 }
 
 type processingReport struct {
-	Version         string
-	Timestamp       time.Time
-	InputDir        string
-	OutputDir       string
-	Discovered      int
-	Accepted        []string
-	Rejected        []rejection
-	Width           int
-	Height          int
-	Channels        int
-	Method          string
-	AccumulatorType string
-	OutputFormat    string
-	OutputScaling   string
-	SumNormalization float32
-	OutputFiles     []string
-	Workers         int
-	Duration        time.Duration
-	Notes           []string
+	Version           string
+	Timestamp         time.Time
+	InputDir          string
+	OutputDir         string
+	Discovered        int
+	Accepted          []string
+	Rejected          []rejection
+	Width             int
+	Height            int
+	Channels          int
+	Method            string
+	AccumulatorType   string
+	OutputFormat      string
+	OutputScaling     string
+	RegistrationOn    bool
+	RegisteredCount   int
+	RegistrationFails []string
+	CropRect          image.Rectangle
+	SumNormalization  float32
+	OutputFiles       []string
+	Workers           int
+	Duration          time.Duration
+	Notes             []string
 }
 
 type errWriter struct {
@@ -771,6 +1456,22 @@ func (r *processingReport) writeTo(w io.Writer) error {
 	ew.printf("Output scaling:   %s\n", r.OutputScaling)
 	ew.printf("Workers:          %d\n", r.Workers)
 	ew.printf("Duration:         %s\n\n", r.Duration.Round(time.Millisecond))
+
+	ew.printf("Registration:        %v\n", r.RegistrationOn)
+	ew.printf("Registered frames:   %d / %d\n", r.RegisteredCount, len(r.Accepted))
+	if r.RegistrationOn && r.RegisteredCount > 0 {
+		ew.printf("Crop rectangle:      x=%d..%d, y=%d..%d (%dx%d)\n",
+			r.CropRect.Min.X, r.CropRect.Max.X-1,
+			r.CropRect.Min.Y, r.CropRect.Max.Y-1,
+			r.CropRect.Dx(), r.CropRect.Dy())
+	}
+	if len(r.RegistrationFails) > 0 {
+		ew.printf("Registration failures:\n")
+		for _, f := range r.RegistrationFails {
+			ew.printf("  - %s\n", f)
+		}
+	}
+	ew.printf("\n")
 
 	ew.printf("Sum TIFF normalisation: %g\n\n", r.SumNormalization)
 
@@ -842,10 +1543,16 @@ type runOptions struct {
 	Workers   int
 	Recursive bool
 	Overwrite bool
+	Register  bool
 }
 
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+type frameTransform struct {
+	sim   similarity
+	valid bool
 }
 
 func runPipeline(ctx context.Context, opts runOptions) error {
@@ -875,7 +1582,6 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if filepath.Clean(outputDir) == filepath.Clean(inputDir) {
 		return fmt.Errorf("output directory must differ from input directory")
 	}
-
 	if info, err := os.Stat(outputDir); err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("output path exists and is not a directory: %s", outputDir)
@@ -908,19 +1614,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			continue
 		}
 		if cfg.Width <= 0 || cfg.Height <= 0 {
-			rejected = append(rejected, rejection{
-				Path:   path,
-				Reason: fmt.Sprintf("invalid dimensions %dx%d", cfg.Width, cfg.Height),
-			})
+			rejected = append(rejected, rejection{Path: path, Reason: fmt.Sprintf("invalid dimensions %dx%d", cfg.Width, cfg.Height)})
 			continue
 		}
 		if refW == 0 {
 			refW, refH = cfg.Width, cfg.Height
 		} else if cfg.Width != refW || cfg.Height != refH {
 			rejected = append(rejected, rejection{
-				Path: path,
-				Reason: fmt.Sprintf("dimensions %dx%d differ from reference %dx%d",
-					cfg.Width, cfg.Height, refW, refH),
+				Path:   path,
+				Reason: fmt.Sprintf("dimensions %dx%d differ from reference %dx%d", cfg.Width, cfg.Height, refW, refH),
 			})
 			continue
 		}
@@ -943,14 +1645,21 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	logf("Stacking %d frame(s) at %dx%d using up to %d worker(s)",
 		len(candidates), refW, refH, workers)
+	if opts.Register {
+		logf("Registration: ON (use --no-register to disable)")
+	} else {
+		logf("Registration: OFF")
+	}
 
-	acc := newAccumulator(refW, refH)
-	var accepted []string
+	// ============== Pass 1: decode, detect stars, accumulate unregistered
+	unregAcc := newAccumulator(refW, refH)
+	starLists := make([][]star, len(candidates))
+	var accepted []candidate
 	for i, c := range candidates {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		logf("  [%d/%d] %s", i+1, len(candidates), filepath.Base(c.path))
+		logf("  [pass1 %d/%d] %s", i+1, len(candidates), filepath.Base(c.path))
 		f, err := decodeImageFile(c.path)
 		if err != nil {
 			rejected = append(rejected, rejection{
@@ -959,18 +1668,117 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			})
 			continue
 		}
-		if err := acc.addFrame(f, workers); err != nil {
+		if opts.Register {
+			starLists[len(accepted)] = detectStars(f, 100)
+		}
+		if err := unregAcc.addFrame(f, workers); err != nil {
 			return fmt.Errorf("accumulate %s: %w", c.path, err)
 		}
-		accepted = append(accepted, c.path)
+		accepted = append(accepted, c)
 	}
-	if acc.Count == 0 {
+	if unregAcc.Count == 0 {
 		return fmt.Errorf("no frames accumulated")
 	}
+	starLists = starLists[:len(accepted)]
 
+	// ============== Registration: pick reference, compute transforms
+	transforms := make([]frameTransform, len(accepted))
+	for i := range transforms {
+		transforms[i] = frameTransform{sim: identitySimilarity, valid: true}
+	}
+	var registeredCount int
+	var regFailures []string
+	registrationOn := opts.Register
+
+	if registrationOn {
+		// Reference = frame with the most stars.
+		refIdx := 0
+		for i := 1; i < len(starLists); i++ {
+			if len(starLists[i]) > len(starLists[refIdx]) {
+				refIdx = i
+			}
+		}
+		refStars := starLists[refIdx]
+		logf("Reference frame: %s (%d stars)", filepath.Base(accepted[refIdx].path), len(refStars))
+
+		if len(refStars) < 5 {
+			logf("WARNING: reference frame has only %d stars; disabling registration", len(refStars))
+			registrationOn = false
+		} else {
+			registeredCount = 1
+			for i := range accepted {
+				if i == refIdx {
+					continue
+				}
+				if len(starLists[i]) < 3 {
+					regFailures = append(regFailures, fmt.Sprintf("%s: only %d stars detected",
+						filepath.Base(accepted[i].path), len(starLists[i])))
+					transforms[i].valid = false
+					continue
+				}
+				sim, inliers, ok := matchStarsToReference(refStars, starLists[i])
+				if !ok {
+					regFailures = append(regFailures, fmt.Sprintf("%s: no consistent transform (%d inliers)",
+						filepath.Base(accepted[i].path), inliers))
+					transforms[i].valid = false
+					continue
+				}
+				scale := sim.scale()
+				rotDeg := sim.rotation() * 180 / math.Pi
+				logf("  register %s: scale=%.4f rot=%.2f° inliers=%d",
+					filepath.Base(accepted[i].path), scale, rotDeg, inliers)
+				transforms[i] = frameTransform{sim: sim, valid: true}
+				registeredCount++
+			}
+			if registeredCount < 2 {
+				logf("WARNING: only %d frame(s) registered; disabling registration", registeredCount)
+				registrationOn = false
+			}
+		}
+	}
+	if !registrationOn {
+		registeredCount = 0
+		for i := range transforms {
+			transforms[i] = frameTransform{sim: identitySimilarity, valid: true}
+		}
+	}
+
+	// ============== Pass 2: resample + accumulate registered
+	var regAcc *accumulator
+	var validCount []int32
+	var cropRect image.Rectangle
+	if registrationOn {
+		logf("Resampling %d registered frame(s)", registeredCount)
+		regAcc = newAccumulator(refW, refH)
+		validCount = make([]int32, refW*refH)
+		for i, c := range accepted {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !transforms[i].valid {
+				continue
+			}
+			logf("  [pass2 %d/%d] %s", i+1, len(accepted), filepath.Base(c.path))
+			f, err := decodeImageFile(c.path)
+			if err != nil {
+				// Unlikely (already decoded) but be safe.
+				return fmt.Errorf("re-decode %s: %w", c.path, err)
+			}
+			resampled := resampleToReference(f, transforms[i].sim, refW, refH, workers)
+			if err := regAcc.addFrameMasked(resampled, workers, validCount); err != nil {
+				return fmt.Errorf("accumulate %s: %w", c.path, err)
+			}
+		}
+		cropRect = findSafeCrop(validCount, refW, refH, int32(registeredCount))
+		logf("Crop: x=%d..%d, y=%d..%d (%dx%d)", cropRect.Min.X, cropRect.Max.X-1,
+			cropRect.Min.Y, cropRect.Max.Y-1, cropRect.Dx(), cropRect.Dy())
+	}
+
+	// ============== Write outputs
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
+
 
 	sumTiff := filepath.Join(outputDir, "stacked_sum.tiff")
 	sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
@@ -981,87 +1789,168 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	previewJPG := filepath.Join(outputDir, "stacked_preview.jpg")
 	reportTxt := filepath.Join(outputDir, "report.txt")
 
-	// Compute the sum's global max once. This is used to normalise the
-	// sum TIFF so that ordinary viewers display it (values <= 1.0).
-	sumMax := acc.maxValue()
-	if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
-		sumMax = 1.0
-	}
-	divisor := float32(1.0)
-	if sumMax > 1.0 {
-		divisor = sumMax
-	}
-	logf("Sum max = %g; writing sum TIFF normalised by %g", sumMax, divisor)
+	var sumMax float32
+	var outW, outH int
 
-	// --- Sum outputs (buffer still holds the raw sum) ---
-	logf("Writing sum image (TIFF)")
-	if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
-		return writeFloat32RGBScaled(w, refW, refH, acc.Pix, divisor)
-	}); err != nil {
-		return fmt.Errorf("write sum tiff: %w", err)
-	}
-	logf("Writing sum preview (JPG)")
-	if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
-		return writeAutoNormalizedPreviewJPEG(w, refW, refH, acc.Pix)
-	}); err != nil {
-		return fmt.Errorf("write sum jpg: %w", err)
+	if registrationOn {
+		// Registered output: crop then divide the crop.
+		croppedSum := cropAccumulator(regAcc, cropRect)
+		croppedCounts := cropCounts(validCount, refW, cropRect)
+		outW, outH = cropRect.Dx(), cropRect.Dy()
+
+		sumMax = croppedSum.maxValue()
+		if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+			sumMax = 1.0
+		}
+		sumDivisor := float32(1.0)
+		if sumMax > 1.0 {
+			sumDivisor = sumMax
+		}
+		logf("Registered sum max = %g (normalising sum TIFF by %g)", sumMax, sumDivisor)
+
+		logf("Writing registered sum TIFF")
+		if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
+			return writeFloat32RGBScaled(w, outW, outH, croppedSum.Pix, sumDivisor)
+		}); err != nil {
+			return fmt.Errorf("write sum tiff: %w", err)
+		}
+		logf("Writing registered sum preview")
+		if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
+			return writeAutoNormalizedPreviewJPEG(w, outW, outH, croppedSum.Pix)
+		}); err != nil {
+			return fmt.Errorf("write sum jpg: %w", err)
+		}
+
+		croppedSum.divideByCount(croppedCounts)
+		logf("Writing registered mean TIFF")
+		if err := writeFileAtomic(meanTiff, func(w io.Writer) error {
+			return writeFloat32RGB(w, outW, outH, croppedSum.Pix)
+		}); err != nil {
+			return fmt.Errorf("write mean tiff: %w", err)
+		}
+		logf("Writing registered mean preview")
+		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
+			return writePreviewJPEG(w, outW, outH, croppedSum.Pix)
+		}); err != nil {
+			return fmt.Errorf("write mean jpg: %w", err)
+		}
+		if err := writeFileAtomic(previewJPG, func(w io.Writer) error {
+			return writePreviewJPEG(w, outW, outH, croppedSum.Pix)
+		}); err != nil {
+			return fmt.Errorf("write preview: %w", err)
+		}
+	} else {
+		// Unregistered output (v0.2 behaviour).
+		outW, outH = refW, refH
+		sumMax = unregAcc.maxValue()
+		if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+			sumMax = 1.0
+		}
+		sumDivisor := float32(1.0)
+		if sumMax > 1.0 {
+			sumDivisor = sumMax
+		}
+		logf("Sum max = %g (normalising sum TIFF by %g)", sumMax, sumDivisor)
+
+		logf("Writing sum TIFF")
+		if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
+			return writeFloat32RGBScaled(w, outW, outH, unregAcc.Pix, sumDivisor)
+		}); err != nil {
+			return fmt.Errorf("write sum tiff: %w", err)
+		}
+		logf("Writing sum preview")
+		if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
+			return writeAutoNormalizedPreviewJPEG(w, outW, outH, unregAcc.Pix)
+		}); err != nil {
+			return fmt.Errorf("write sum jpg: %w", err)
+		}
+
+		unregAcc.divide()
+		logf("Writing mean TIFF")
+		if err := writeFileAtomic(meanTiff, func(w io.Writer) error {
+			return writeFloat32RGB(w, outW, outH, unregAcc.Pix)
+		}); err != nil {
+			return fmt.Errorf("write mean tiff: %w", err)
+		}
+		logf("Writing mean preview")
+		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
+			return writePreviewJPEG(w, outW, outH, unregAcc.Pix)
+		}); err != nil {
+			return fmt.Errorf("write mean jpg: %w", err)
+		}
+		if err := writeFileAtomic(previewJPG, func(w io.Writer) error {
+			return writePreviewJPEG(w, outW, outH, unregAcc.Pix)
+		}); err != nil {
+			return fmt.Errorf("write preview: %w", err)
+		}
 	}
 
-	// --- Convert sum to mean in place ---
-	acc.divide()
-
-	// --- Mean outputs ---
-	logf("Writing mean image (TIFF)")
-	if err := writeFileAtomic(meanTiff, func(w io.Writer) error {
-		return writeFloat32RGB(w, refW, refH, acc.Pix)
-	}); err != nil {
-		return fmt.Errorf("write mean tiff: %w", err)
+	// No-correction mean (always from unregistered accumulator)
+	if registrationOn {
+		unregAcc.divide()
 	}
-	logf("Writing mean preview (JPG)")
-	if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, acc.Pix)
-	}); err != nil {
-		return fmt.Errorf("write mean jpg: %w", err)
-	}
-
-	// --- No-correction mean (identical to mean in v0.2) ---
-	logf("Writing no-correction mean image (TIFF)")
+	logf("Writing no-correction mean TIFF")
 	if err := writeFileAtomic(noCorrTiff, func(w io.Writer) error {
-		return writeFloat32RGB(w, refW, refH, acc.Pix)
+		return writeFloat32RGB(w, refW, refH, unregAcc.Pix)
 	}); err != nil {
 		return fmt.Errorf("write no_correction_mean tiff: %w", err)
 	}
-	logf("Writing no-correction mean preview (JPG)")
+	logf("Writing no-correction mean preview")
 	if err := writeFileAtomic(noCorrJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, acc.Pix)
+		return writePreviewJPEG(w, refW, refH, unregAcc.Pix)
 	}); err != nil {
 		return fmt.Errorf("write no_correction_mean jpg: %w", err)
 	}
 
-	// --- Legacy stacked_preview.jpg ---
-	logf("Writing legacy preview (JPG)")
-	if err := writeFileAtomic(previewJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, acc.Pix)
-	}); err != nil {
-		return fmt.Errorf("write preview: %w", err)
+	// Report
+	notes := []string{
+		"No calibration (dark, flat, bias) was performed.",
+		"JPEG inputs are gamma-encoded (sRGB-like); samples were averaged in encoded space, not linear light.",
+		"All JPG outputs are display previews, not scientific outputs.",
+	}
+	if registrationOn {
+		notes = append(notes,
+			fmt.Sprintf("Registration: %d of %d frames registered using a similarity model (rotation + uniform scale + translation).", registeredCount, len(accepted)),
+			fmt.Sprintf("Registered outputs (stacked_sum/mean) are cropped to the largest fully-valid region: %dx%d.", outW, outH),
+			"stacked_no_correction_mean is the unregistered full-frame mean.",
+			fmt.Sprintf("Registered sum TIFF was divided by %g (global max of registered sum); multiply by %g to recover raw float32 sum.", sumMax, sumMax),
+		)
+		if len(regFailures) > 0 {
+			notes = append(notes, fmt.Sprintf("%d frame(s) failed registration and were excluded from the registered stack; see 'Registration failures' above.", len(regFailures)))
+		}
+	} else {
+		notes = append(notes,
+			"Registration: disabled. Frames were combined in their existing pixel coordinate system.",
+			"stacked_mean.tiff and stacked_no_correction_mean.tiff are identical in this run.",
+			fmt.Sprintf("Sum TIFF was divided by %g (global max); multiply by %g to recover raw float32 sum.", sumMax, sumMax),
+		)
+	}
+
+	acceptedPaths := make([]string, len(accepted))
+	for i, c := range accepted {
+		acceptedPaths[i] = c.path
 	}
 
 	rep := &processingReport{
-		Version:          version,
-		Timestamp:        start,
-		InputDir:         inputDir,
-		OutputDir:        outputDir,
-		Discovered:       len(files),
-		Accepted:         accepted,
-		Rejected:         rejected,
-		Width:            refW,
-		Height:           refH,
-		Channels:         3,
-		Method:           "sum and arithmetic mean",
-		AccumulatorType:  "float32 (interleaved RGB)",
-		OutputFormat:     "TIFF: uncompressed, little-endian, RGB, IEEE float32, single strip. JPG: 8-bit, gamma 0.5 display preview.",
-		OutputScaling:    "sum.tiff: raw sum divided by the reported normalisation factor so values lie in [0,1] for viewers; mean.tiff / no_correction_mean.tiff: sum / N, range [0,1]; sum.jpg: auto-normalised by global max; mean.jpg / no_correction_mean.jpg / preview.jpg: gamma 0.5 of values in [0,1]. No numeric clipping in TIFF outputs.",
-		SumNormalization: divisor,
+		Version:           version,
+		Timestamp:         start,
+		InputDir:          inputDir,
+		OutputDir:         outputDir,
+		Discovered:        len(files),
+		Accepted:          acceptedPaths,
+		Rejected:          rejected,
+		Width:             refW,
+		Height:            refH,
+		Channels:          3,
+		Method:            methodString(registrationOn),
+		AccumulatorType:   "float32 (interleaved RGB)",
+		OutputFormat:      "TIFF: uncompressed, little-endian, RGB, IEEE float32, single strip. JPG: 8-bit, gamma 0.5 display preview.",
+		OutputScaling:     scalingString(registrationOn),
+		RegistrationOn:    registrationOn,
+		RegisteredCount:   registeredCount,
+		RegistrationFails: regFailures,
+		CropRect:          cropRect,
+		SumNormalization:  sumMax,
 		OutputFiles: []string{
 			sumTiff, sumJPG,
 			meanTiff, meanJPG,
@@ -1071,15 +1960,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		},
 		Workers:  workers,
 		Duration: time.Since(start),
-		Notes: []string{
-			"No star registration or calibration was performed (v0.2).",
-			"Frames were combined in their existing pixel coordinate system.",
-			fmt.Sprintf("stacked_sum.tiff was divided by %g (its global maximum) so that viewers display it; to recover the raw sum, multiply pixel values by %g.", divisor, divisor),
-			"stacked_no_correction_mean.tiff is byte-for-byte identical to stacked_mean.tiff in v0.2 because no registration is performed. It is produced so that future registered means can be compared directly against the uncorrected stack.",
-			"stacked_mean.jpg, stacked_no_correction_mean.jpg and stacked_preview.jpg are identical in v0.2.",
-			"JPEG inputs are gamma-encoded (sRGB-like); samples were averaged in encoded space, not linear light.",
-			"All JPG outputs are display previews, not scientific outputs.",
-		},
+		Notes:    notes,
 	}
 	if err := writeFileAtomic(reportTxt, func(w io.Writer) error {
 		return rep.writeTo(w)
@@ -1091,8 +1972,22 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	return nil
 }
 
+func methodString(registered bool) string {
+	if registered {
+		return "sum and arithmetic mean over registered frames; no-correction mean over all frames"
+	}
+	return "sum and arithmetic mean (no registration)"
+}
+
+func scalingString(registered bool) string {
+	if registered {
+		return "registered sum.tiff divided by its global max (recoverable via reported factor); mean.tiff divided by per-pixel valid count; no_correction_mean.tiff divided by total frames. Preview JPGs use gamma 0.5."
+	}
+	return "sum.tiff divided by its global max (recoverable via reported factor); mean.tiff divided by total frames. Preview JPGs use gamma 0.5."
+}
+
 // =========================================================================
-// Self-tests (invoked via --selftest)
+// Self-tests
 // =========================================================================
 
 type testCase struct {
@@ -1107,6 +2002,7 @@ func runSelfTests() int {
 		{"accumulator dimension mismatch", testAccumulatorDimensionMismatch},
 		{"accumulator parallel vs sequential", testAccumulatorParallel},
 		{"accumulator max", testAccumulatorMax},
+		{"accumulator masked", testAccumulatorMasked},
 		{"TIFF round trip", testTIFFRoundTrip},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
@@ -1114,6 +2010,13 @@ func runSelfTests() int {
 		{"decode RGBA", testDecodeRGBA},
 		{"decode JPEG", testDecodeJPEG},
 		{"discovery", testDiscovery},
+		{"similarity estimate", testSimilarityEstimate},
+		{"similarity inverse", testSimilarityInverse},
+		{"star detection synthetic", testStarDetectionSynthetic},
+		{"star registration synthetic", testStarRegistrationSynthetic},
+		{"bilinear sampling", testBilinearSample},
+		{"resample identity", testResampleIdentity},
+		{"safe crop", testSafeCrop},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -1204,7 +2107,7 @@ func testAccumulatorParallel() error {
 	}
 	for i := range a.Pix {
 		if a.Pix[i] != b.Pix[i] {
-			return fmt.Errorf("mismatch at %d: %v vs %v", i, a.Pix[i], b.Pix[i])
+			return fmt.Errorf("mismatch at %d", i)
 		}
 	}
 	return nil
@@ -1213,9 +2116,32 @@ func testAccumulatorParallel() error {
 func testAccumulatorMax() error {
 	a := newAccumulator(2, 1)
 	a.Pix = []float32{0.1, 0.5, 3.2, 1.1, 0.9, 2.7}
-	got := a.maxValue()
-	if got != 3.2 {
+	if got := a.maxValue(); got != 3.2 {
 		return fmt.Errorf("max = %v, want 3.2", got)
+	}
+	return nil
+}
+
+func testAccumulatorMasked() error {
+	a := newAccumulator(2, 1)
+	valid := make([]int32, 2)
+	f1 := &frame{Width: 2, Height: 1, Pix: []float32{0.5, 0.6, 0.7, -1, -1, -1}}
+	f2 := &frame{Width: 2, Height: 1, Pix: []float32{-1, -1, -1, 0.9, 0.8, 0.7}}
+	if err := a.addFrameMasked(f1, 1, valid); err != nil {
+		return err
+	}
+	if err := a.addFrameMasked(f2, 1, valid); err != nil {
+		return err
+	}
+	if valid[0] != 1 || valid[1] != 1 {
+		return fmt.Errorf("validCounts = %v, want [1 1]", valid)
+	}
+	a.divideByCount(valid)
+	for i, v := range a.Pix {
+		want := []float32{0.5, 0.6, 0.7, 0.9, 0.8, 0.7}[i]
+		if math.Abs(float64(v-want)) > 1e-6 {
+			return fmt.Errorf("masked[%d] = %v, want %v", i, v, want)
+		}
 	}
 	return nil
 }
@@ -1239,11 +2165,11 @@ func testTIFFRoundTrip() error {
 		return err
 	}
 	if gotW != w || gotH != h {
-		return fmt.Errorf("dims = %dx%d, want %dx%d", gotW, gotH, w, h)
+		return fmt.Errorf("dims")
 	}
 	for i := range pix {
 		if gotPix[i] != pix[i] {
-			return fmt.Errorf("pixel[%d] = %v, want %v", i, gotPix[i], pix[i])
+			return fmt.Errorf("pixel[%d]", i)
 		}
 	}
 	return nil
@@ -1261,7 +2187,7 @@ func testTIFFLargeValues() error {
 	}
 	for i := range pix {
 		if math.Abs(float64(got[i]-pix[i]))/math.Abs(float64(pix[i])) > 1e-6 {
-			return fmt.Errorf("pixel[%d] = %v, want %v", i, got[i], pix[i])
+			return fmt.Errorf("pixel[%d]", i)
 		}
 	}
 	return nil
@@ -1280,7 +2206,7 @@ func testTIFFScaledRoundTrip() error {
 	want := []float32{1, 2, 3, 4, 5, 6}
 	for i := range want {
 		if math.Abs(float64(got[i]-want[i])) > 1e-6 {
-			return fmt.Errorf("scaled pixel[%d] = %v, want %v", i, got[i], want[i])
+			return fmt.Errorf("scaled[%d]", i)
 		}
 	}
 	return nil
@@ -1291,7 +2217,7 @@ func testTIFFBadInput() error {
 		return errors.New("expected error for zero dimensions")
 	}
 	if err := writeFloat32RGB(&bytes.Buffer{}, 2, 2, make([]float32, 11)); err == nil {
-		return errors.New("expected error for mismatched buffer length")
+		return errors.New("expected error for bad buffer")
 	}
 	if err := writeFloat32RGBScaled(&bytes.Buffer{}, 2, 2, make([]float32, 12), 0); err == nil {
 		return errors.New("expected error for zero divisor")
@@ -1317,7 +2243,7 @@ func testDecodeRGBA() error {
 	for _, ck := range checks {
 		got := f.Pix[(ck.y*f.Width+ck.x)*3+ck.c]
 		if math.Abs(float64(got-ck.want)) > 1e-6 {
-			return fmt.Errorf("pixel (%d,%d,%d) = %v, want %v", ck.x, ck.y, ck.c, got, ck.want)
+			return fmt.Errorf("pixel")
 		}
 	}
 	return nil
@@ -1346,7 +2272,7 @@ func testDecodeJPEG() error {
 	for i := 0; i < 4*3; i++ {
 		for c := 0; c < 3; c++ {
 			if math.Abs(float64(f.Pix[i*3+c]-want[c])) > 0.02 {
-				return fmt.Errorf("pixel %d channel %d = %v, want ~%v", i, c, f.Pix[i*3+c], want[c])
+				return fmt.Errorf("pixel %d ch %d = %v, want ~%v", i, c, f.Pix[i*3+c], want[c])
 			}
 		}
 	}
@@ -1359,12 +2285,11 @@ func testDiscovery() error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-
-	must := func(path string) error {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	must := func(p string) error {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(path, []byte("x"), 0o644)
+		return os.WriteFile(p, []byte("x"), 0o644)
 	}
 	for _, p := range []string{
 		filepath.Join(dir, "b.JPG"),
@@ -1376,27 +2301,176 @@ func testDiscovery() error {
 			return err
 		}
 	}
-
 	got, err := discoverFiles(dir, false, nil)
 	if err != nil {
 		return err
 	}
 	want := []string{filepath.Join(dir, "a.jpeg"), filepath.Join(dir, "b.JPG")}
-	if len(got) != len(want) {
-		return fmt.Errorf("non-recursive: got %v, want %v", got, want)
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		return fmt.Errorf("discovery: got %v, want %v", got, want)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			return fmt.Errorf("non-recursive[%d]: got %v, want %v", i, got[i], want[i])
+	return nil
+}
+
+func testSimilarityEstimate() error {
+	// 3 point pairs under known similarity
+	src := []point2D{{0, 0}, {10, 0}, {0, 10}}
+	dst := []point2D{{5, 3}, {15, 3}, {5, 13}} // pure translation (5, 3)
+	sim := estimateSimilarity(src, dst)
+	if math.Abs(sim.SC-1) > 1e-9 || math.Abs(sim.SS) > 1e-9 {
+		return fmt.Errorf("SC=%v SS=%v, want 1, 0", sim.SC, sim.SS)
+	}
+	if math.Abs(sim.Tx-5) > 1e-9 || math.Abs(sim.Ty-3) > 1e-9 {
+		return fmt.Errorf("T=(%v,%v), want (5,3)", sim.Tx, sim.Ty)
+	}
+	return nil
+}
+
+func testSimilarityInverse() error {
+	// Rotation 90°, translation (1, 2), unit scale
+	sim := similarity{SC: 0, SS: 1, Tx: 1, Ty: 2}
+	inv := sim.inverse()
+	p := point2D{3, 4}
+	q := sim.apply(p)
+	back := inv.apply(q)
+	if math.Abs(back.X-p.X) > 1e-9 || math.Abs(back.Y-p.Y) > 1e-9 {
+		return fmt.Errorf("inverse roundtrip: %v -> %v -> %v", p, q, back)
+	}
+	return nil
+}
+
+func testStarDetectionSynthetic() error {
+	// Create a 100×100 frame with 5 Gaussian-like blobs.
+	const w, h = 100, 100
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.05
+	}
+	stars := []point2D{{20, 20}, {50, 50}, {80, 30}, {30, 80}, {70, 70}}
+	for _, s := range stars {
+		for dy := -3; dy <= 3; dy++ {
+			for dx := -3; dx <= 3; dx++ {
+				x, y := int(s.X)+dx, int(s.Y)+dy
+				if x < 0 || y < 0 || x >= w || y >= h {
+					continue
+				}
+				d2 := float64(dx*dx + dy*dy)
+				v := float32(0.9 * math.Exp(-d2/4))
+				i := (y*w + x) * 3
+				f.Pix[i+0] += v
+				f.Pix[i+1] += v
+				f.Pix[i+2] += v
+			}
 		}
 	}
-
-	got, err = discoverFiles(dir, true, []string{filepath.Join(dir, "sub")})
-	if err != nil {
-		return err
+	detected := detectStars(f, 20)
+	if len(detected) < 5 {
+		return fmt.Errorf("detected %d stars, expected at least 5", len(detected))
 	}
-	if len(got) != 2 {
-		return fmt.Errorf("recursive+exclude: got %v, want 2 entries", got)
+	// Each detected star should be close to one of the 5 known positions.
+	for _, ds := range detected[:5] {
+		best := 1e9
+		for _, s := range stars {
+			d := math.Hypot(ds.X-s.X, ds.Y-s.Y)
+			if d < best {
+				best = d
+			}
+		}
+		if best > 2.0 {
+			return fmt.Errorf("detected star at (%v,%v) is %v px from nearest true star", ds.X, ds.Y, best)
+		}
+	}
+	return nil
+}
+
+func testStarRegistrationSynthetic() error {
+	// Reference stars
+	refStars := []star{
+		{X: 100, Y: 100, Flux: 1000}, {X: 200, Y: 150, Flux: 800}, {X: 300, Y: 200, Flux: 600},
+		{X: 150, Y: 300, Flux: 700}, {X: 250, Y: 350, Flux: 500}, {X: 400, Y: 250, Flux: 400},
+		{X: 180, Y: 220, Flux: 300}, {X: 280, Y: 180, Flux: 250}, {X: 350, Y: 300, Flux: 200},
+	}
+	// Known T: rotation 2°, translation (5, 3), unit scale
+	theta := 2.0 * math.Pi / 180
+	T := similarity{
+		SC: math.Cos(theta),
+		SS: math.Sin(theta),
+		Tx: 5,
+		Ty: 3,
+	}
+	Tinv := T.inverse()
+	var tgtStars []star
+	for _, s := range refStars {
+		p := Tinv.apply(point2D{s.X, s.Y})
+		tgtStars = append(tgtStars, star{X: p.X, Y: p.Y, Flux: s.Flux})
+	}
+	recovered, inliers, ok := matchStarsToReference(refStars, tgtStars)
+	if !ok {
+		return errors.New("matchStarsToReference returned ok=false")
+	}
+	if inliers < len(refStars)-1 {
+		return fmt.Errorf("inliers = %d, want ~%d", inliers, len(refStars))
+	}
+	for i := range tgtStars {
+		expected := point2D{refStars[i].X, refStars[i].Y}
+		actual := recovered.apply(point2D{tgtStars[i].X, tgtStars[i].Y})
+		if math.Hypot(actual.X-expected.X, actual.Y-expected.Y) > 1.0 {
+			return fmt.Errorf("star %d: recovered (%v) != expected (%v)", i, actual, expected)
+		}
+	}
+	return nil
+}
+
+func testBilinearSample() error {
+	f := &frame{Width: 2, Height: 2, Pix: []float32{
+		0, 0, 0, 1, 0, 0, // (0,0)=(0,0,0), (1,0)=(1,0,0)
+		0, 1, 0, 1, 1, 0, // (0,1)=(0,1,0), (1,1)=(1,1,0)
+	}}
+	// At (0.5, 0.5) bilinear = average of 4 = (0.5, 0.5, 0)
+	r, g, b, ok := sampleBilinear(f, 0.5, 0.5)
+	if !ok {
+		return errors.New("sampleBilinear(0.5, 0.5) returned ok=false")
+	}
+	if math.Abs(float64(r)-0.5) > 1e-6 || math.Abs(float64(g)-0.5) > 1e-6 || math.Abs(float64(b)) > 1e-6 {
+		return fmt.Errorf("(0.5,0.5) = (%v,%v,%v), want (0.5,0.5,0)", r, g, b)
+	}
+	// Out of bounds
+	if _, _, _, ok := sampleBilinear(f, -0.1, 0); ok {
+		return errors.New("expected out-of-bounds")
+	}
+	return nil
+}
+
+func testResampleIdentity() error {
+	f := &frame{Width: 5, Height: 5, Pix: make([]float32, 5*5*3)}
+	for i := range f.Pix {
+		f.Pix[i] = float32(i) / float32(len(f.Pix))
+	}
+	out := resampleToReference(f, identitySimilarity, 5, 5, 1)
+	for i := range f.Pix {
+		if math.Abs(float64(out.Pix[i]-f.Pix[i])) > 1e-5 {
+			return fmt.Errorf("identity resample: pixel %d = %v, want %v", i, out.Pix[i], f.Pix[i])
+		}
+	}
+	return nil
+}
+
+func testSafeCrop() error {
+	const w, h = 10, 10
+	valid := make([]int32, w*h)
+	for i := range valid {
+		valid[i] = 3 // all valid
+	}
+	// Carve out an invalid region: row 0
+	for x := 0; x < w; x++ {
+		valid[x] = 2
+	}
+	crop := findSafeCrop(valid, w, h, 3)
+	if crop.Min.Y != 1 || crop.Max.Y != 10 {
+		return fmt.Errorf("crop y = %d..%d, want 1..10", crop.Min.Y, crop.Max.Y)
+	}
+	if crop.Min.X != 0 || crop.Max.X != 10 {
+		return fmt.Errorf("crop x = %d..%d, want 0..10", crop.Min.X, crop.Max.X)
 	}
 	return nil
 }
@@ -1426,17 +2500,16 @@ func main() {
 		}
 		return
 	}
-
 	err = runPipeline(context.Background(), runOptions{
 		InputDir:  opts.InputDir,
 		OutputDir: opts.OutputDir,
 		Workers:   opts.Workers,
 		Recursive: opts.Recursive,
 		Overwrite: opts.Overwrite,
+		Register:  opts.Register,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
 		os.Exit(1)
 	}
 }
-
