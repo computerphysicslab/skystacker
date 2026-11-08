@@ -23,6 +23,15 @@ SkyStacker is an open-source command-line tool written in Go that discovers and 
 
 Ideal for simple stacking of already-aligned sessions, batch automation, learning, or as a building block.
 
+## 🌟 Visual Results & Processing Showcase
+
+SkyStacker automates frame discovery, alignment, stacking, and an advanced post-processing pipeline (background gradient removal and contrast stretch) to transform raw astrophotography data into clean, high-dynamic-range images.
+
+| Raw Stacked Image (Before Gradient Removal) | Final Post-Processed Output (After Pipeline) |
+| :---: | :---: |
+| ![Stacked Mean with Gradient](assets/stacked_mean.jpg) | ![Processed Background Removed](assets/post_step1_background_removed.jpg) |
+| *Heavy background light pollution, magenta cast, and washed-out contrast.* | *Cleaned background, neutralized sky, and enhanced stellar details.* |
+
 ## Quick Start
 
 ### Prerequisites
