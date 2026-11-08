@@ -40,7 +40,7 @@ import (
 	"time"
 )
 
-const version = "0.4.0"
+const version = "0.4.1"
 
 // =========================================================================
 // CLI
@@ -2860,10 +2860,7 @@ func removeBackground(f *frame, degree int) *frame {
 // --- Step 2: contrast stretch (asinh) ---
 
 func stretchContrast(f *frame, stretch float64) *frame {
-	if stretch <= 0 {
-		stretch = 10
-	}
-	// Sample luminance for percentile computation
+	// Compute luminance percentiles and robust statistics on a subsample.
 	var lums []float32
 	const step = 4
 	for y := 0; y < f.Height; y += step {
@@ -2872,23 +2869,86 @@ func stretchContrast(f *frame, stretch float64) *frame {
 			lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
 		}
 	}
-	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
-	pBlack := float64(percentile(lums, 0.5))
-	pWhite := float64(percentile(lums, 99.5))
-	if pWhite <= pBlack {
-		pWhite = pBlack + 1e-4
+	if len(lums) == 0 {
+		return f
 	}
-	invRange := 1.0 / (pWhite - pBlack)
-	asinhF := math.Asinh(stretch)
+	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+
+	n := len(lums)
+	median := float64(lums[n/2])
+
+	// Robust sigma from median absolute deviation.
+	devs := make([]float64, n)
+	for i, l := range lums {
+		devs[i] = math.Abs(float64(l) - median)
+	}
+	sort.Float64s(devs)
+	mad := devs[n/2]
+	sigma := 1.4826 * mad
+	if sigma < 1e-6 {
+		sigma = 1e-6
+	}
+
+	// Shadow clip: 2.8 sigma below median (clips ~0.25% of background).
+	black := median - 2.8*sigma
+	if black < 0 {
+		black = 0
+	}
+
+	// White point: P99.9 (top 0.1% of pixels — actual stars, not noise).
+	pWhite := float64(lums[int(float64(n-1)*0.999)])
+	if pWhite <= black {
+		pWhite = black + 1e-4
+	}
+
+	// Target background brightness. Higher --stretch → darker background.
+	targetBG := 1.5 / stretch
+	if stretch <= 0 {
+		targetBG = 0.15
+	}
+	if targetBG < 0.03 {
+		targetBG = 0.03
+	}
+	if targetBG > 0.35 {
+		targetBG = 0.35
+	}
+
+	// Normalised median (in [0, 1] within the [black, white] range).
+	mNorm := (median - black) / (pWhite - black)
+	if mNorm < 0.001 {
+		mNorm = 0.001
+	}
+	if mNorm > 0.999 {
+		mNorm = 0.999
+	}
+
+	// Solve mtf(mNorm, m) = targetBG for the MTF midtone parameter m.
+	// MTF(x, m) = ((m-1)*x) / ((2m-1)*x - m)
+	// Inverse:  m = x*(1-t) / (x*(1-2t) + t)  where t = target output.
+	m := mNorm * (1 - targetBG) / (mNorm*(1-2*targetBG) + targetBG)
+
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	invRange := 1.0 / (pWhite - black)
 	for i := range f.Pix {
-		v := (float64(f.Pix[i]) - pBlack) * invRange
+		v := (float64(f.Pix[i]) - black) * invRange
 		if v < 0 {
 			v = 0
 		} else if v > 1 {
 			v = 1
 		}
-		out := math.Asinh(stretch*v) / asinhF
+		num := (m - 1) * v
+		den := (2*m-1)*v - m
+		var out float64
+		if math.Abs(den) < 1e-10 {
+			out = 0
+		} else {
+			out = num / den
+		}
+		if out < 0 {
+			out = 0
+		} else if out > 1 {
+			out = 1
+		}
 		result.Pix[i] = float32(out)
 	}
 	return result
@@ -3062,9 +3122,66 @@ func unsharpMask(f *frame, amount, radius float64) *frame {
 
 // --- Pipeline driver ---
 
+func floatToByte(v float32) uint8 {
+	if v <= 0 {
+		return 0
+	}
+	if v >= 1 {
+		return 255
+	}
+	return uint8(v*255 + 0.5)
+}
+
+// writeLinearPreviewJPEG maps [0,1] values directly to [0,255] with no
+// gamma. Use for post-processing stages whose outputs are already stretched.
+func writeLinearPreviewJPEG(w io.Writer, width, height int, pix []float32) error {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		rowOff := y * img.Stride
+		for x := 0; x < width; x++ {
+			i := (y*width + x) * 3
+			o := rowOff + x*4
+			img.Pix[o+0] = floatToByte(pix[i+0])
+			img.Pix[o+1] = floatToByte(pix[i+1])
+			img.Pix[o+2] = floatToByte(pix[i+2])
+			img.Pix[o+3] = 255
+		}
+	}
+	return jpeg.Encode(w, img, &jpeg.Options{Quality: 90})
+}
+
+// writeAutoNormalizedLinearPreviewJPEG divides by the global max then maps
+// [0,1] to [0,255] linearly. Use when values may be slightly outside [0,1]
+// (step 1) but gamma lifting would wash out the background.
+func writeAutoNormalizedLinearPreviewJPEG(w io.Writer, width, height int, pix []float32) error {
+	maxVal := float32(0)
+	for _, v := range pix {
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+	if math.IsNaN(float64(maxVal)) || math.IsInf(float64(maxVal), 0) || maxVal <= 0 {
+		maxVal = 1.0
+	}
+	inv := float32(1.0) / maxVal
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		rowOff := y * img.Stride
+		for x := 0; x < width; x++ {
+			i := (y*width + x) * 3
+			o := rowOff + x*4
+			img.Pix[o+0] = floatToByte(pix[i+0] * inv)
+			img.Pix[o+1] = floatToByte(pix[i+1] * inv)
+			img.Pix[o+2] = floatToByte(pix[i+2] * inv)
+			img.Pix[o+3] = 255
+		}
+	}
+	return jpeg.Encode(w, img, &jpeg.Options{Quality: 90})
+}
+
 func writePostPreview(dir, name string, f *frame) error {
 	return writeFileAtomic(filepath.Join(dir, name), func(w io.Writer) error {
-		return writeAutoNormalizedPreviewJPEG(w, f.Width, f.Height, f.Pix)
+		return writeAutoNormalizedLinearPreviewJPEG(w, f.Width, f.Height, f.Pix)
 	})
 }
 
