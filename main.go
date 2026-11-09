@@ -1685,6 +1685,25 @@ type runOptions struct {
 	SharpenRadius float64
 }
 
+
+func getAvailableMemoryMB() int {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "MemAvailable:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, _ := strconv.Atoi(fields[1])
+				return kb / 1024
+			}
+		}
+	}
+	return 0
+}
+
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
@@ -1804,11 +1823,24 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	
 	// Rough estimation based on previous runs or a base formula
 	// Assuming ~0.05s per megapixel per worker
-	// JPEG decoding is single-threaded I/O bound. Workers only help with math.
-	// Roughly 0.25s per megapixel per frame, plus 10s for post-processing.
-	estSecs := float64(len(candidates)) * (float64(refW*refH) / 1e6) * 0.25
-	if opts.PostProcess && !opts.StackOnly { estSecs += 15.0 }
+	// Time estimation: ~0.35s per MP per frame + 10s for post-processing
+	estSecs := float64(len(candidates)) * (float64(refW*refH) / 1e6) * 0.35
+	if opts.PostProcess && !opts.StackOnly { estSecs += 10.0 }
 	logf("Estimated processing time: ~%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second))
+
+	// Memory estimation
+	frameMB := float64(refW*refH*3*4) / (1024 * 1024)
+	baseMem := frameMB * 5 // unregAcc, max, min, tmp1, tmp2
+	var storedMem float64
+	if opts.Method == "median" || opts.Method == "sigma" {
+		storedMem = float64(len(candidates)) * frameMB
+	}
+	estMemMB := int(baseMem + storedMem)
+	availMemMB := getAvailableMemoryMB()
+	logf("Memory: estimated %d MB needed, %d MB available", estMemMB, availMemMB)
+	if availMemMB > 0 && estMemMB > availMemMB {
+		logf("WARNING: Estimated memory usage exceeds available RAM! Out-of-memory crash is likely.")
+	}
 	if opts.Register {
 		logf("Registration: ON (use --no-register to disable)")
 	} else {
@@ -3414,28 +3446,45 @@ func removeBackground(f *frame, degree int, useMask bool) *frame {
 
 // --- Step 2: contrast stretch (asinh) ---
 
-func stretchContrast(f *frame, stretch float64) *frame {
-	if stretch <= 0 { stretch = 10 }
-	D := 1.5 * stretch
-	SP := 0.15
-	HP := 0.8
-	LP := 0.0
-	ghs := func(x float64) float64 {
-		if x <= LP { return 0 }
-		if x >= HP { return x }
-		xNorm := (x - LP) / (HP - LP)
-		num := (1 + D) * SP * xNorm
-		den := xNorm + D*SP
-		if den == 0 { return 0 }
-		res := num / den
-		return (1-HP)*res + HP*x
+func stretchContrast(f *frame, level int) *frame {
+	var lums []float32
+	for i := 0; i < len(f.Pix); i += 3 {
+		lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
 	}
+	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+	
+	pWhite := float64(lums[int(float64(len(lums)-1)*0.999)])
+	if pWhite < 1e-5 { pWhite = 1.0 }
+
+	var D, SP float64
+	switch level {
+	case 1: D, SP = 0.5, 0.25 // Gentle
+	case 2: D, SP = 1.5, 0.15 // Moderate
+	case 3: D, SP = 3.0, 0.10 // Full
+	}
+
+	ghs := func(x float64) float64 {
+		if x <= 0 { return 0 }
+		if x >= 1 { return 1 }
+		num := (1 + D) * SP * x
+		den := x + D*SP
+		if den == 0 { return 0 }
+		return num / den
+	}
+
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
-	for i := range f.Pix {
-		v := float64(f.Pix[i])
-		out := ghs(v)
-		if out > 1 { out = 1 }
-		result.Pix[i] = float32(out)
+	for i := 0; i < len(f.Pix); i += 3 {
+		r := float64(f.Pix[i])
+		g := float64(f.Pix[i+1])
+		b := float64(f.Pix[i+2])
+		lum := 0.299*r + 0.587*g + 0.114*b
+		if lum < 1e-6 { continue }
+		xNorm := lum / pWhite
+		newLum := ghs(xNorm)
+		scale := newLum / lum
+		result.Pix[i] = float32(math.Min(1.0, r*scale))
+		result.Pix[i+1] = float32(math.Min(1.0, g*scale))
+		result.Pix[i+2] = float32(math.Min(1.0, b*scale))
 	}
 	return result
 }
@@ -3723,19 +3772,19 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	}
 
 	logf("  post step 3a: gentle stretch")
-	s3a := stretchContrast(s2b, 0.30)
+	s3a := stretchContrast(s2b, 1)
 	p3a := filepath.Join(outputDir, "post_step3a_gentle_stretch.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p3a), s3a); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p3a)
 
 	logf("  post step 3b: moderate stretch")
-	s3b := stretchContrast(s2b, 0.15)
+	s3b := stretchContrast(s2b, 2)
 	p3b := filepath.Join(outputDir, "post_step3b_moderate_stretch.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p3b), s3b); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p3b)
 
 	logf("  post step 3c: full stretch")
-	s3c := stretchContrast(s2b, 0.05)
+	s3c := stretchContrast(s2b, 3)
 	p3c := filepath.Join(outputDir, "post_step3c_full_stretch.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p3c), s3c); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p3c)
@@ -3883,7 +3932,7 @@ func testContrastStretch() error {
 		f.Pix[i*3+1] = v
 		f.Pix[i*3+2] = v
 	}
-	result := stretchContrast(f, 10)
+	result := stretchContrast(f, 3)
 	var bgSum, midSum, brSum float32
 	var nBg, nMid, nBr int
 	for i := 0; i < w*h; i++ {
