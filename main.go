@@ -28,6 +28,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"io/fs"
 	"math"
@@ -289,7 +290,7 @@ func calibrate(f *frame, dark, flat, bias *frame) {
 func decodeImageConfig(path string) (image.Config, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
-		cmd := exec.Command("magick", "identify", "-format", "%w %h", path)
+		cmd := exec.Command("identify", "-format", "%w %h", path)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		if err := cmd.Run(); err != nil {
@@ -315,7 +316,7 @@ func decodeImageConfig(path string) (image.Config, error) {
 func decodeImageFile(path string) (*frame, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
-		cmd := exec.Command("magick", path, "-depth", "32", "tiff:-")
+		cmd := exec.Command("convert", path, "-depth", "16", "png:-")
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		if err := cmd.Run(); err != nil {
