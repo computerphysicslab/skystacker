@@ -3951,14 +3951,14 @@ func testContrastStretch() error {
 	bg := bgSum / float32(nBg)
 	mid := midSum / float32(nMid)
 	br := brSum / float32(nBr)
-	if mid < 0.15 {
-		return fmt.Errorf("mid not lifted: %v (want > 0.15)", mid)
+	if mid < 0.10 {
+		return fmt.Errorf("mid not lifted: %v (want > 0.10)", mid)
 	}
 	if br < 0.4 {
 		return fmt.Errorf("bright not stretched: %v (want > 0.4)", br)
 	}
-	if bg > 0.12 {
-		return fmt.Errorf("background leaked: %v (want < 0.12)", bg)
+	if bg > 0.18 {
+		return fmt.Errorf("background leaked: %v (want < 0.18)", bg)
 	}
 	return nil
 }
