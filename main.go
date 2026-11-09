@@ -3465,7 +3465,7 @@ func stretchContrast(f *frame, level int) *frame {
 
 	ghs := func(x float64) float64 {
 		if x <= 0 { return 0 }
-		if x >= 1 { return 1 }
+		if x >= 0.9999 { return 1.0 }
 		num := (1 + D) * SP * x
 		den := x + D*SP
 		if den == 0 { return 0 }
