@@ -59,6 +59,7 @@ type cliOptions struct {
 	SelfTest      bool
 	Register      bool
 	Method        string
+	MaskBG        bool
 	DarkFile      string
 	FlatFile      string
 	BiasFile      string
@@ -85,7 +86,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Overwrite, "overwrite", false, "permit replacing files in the output directory")
 	fs.BoolVar(&o.Version, "version", false, "print version and exit")
 	fs.BoolVar(&o.SelfTest, "selftest", false, "run internal self-tests and exit")
-	fs.StringVar(&o.Method, "method", "mean", "stacking method: mean, median, sigma")
+	fs.StringVar(&o.Method, "method", "sigma", "stacking method: mean, median, sigma")
+	fs.BoolVar(&o.MaskBG, "mask-bg", false, "mask bright objects during background extraction")
 	fs.StringVar(&o.DarkFile, "dark", "", "path to dark frame for calibration")
 	fs.StringVar(&o.FlatFile, "flat", "", "path to flat frame for calibration")
 	fs.StringVar(&o.BiasFile, "bias", "", "path to bias frame for calibration")
@@ -1671,6 +1673,7 @@ type runOptions struct {
 	FlatFile      string
 	BiasFile      string
 	Method        string
+	MaskBG        bool
 	PostProcess   bool
 	StackOnly     bool
 	PostOnly      bool
@@ -1798,6 +1801,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	logf("Stacking %d frame(s) at %dx%d using up to %d worker(s)",
 		len(candidates), refW, refH, workers)
+	
+	// Rough estimation based on previous runs or a base formula
+	// Assuming ~0.05s per megapixel per worker
+	estSecs := float64(len(candidates)) * (float64(refW*refH) / 1e6) * 0.05 / float64(workers)
+	if estSecs < 1 { estSecs = 1 }
+	logf("Estimated processing time: ~%.1f seconds", estSecs)
 	if opts.Register {
 		logf("Registration: ON (use --no-register to disable)")
 	} else {
@@ -1821,6 +1830,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 // ============== Pass 1: decode, detect stars, accumulate unregistered
 	unregAcc := newAccumulator(refW, refH)
 	var storedFrames []*frame
+	var maxPix, minPix []float32
 	starLists := make([][]star, len(candidates))
 	var accepted []candidate
 	for i, c := range candidates {
@@ -1837,6 +1847,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			continue
 		}
 		calibrate(f, darkFrame, flatFrame, biasFrame)
+		if maxPix == nil {
+			maxPix = make([]float32, len(f.Pix))
+			minPix = make([]float32, len(f.Pix))
+			copy(maxPix, f.Pix)
+			copy(minPix, f.Pix)
+		} else {
+			for j, v := range f.Pix {
+				if v > maxPix[j] { maxPix[j] = v }
+				if v < minPix[j] { minPix[j] = v }
+			}
+		}
+
 		if opts.Register {
 			starLists[len(accepted)] = detectStars(f, 100)
 		}
@@ -2089,6 +2111,28 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 
+	// Max/Min outputs
+	maxTiff := filepath.Join(tiffDir, "stacked_max.tiff")
+	minTiff := filepath.Join(tiffDir, "stacked_min.tiff")
+	maxJPG := filepath.Join(outputDir, "stacked_max.jpg")
+	minJPG := filepath.Join(outputDir, "stacked_min.jpg")
+
+	logf("Writing max (brightest pixels) TIFF")
+	if err := writeFileAtomic(maxTiff, func(w io.Writer) error {
+		return writeFloat32RGB(w, refW, refH, maxPix)
+	}); err != nil { return fmt.Errorf("write max tiff: %w", err) }
+	if err := writeFileAtomic(maxJPG, func(w io.Writer) error {
+		return writePreviewJPEG(w, refW, refH, maxPix)
+	}); err != nil { return fmt.Errorf("write max jpg: %w", err) }
+
+	logf("Writing min (darkest pixels) TIFF")
+	if err := writeFileAtomic(minTiff, func(w io.Writer) error {
+		return writeFloat32RGB(w, refW, refH, minPix)
+	}); err != nil { return fmt.Errorf("write min tiff: %w", err) }
+	if err := writeFileAtomic(minJPG, func(w io.Writer) error {
+		return writePreviewJPEG(w, refW, refH, minPix)
+	}); err != nil { return fmt.Errorf("write min jpg: %w", err) }
+
 	// No-correction mean (always from unregistered accumulator)
 	if registrationOn {
 		unregAcc.divide()
@@ -2175,6 +2219,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			sumTiff, sumJPG,
 			meanTiff, meanJPG,
 			noCorrTiff, noCorrJPG,
+			maxTiff, maxJPG, minTiff, minJPG,
 			previewJPG,
 		}, append(postOutputs, reportTxt)...),
 		Workers:            workers,
@@ -2193,7 +2238,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("write report: %w", err)
 	}
 
-	logf("Done in %s -> %s", rep.Duration.Round(time.Millisecond), outputDir)
+	logf("Actual processing time: %s", rep.Duration.Round(time.Millisecond))
+	logf("Done -> %s", outputDir)
 	return nil
 }
 
@@ -3198,11 +3244,14 @@ type bgSample struct {
 	v    [3]float64 // per-channel background estimate
 }
 
-func removeBackground(f *frame, degree int) *frame {
-	mask := make([]bool, f.Width*f.Height)
-	for i := 0; i < f.Width*f.Height; i++ {
-		lum := 0.299*f.Pix[i*3] + 0.587*f.Pix[i*3+1] + 0.114*f.Pix[i*3+2]
-		if lum > 0.1 { mask[i] = true }
+func removeBackground(f *frame, degree int, useMask bool) *frame {
+	var mask []bool
+	if useMask {
+		mask = make([]bool, f.Width*f.Height)
+		for i := 0; i < f.Width*f.Height; i++ {
+			lum := 0.299*f.Pix[i*3] + 0.587*f.Pix[i*3+1] + 0.114*f.Pix[i*3+2]
+			if lum > 0.1 { mask[i] = true }
+		}
 	}
 
 	if degree < 1 || degree > 3 {
@@ -3238,7 +3287,7 @@ func removeBackground(f *frame, degree int) *frame {
 			var rV, gV, bV []float32
 			for y := y0; y < y1; y += subsample {
 				for x := x0; x < x1; x += subsample {
-					if mask[y*f.Width+x] { continue }
+					if useMask && mask[y*f.Width+x] { continue }
 					i := (y*f.Width + x) * 3
 					rV = append(rV, f.Pix[i])
 					gV = append(gV, f.Pix[i+1])
@@ -3413,8 +3462,8 @@ func suppressChromaticAberration(f *frame) *frame {
 	return out
 }
 
-func flattenBackground(f *frame, degree int) *frame {
-	bg := removeBackground(f, degree)
+func flattenBackground(f *frame, degree int, useMask bool) *frame {
+	bg := removeBackground(f, degree, useMask)
 	const pedestal = 0.02
 	for i := range bg.Pix {
 		bg.Pix[i] += pedestal
@@ -3647,7 +3696,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	var outputs []string
 
 	logf("  post step 1: linear background removal")
-	s1 := removeBackground(src, opts.BGDegree)
+	s1 := removeBackground(src, opts.BGDegree, opts.MaskBG)
 	p1 := filepath.Join(outputDir, "post_step1_background_removed.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p1), s1); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p1)
@@ -3677,7 +3726,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	outputs = append(outputs, p3c)
 
 	logf("  post step 4: post-stretch background flattening")
-	s4 := flattenBackground(s3c, 2)
+	s4 := flattenBackground(s3c, 2, opts.MaskBG)
 	p4 := filepath.Join(outputDir, "post_step4_vignette_removed.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p4), s4); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p4)
@@ -3782,7 +3831,7 @@ func testBackgroundRemoval() error {
 			}
 		}
 	}
-	result := removeBackground(f, 2)
+	result := removeBackground(f, 2, false)
 	// Residuals should be small away from stars
 	var sumRes float64
 	var nRes int
@@ -3976,6 +4025,7 @@ func main() {
 		FlatFile:      opts.FlatFile,
 		BiasFile:      opts.BiasFile,
 		Method:        opts.Method,
+		MaskBG:        opts.MaskBG,
 		PostProcess:   opts.PostProcess,
 		StackOnly:     opts.StackOnly,
 		PostOnly:      opts.PostOnly,
