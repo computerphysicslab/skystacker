@@ -3174,6 +3174,12 @@ type bgSample struct {
 }
 
 func removeBackground(f *frame, degree int) *frame {
+	mask := make([]bool, f.Width*f.Height)
+	for i := 0; i < f.Width*f.Height; i++ {
+		lum := 0.299*f.Pix[i*3] + 0.587*f.Pix[i*3+1] + 0.114*f.Pix[i*3+2]
+		if lum > 0.1 { mask[i] = true }
+	}
+
 	if degree < 1 || degree > 3 {
 		degree = 2
 	}
@@ -3207,6 +3213,7 @@ func removeBackground(f *frame, degree int) *frame {
 			var rV, gV, bV []float32
 			for y := y0; y < y1; y += subsample {
 				for x := x0; x < x1; x += subsample {
+					if mask[y*f.Width+x] { continue }
 					i := (y*f.Width + x) * 3
 					rV = append(rV, f.Pix[i])
 					gV = append(gV, f.Pix[i+1])
