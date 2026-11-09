@@ -63,6 +63,7 @@ type cliOptions struct {
 	DarkFile      string
 	FlatFile      string
 	BiasFile      string
+	CalibRoot     string
 	PostProcess   bool
 	StackOnly     bool
 	PostOnly      bool
@@ -92,7 +93,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.MaskBG, "mask-bg", false, "mask bright objects during background extraction")
 	fs.StringVar(&o.DarkFile, "dark", "", "path to dark frame for calibration")
 	fs.StringVar(&o.FlatFile, "flat", "", "path to flat frame for calibration")
-	fs.StringVar(&o.BiasFile, "bias", "", "path to bias frame for calibration")
+	fs.StringVar(&o.BiasFile, "bias", "", "path to bias frame or folder for calibration")
+	fs.StringVar(&o.CalibRoot, "calib-root", "", "auto-detect Bias/Darks/Flats inside this root folder")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
 	var noPostProcess bool
 	var stackOnly, postOnly bool
@@ -1676,6 +1678,7 @@ type runOptions struct {
 	DarkFile      string
 	FlatFile      string
 	BiasFile      string
+	CalibRoot     string
 	Method        string
 	MaskBG        bool
 	PostProcess   bool
@@ -1691,6 +1694,35 @@ type runOptions struct {
 	StarReduce    float64
 }
 
+
+
+func stackCalibrationFolder(path string) (*frame, error) {
+	info, err := os.Stat(path)
+	if err != nil { return nil, err }
+	if !info.IsDir() {
+		return decodeImageFile(path)
+	}
+	files, err := discoverFiles(path, false, nil)
+	if err != nil || len(files) == 0 {
+		return nil, nil // No files found, skip
+	}
+	logf("  Stacking calibration frames from %s (%d files)", filepath.Base(path), len(files))
+	var master *frame
+	count := 0
+	for _, f := range files {
+		img, err := decodeImageFile(f)
+		if err != nil { continue }
+		if master == nil {
+			master = &frame{Width: img.Width, Height: img.Height, Pix: make([]float32, len(img.Pix))}
+		}
+		for i := range img.Pix { master.Pix[i] += img.Pix[i] }
+		count++
+	}
+	if count > 0 {
+		for i := range master.Pix { master.Pix[i] /= float32(count) }
+	}
+	return master, nil
+}
 
 func getAvailableMemoryMB() int {
 	data, err := os.ReadFile("/proc/meminfo")
@@ -1853,17 +1885,25 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		logf("Registration: OFF")
 	}
 
-		var darkFrame, flatFrame, biasFrame *frame
+		// Auto-detect calibration frames if --calib-root is provided
+	if opts.CalibRoot != "" {
+		filterName := filepath.Base(inputDir) // e.g., "Luminance", "Red"
+		opts.BiasFile = filepath.Join(opts.CalibRoot, "Bias")
+		opts.DarkFile = filepath.Join(opts.CalibRoot, "Darks")
+		opts.FlatFile = filepath.Join(opts.CalibRoot, "Flats", filterName)
+	}
+
+	var darkFrame, flatFrame, biasFrame *frame
 	if opts.DarkFile != "" {
-		darkFrame, err = decodeImageFile(opts.DarkFile)
+		darkFrame, err = stackCalibrationFolder(opts.DarkFile)
 		if err != nil { return err }
 	}
 	if opts.FlatFile != "" {
-		flatFrame, err = decodeImageFile(opts.FlatFile)
+		flatFrame, err = stackCalibrationFolder(opts.FlatFile)
 		if err != nil { return err }
 	}
 	if opts.BiasFile != "" {
-		biasFrame, err = decodeImageFile(opts.BiasFile)
+		biasFrame, err = stackCalibrationFolder(opts.BiasFile)
 		if err != nil { return err }
 	}
 
@@ -3135,13 +3175,14 @@ func testPipelinePostOnly() error {
 	for _, name := range []string{
 		"post_step1_background_removed.jpg",
 		"post_step2_chromatic_aberration_reduced.jpg",
-		"post_step3a_gentle_stretch.jpg",
-		"post_step3b_moderate_stretch.jpg",
-		"post_step3c_full_stretch.jpg",
+		"post_step8a_gentle_stretch.jpg",
+		"post_step8b_moderate_stretch.jpg",
+		"post_step8c_full_stretch.jpg",
 		"post_step4_vignette_removed.jpg",
-		"post_step6_sharpened.jpg",
-		"post_step7_hdr.jpg",
-		"post_step8_star_reduced.jpg",
+		"post_step5_sharpened.jpg",
+		"post_step6_hdr.jpg",
+		"post_step7_star_reduced.jpg",
+		"post_step3_color_calibrated.jpg",
 		"TIFF/stacked_processed.tiff",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
@@ -3873,64 +3914,68 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if err := writePostPreview(outputDir, filepath.Base(p2), s2); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p2)
 
-	var s2b *frame
+	logf("  post step 3: color calibration (pre-stretch)")
+	var s3 *frame
 	if opts.NoColorCalib {
-		s2b = s2
+		s3 = s2
 	} else {
-		logf("  post step 2b: color calibration (pre-stretch)")
-		s2b = calibrateColor(s2)
+		s3 = calibrateColor(s2)
 	}
-
-	logf("  post step 3a: gentle stretch")
-	s3a := stretchContrast(s2b, 1)
-	p3a := filepath.Join(outputDir, "post_step3a_gentle_stretch.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p3a), s3a); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p3a)
-
-	logf("  post step 3b: moderate stretch")
-	s3b := stretchContrast(s2b, 2)
-	p3b := filepath.Join(outputDir, "post_step3b_moderate_stretch.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p3b), s3b); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p3b)
-
-	logf("  post step 3c: full stretch")
-	s3c := stretchContrast(s2b, 3)
-	p3c := filepath.Join(outputDir, "post_step3c_full_stretch.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p3c), s3c); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p3c)
+	p3 := filepath.Join(outputDir, "post_step3_color_calibrated.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p3), s3); err != nil { logf("  WARNING: %v", err) }
+	outputs = append(outputs, p3)
 
 	logf("  post step 4: post-stretch background flattening")
-	s4 := flattenBackground(s3c, 2, opts.MaskBG)
+	s4 := flattenBackground(s3, 2, opts.MaskBG)
 	p4 := filepath.Join(outputDir, "post_step4_vignette_removed.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p4), s4); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p4)
 
-	var s6 *frame
+	logf("  post step 5: unsharp mask")
+	var s5 *frame
 	if opts.NoSharpen {
-		s6 = s4
+		s5 = s4
 	} else {
-		logf("  post step 6: unsharp mask")
-		s6 = unsharpMask(s4, opts.SharpenAmount, opts.SharpenRadius)
+		s5 = unsharpMask(s4, opts.SharpenAmount, opts.SharpenRadius)
 	}
-	p6 := filepath.Join(outputDir, "post_step6_sharpened.jpg")
+	p5 := filepath.Join(outputDir, "post_step5_sharpened.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p5), s5); err != nil { logf("  WARNING: %v", err) }
+	outputs = append(outputs, p5)
+
+	logf("  post step 6: HDR filter (local contrast & saturation)")
+	s6 := applyHDR(s5, opts.HDRAmount)
+	p6 := filepath.Join(outputDir, "post_step6_hdr.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p6), s6); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p6)
 
-	logf("  post step 7: HDR filter (local contrast & saturation)")
-	s7 := applyHDR(s6, opts.HDRAmount)
-	p7 := filepath.Join(outputDir, "post_step7_hdr.jpg")
+	logf("  post step 7: star reduction (pinpoint stars)")
+	s7 := reduceStars(s6, opts.StarReduce)
+	p7 := filepath.Join(outputDir, "post_step7_star_reduced.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p7), s7); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p7)
 
-	logf("  post step 8: star reduction (pinpoint stars)")
-	s8 := reduceStars(s7, opts.StarReduce)
-	p8 := filepath.Join(outputDir, "post_step8_star_reduced.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p8), s8); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p8)
+	logf("  post step 8a: gentle stretch")
+	s8a := stretchContrast(s7, 1)
+	p8a := filepath.Join(outputDir, "post_step8a_gentle_stretch.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p8a), s8a); err != nil { logf("  WARNING: %v", err) }
+	outputs = append(outputs, p8a)
 
+	logf("  post step 8b: moderate stretch")
+	s8b := stretchContrast(s7, 2)
+	p8b := filepath.Join(outputDir, "post_step8b_moderate_stretch.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p8b), s8b); err != nil { logf("  WARNING: %v", err) }
+	outputs = append(outputs, p8b)
+
+	logf("  post step 8c: full stretch")
+	s8c := stretchContrast(s7, 3)
+	p8c := filepath.Join(outputDir, "post_step8c_full_stretch.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p8c), s8c); err != nil { logf("  WARNING: %v", err) }
+	outputs = append(outputs, p8c)
+
+	// Save the moderate stretch as the default processed TIFF
 	tiffPath := filepath.Join(outputDir, "TIFF", "stacked_processed.tiff")
 	if err := writeFileAtomic(tiffPath, func(w io.Writer) error {
-		return writeFloat32RGB(w, s8.Width, s8.Height, s8.Pix)
+		return writeFloat32RGB(w, s8b.Width, s8b.Height, s8b.Pix)
 	}); err != nil {
 		return outputs, fmt.Errorf("post-process: write final tiff: %w", err)
 	}
