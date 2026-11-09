@@ -2133,6 +2133,16 @@ func runSelfTests() int {
 		{"postprocess color calibration", testColorCalibration},
 		{"postprocess gaussian blur", testGaussianBlur},
 		{"postprocess unsharp mask", testUnsharpMask},
+		{"resample translation", testResampleTranslation},
+		{"resample round trip", testResampleRoundTrip},
+		{"registration with outliers", testRegistrationWithOutliers},
+		{"star detection empty", testStarDetectionEmpty},
+		{"star detection edge stars", testStarDetectionEdgeStars},
+		{"parse args", testParseArgs},
+		{"atomic write cleanup", testAtomicWriteCleanup},
+		{"pipeline stack-only", testPipelineStackOnly},
+		{"pipeline post-only", testPipelinePostOnly},
+		{"report contains", testReportContains},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -2587,6 +2597,383 @@ func testSafeCrop() error {
 	}
 	if crop.Min.X != 0 || crop.Max.X != 10 {
 		return fmt.Errorf("crop x = %d..%d, want 0..10", crop.Min.X, crop.Max.X)
+	}
+	return nil
+}
+
+// =========================================================================
+// v0.4.3 TEST ADDITIONS — resampling, registration robustness, CLI, pipeline
+// =========================================================================
+
+// testResampleTranslation checks that a non-identity similarity actually
+// moves samples. This is the single most important test missing from v0.4.2:
+// every existing resampling test uses identitySimilarity, so a sign flip in
+// sampleBilinear or a direction error in similarity would go unnoticed.
+func testResampleTranslation() error {
+	const w, h = 5, 5
+	src := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	// Bright pixel at (1, 1)
+	idx := (1*w + 1) * 3
+	src.Pix[idx], src.Pix[idx+1], src.Pix[idx+2] = 1, 1, 1
+
+	// sim maps source → reference by translating (+2, 0).
+	// So reference pixel (3, 1) samples source (1, 1) → should be bright.
+	sim := similarity{SC: 1, SS: 0, Tx: 2, Ty: 0}
+	out := resampleToReference(src, sim, w, h, 1)
+
+	if got := out.Pix[(1*w+3)*3]; got < 0.9 {
+		return fmt.Errorf("expected bright at (3,1), got %v", got)
+	}
+	if got := out.Pix[(1*w+1)*3]; got > 0.1 {
+		return fmt.Errorf("expected dark at (1,1), got %v", got)
+	}
+	return nil
+}
+
+// testResampleRoundTrip: forward then inverse transform must recover the
+// source for integer translations (bilinear at integer offsets is exact).
+// This exercises similarity.inverse(), which was previously tested only
+// for a single point pair, not through the whole resampler.
+func testResampleRoundTrip() error {
+	const w, h = 8, 8
+	src := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range src.Pix {
+		src.Pix[i] = float32((i*37)%100) / 100
+	}
+
+	sim := similarity{SC: 1, SS: 0, Tx: -2, Ty: 3}
+	inv := sim.inverse()
+
+	fwd := resampleToReference(src, sim, w, h, 1)
+	// Resample fwd back through inv: net transform is identity, so pixels
+	// that remained in bounds should match src.
+	back := resampleToReference(fwd, inv, w, h, 1)
+
+	diff := 0
+	for y := 2; y < h-3; y++ {
+		for x := 2; x < w-3; x++ {
+			i := (y*w + x) * 3
+			if math.Abs(float64(back.Pix[i]-src.Pix[i])) > 1e-4 {
+				diff++
+			}
+		}
+	}
+	if diff > 0 {
+		return fmt.Errorf("%d interior pixels differ after round-trip", diff)
+	}
+	return nil
+}
+
+// testRegistrationWithOutliers: RANSAC must survive 10 spurious "stars" in
+// the target frame. Without this, a session with satellite trails or hot
+// pixels could cause the transform to be fitted to garbage.
+func testRegistrationWithOutliers() error {
+	refStars := []star{
+		{X: 100, Y: 100, Flux: 1000}, {X: 200, Y: 150, Flux: 800},
+		{X: 300, Y: 200, Flux: 600}, {X: 150, Y: 300, Flux: 700},
+		{X: 250, Y: 350, Flux: 500}, {X: 400, Y: 250, Flux: 400},
+		{X: 180, Y: 220, Flux: 300}, {X: 280, Y: 180, Flux: 250},
+		{X: 350, Y: 300, Flux: 200},
+	}
+	theta := 2.0 * math.Pi / 180
+	T := similarity{SC: math.Cos(theta), SS: math.Sin(theta), Tx: 5, Ty: 3}
+	Tinv := T.inverse()
+
+	var tgtStars []star
+	for _, s := range refStars {
+		p := Tinv.apply(point2D{s.X, s.Y})
+		tgtStars = append(tgtStars, star{X: p.X, Y: p.Y, Flux: s.Flux})
+	}
+	// 10 spurious detections scattered across the field
+	for i := 0; i < 10; i++ {
+		tgtStars = append(tgtStars, star{
+			X: float64(500 + i*15), Y: float64(500 + i*11), Flux: 50,
+		})
+	}
+
+	_, inliers, ok := matchStarsToReference(refStars, tgtStars)
+	if !ok {
+		return errors.New("matchStarsToReference failed with outliers present")
+	}
+	if inliers < 8 {
+		return fmt.Errorf("only %d inliers, want ≥8 of 9 true stars", inliers)
+	}
+	return nil
+}
+
+// testStarDetectionEmpty: a perfectly uniform frame must return zero stars
+// and must not panic. Current detectStars has a "no comps" fast path that
+// is untested.
+func testStarDetectionEmpty() error {
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.05
+	}
+	got := detectStars(f, 100)
+	if len(got) != 0 {
+		return fmt.Errorf("expected 0 stars, got %d", len(got))
+	}
+	return nil
+}
+
+// testStarDetectionEdgeStars: stars touching the margin filter must be
+// rejected. Without this, registration can match on partially-clipped
+// stars whose centroids are wrong by several pixels.
+func testStarDetectionEdgeStars() error {
+	const w, h = 40, 40
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.05
+	}
+	// Place stars at (1,1) — inside margin — and (20,20) — well inside
+	place := func(cx, cy int) {
+		for dy := -2; dy <= 2; dy++ {
+			for dx := -2; dx <= 2; dx++ {
+				x, y := cx+dx, cy+dy
+				if x < 0 || y < 0 || x >= w || y >= h {
+					continue
+				}
+				i := (y*w + x) * 3
+				f.Pix[i] += 0.5
+				f.Pix[i+1] += 0.5
+				f.Pix[i+2] += 0.5
+			}
+		}
+	}
+	place(1, 1)
+	place(20, 20)
+	got := detectStars(f, 100)
+	for _, s := range got {
+		if s.X < 3 || s.Y < 3 {
+			return fmt.Errorf("edge star not rejected: (%v, %v)", s.X, s.Y)
+		}
+	}
+	return nil
+}
+
+// testParseArgs: invalid CLI configurations must be rejected at parse time.
+// Right now any --bg-degree, including "0" or "99", is accepted and silently
+// clamped inside removeBackground.
+func testParseArgs() error {
+	cases := []struct {
+		args    []string
+		wantErr bool
+	}{
+		{[]string{"--version"}, false},
+		{[]string{"--bg-degree", "5"}, true},
+		{[]string{"--bg-degree", "0"}, true},
+		{[]string{"--stretch", "-1"}, true},
+		{[]string{"--workers", "0"}, true},
+		{[]string{"--sharpen-amount", "-1"}, true},
+		{[]string{"--sharpen-radius", "0"}, true},
+		{[]string{"--stack-only", "--post-only"}, true},
+		{[]string{"a", "b"}, true}, // two positional args
+		{nil, false},
+	}
+	for i, c := range cases {
+		_, err := parseArgs(c.args)
+		if (err != nil) != c.wantErr {
+			return fmt.Errorf("case %d (%v): wantErr=%v, got err=%v",
+				i, c.args, c.wantErr, err)
+		}
+	}
+	return nil
+}
+
+// testAtomicWriteCleanup: a failed write must not leave a .tmp file behind.
+// The atomic write is the only safety net against partially-written outputs;
+// a .tmp leak there would silently fill disks on every failed run.
+func testAtomicWriteCleanup() error {
+	dir, err := os.MkdirTemp("", "skystacker-atomic-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	path := filepath.Join(dir, "out.bin")
+	writeErr := writeFileAtomic(path, func(w io.Writer) error {
+		_, _ = w.Write([]byte("partial"))
+		return errors.New("simulated encoder failure")
+	})
+	if writeErr == nil {
+		return errors.New("expected error from failing writer")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		return fmt.Errorf("output file exists after failure")
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		return fmt.Errorf("orphan .tmp file after failure")
+	}
+	return nil
+}
+
+// testPipelineStackOnly: end-to-end through runPipeline with --stack-only.
+// This is the highest-level test the project has and catches regressions
+// in output naming, report writing, and directory creation.
+func testPipelineStackOnly() error {
+	dir, err := os.MkdirTemp("", "skystacker-e2e-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	// Write 3 synthetic 32×32 JPEGs
+	const w, h = 32, 32
+	for i := 0; i < 3; i++ {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
+			}
+		}
+		// put a bright "star" at the same spot in every frame
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				img.SetRGBA(16+dx, 16+dy, color.RGBA{255, 255, 255, 255})
+			}
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%02d.jpg", i))
+		fp, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		if err := jpeg.Encode(fp, img, &jpeg.Options{Quality: 95}); err != nil {
+			fp.Close()
+			return err
+		}
+		fp.Close()
+	}
+
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, Workers: 2, Register: true, StackOnly: true,
+	}); err != nil {
+		return fmt.Errorf("runPipeline: %w", err)
+	}
+
+	outDir := filepath.Join(dir, "skystacker_results")
+	for _, name := range []string{
+		"stacked_mean.tiff", "stacked_mean.jpg",
+		"stacked_no_correction_mean.tiff", "stacked_no_correction_mean.jpg",
+		"stacked_sum.tiff", "stacked_sum.jpg", "report.txt",
+	} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			return fmt.Errorf("missing output %s: %w", name, err)
+		}
+	}
+	// --stack-only must NOT create post-processing outputs
+	if _, err := os.Stat(filepath.Join(outDir, "post_step4_sharpened.jpg")); err == nil {
+		return errors.New("post-processing ran during --stack-only")
+	}
+	return nil
+}
+
+// testPipelinePostOnly: --post-only must consume an existing stacked_mean.tiff
+// and produce the four step files. This path is completely untested today.
+func testPipelinePostOnly() error {
+	dir, err := os.MkdirTemp("", "skystacker-postonly-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	outDir := filepath.Join(dir, "skystacker_results")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+
+	// Write a synthetic stacked_mean.tiff directly
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w*h; i++ {
+		// gradient background + a bright spot
+		x, y := i%w, i/w
+		bg := float32(0.1 + 0.3*float64(x)/float64(w) + 0.1*float64(y)/float64(h))
+		f.Pix[i*3] = bg
+		f.Pix[i*3+1] = bg
+		f.Pix[i*3+2] = bg
+	}
+	// bright spot
+	for dy := -2; dy <= 2; dy++ {
+		for dx := -2; dx <= 2; dx++ {
+			i := ((30+dy)*w + 32 + dx) * 3
+			f.Pix[i] += 0.5
+			f.Pix[i+1] += 0.5
+			f.Pix[i+2] += 0.5
+		}
+	}
+	if err := writeFileAtomic(filepath.Join(outDir, "stacked_mean.tiff"),
+		func(out io.Writer) error { return writeFloat32RGB(out, w, h, f.Pix) }); err != nil {
+		return err
+	}
+
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, PostOnly: true, BGDegree: 2, StretchFactor: 10,
+		SharpenAmount: 0.8, SharpenRadius: 1.5,
+	}); err != nil {
+		return fmt.Errorf("runPipeline --post-only: %w", err)
+	}
+
+	for _, name := range []string{
+		"post_step1_background_removed.jpg",
+		"post_step2_contrast_stretched.jpg",
+		"post_step3_color_calibrated.jpg",
+		"post_step4_sharpened.jpg",
+		"stacked_processed.tiff",
+	} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			return fmt.Errorf("missing post output %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// testReportContains: report.txt must contain the exact caveats the project
+// promises in its documentation. A silent drop of the "no registration"
+// caveat would ship a scientifically misleading report.
+func testReportContains() error {
+	dir, err := os.MkdirTemp("", "skystacker-report-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	outDir := filepath.Join(dir, "results")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+
+	f := &frame{Width: 4, Height: 4, Pix: make([]float32, 4*4*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.5
+	}
+	if err := writeFileAtomic(filepath.Join(outDir, "stacked_mean.tiff"),
+		func(w io.Writer) error { return writeFloat32RGB(w, 4, 4, f.Pix) }); err != nil {
+		return err
+	}
+
+	rep := &processingReport{
+		Version: version, Timestamp: time.Now(),
+		InputDir: "in", OutputDir: "out",
+		Width: 4, Height: 4, Channels: 3,
+		Method: "test", AccumulatorType: "float32",
+		OutputFormat: "TIFF", OutputScaling: "none",
+		RegistrationOn: false,
+		Notes: []string{
+			"No star registration or calibration was performed.",
+			"JPEG inputs are gamma-encoded.",
+		},
+	}
+	var buf bytes.Buffer
+	if err := rep.writeTo(&buf); err != nil {
+		return err
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"SkyStacker", "Registration:", "Notes:",
+		"No star registration or calibration",
+	} {
+		if !strings.Contains(out, want) {
+			return fmt.Errorf("report missing %q", want)
+		}
 	}
 	return nil
 }

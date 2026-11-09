@@ -78,3 +78,17 @@ jobs:
         run: go install .
       - name: Run installed binary
         run: $(go env GOPATH)/bin/skystacker --version
+
+  race:
+    name: Self-test under -race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+          cache: false
+      - name: Build with race detector
+        run: go build -race -o skystacker-race main.go
+      - name: Run self-tests under -race
+        run: ./skystacker-race --selftest
