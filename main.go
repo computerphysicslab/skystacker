@@ -1804,9 +1804,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	
 	// Rough estimation based on previous runs or a base formula
 	// Assuming ~0.05s per megapixel per worker
-	estSecs := float64(len(candidates)) * (float64(refW*refH) / 1e6) * 0.05 / float64(workers)
-	if estSecs < 1 { estSecs = 1 }
-	logf("Estimated processing time: ~%.1f seconds", estSecs)
+	// JPEG decoding is single-threaded I/O bound. Workers only help with math.
+	// Roughly 0.25s per megapixel per frame, plus 10s for post-processing.
+	estSecs := float64(len(candidates)) * (float64(refW*refH) / 1e6) * 0.25
+	if opts.PostProcess && !opts.StackOnly { estSecs += 15.0 }
+	logf("Estimated processing time: ~%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second))
 	if opts.Register {
 		logf("Registration: ON (use --no-register to disable)")
 	} else {
@@ -3073,7 +3075,6 @@ func testPipelinePostOnly() error {
 		"post_step3b_moderate_stretch.jpg",
 		"post_step3c_full_stretch.jpg",
 		"post_step4_vignette_removed.jpg",
-		"post_step5_color_calibrated.jpg",
 		"post_step6_sharpened.jpg",
 		"TIFF/stacked_processed.tiff",
 	} {
@@ -3482,12 +3483,16 @@ func calibrateColor(f *frame) *frame {
 		}
 	}
 	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
-	thresh := percentile(lums, 20)
+	
+	// Use the mid-tones (10th to 50th percentile) to find the true sky background color.
+	// The darkest 10% might be completely black due to background subtraction.
+	pLow := percentile(lums, 10)
+	pHigh := percentile(lums, 50)
 
 	var rSamples, gSamples, bSamples []float32
 	for i := 0; i < len(f.Pix); i += 3 {
 		l := 0.299*f.Pix[i] + 0.587*f.Pix[i+1] + 0.114*f.Pix[i+2]
-		if l <= thresh {
+		if l >= pLow && l <= pHigh {
 			rSamples = append(rSamples, f.Pix[i])
 			gSamples = append(gSamples, f.Pix[i+1])
 			bSamples = append(bSamples, f.Pix[i+2])
@@ -3502,15 +3507,17 @@ func calibrateColor(f *frame) *frame {
 	medG := float64(gSamples[len(gSamples)/2])
 	medB := float64(bSamples[len(bSamples)/2])
 
-	const eps = 1e-4
+	// Prevent division by zero for very dark channels
+	const eps = 1e-3
 	if medR < eps { medR = eps }
 	if medG < eps { medG = eps }
 	if medB < eps { medB = eps }
 
 	target := (medR + medG + medB) / 3.0
-	scaleR := clampFloat(target/medR, 0.5, 2.0)
-	scaleG := clampFloat(target/medG, 0.5, 2.0)
-	scaleB := clampFloat(target/medB, 0.5, 2.0)
+	// Clamp scales to [0.5, 1.5] to prevent extreme color shifts
+	scaleR := clampFloat(target/medR, 0.5, 1.5)
+	scaleG := clampFloat(target/medG, 0.5, 1.5)
+	scaleB := clampFloat(target/medB, 0.5, 1.5)
 
 	logf("  color calibration: medians R=%.3f G=%.3f B=%.3f -> scales R=%.3f G=%.3f B=%.3f",
 		medR, medG, medB, scaleR, scaleG, scaleB)
@@ -3707,20 +3714,28 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if err := writePostPreview(outputDir, filepath.Base(p2), s2); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p2)
 
+	var s2b *frame
+	if opts.NoColorCalib {
+		s2b = s2
+	} else {
+		logf("  post step 2b: color calibration (pre-stretch)")
+		s2b = calibrateColor(s2)
+	}
+
 	logf("  post step 3a: gentle stretch")
-	s3a := stretchContrast(s2, 0.30)
+	s3a := stretchContrast(s2b, 0.30)
 	p3a := filepath.Join(outputDir, "post_step3a_gentle_stretch.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p3a), s3a); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p3a)
 
 	logf("  post step 3b: moderate stretch")
-	s3b := stretchContrast(s2, 0.15)
+	s3b := stretchContrast(s2b, 0.15)
 	p3b := filepath.Join(outputDir, "post_step3b_moderate_stretch.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p3b), s3b); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p3b)
 
 	logf("  post step 3c: full stretch")
-	s3c := stretchContrast(s2, 0.05)
+	s3c := stretchContrast(s2b, 0.05)
 	p3c := filepath.Join(outputDir, "post_step3c_full_stretch.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p3c), s3c); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p3c)
@@ -3731,23 +3746,12 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if err := writePostPreview(outputDir, filepath.Base(p4), s4); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p4)
 
-	var s5 *frame
-	if opts.NoColorCalib {
-		s5 = s4
-	} else {
-		logf("  post step 5: color calibration")
-		s5 = calibrateColor(s4)
-	}
-	p5 := filepath.Join(outputDir, "post_step5_color_calibrated.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p5), s5); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p5)
-
 	var s6 *frame
 	if opts.NoSharpen {
-		s6 = s5
+		s6 = s4
 	} else {
 		logf("  post step 6: unsharp mask")
-		s6 = unsharpMask(s5, opts.SharpenAmount, opts.SharpenRadius)
+		s6 = unsharpMask(s4, opts.SharpenAmount, opts.SharpenRadius)
 	}
 	p6 := filepath.Join(outputDir, "post_step6_sharpened.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p6), s6); err != nil { logf("  WARNING: %v", err) }
