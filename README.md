@@ -114,7 +114,7 @@ go test ./...
 go build -o skystacker ./cmd/skystacker
 ```
 
-Module path: `github.com/skystacker/skystacker` (adjust if needed for your fork).
+Module path: `github.com/computerphysicslab/skystacker` (adjust if needed for your fork).
 
 ---
 

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} — build & self-test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            ext: ""
+          - os: macos-latest
+            ext: ""
+          - os: windows-latest
+            ext: ".exe"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+
+      - name: Build
+        shell: bash
+        run: go build -o skystacker${{ matrix.ext }} main.go
+
+      - name: Version
+        shell: bash
+        run: ./skystacker${{ matrix.ext }} --version
+
+      - name: Self-test (27 tests)
+        shell: bash
+        run: ./skystacker${{ matrix.ext }} --selftest
+
+      - name: go vet
+        shell: bash
+        run: go vet ./...
+
+      - name: gofmt
+        shell: bash
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "Not gofmt-compliant:"
+            echo "$out"
+            exit 1
+          fi
+
+  install:
+    name: Verify go install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+
+      - name: go install .
+        run: go install .
+
+      - name: Run installed binary
+        run: $(go env GOPATH)/bin/skystacker --version

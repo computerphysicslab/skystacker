@@ -47,15 +47,15 @@ const version = "0.4.1"
 // =========================================================================
 
 type cliOptions struct {
-	InputDir  string
-	OutputDir string
-	Workers   int
-	Recursive bool
-	Overwrite bool
-	Version   bool
-	Help      bool
-	SelfTest  bool
-	Register  bool
+	InputDir      string
+	OutputDir     string
+	Workers       int
+	Recursive     bool
+	Overwrite     bool
+	Version       bool
+	Help          bool
+	SelfTest      bool
+	Register      bool
 	PostProcess   bool
 	StackOnly     bool
 	PostOnly      bool
@@ -1449,35 +1449,35 @@ type rejection struct {
 }
 
 type processingReport struct {
-	Version           string
-	Timestamp         time.Time
-	InputDir          string
-	OutputDir         string
-	Discovered        int
-	Accepted          []string
-	Rejected          []rejection
-	Width             int
-	Height            int
-	Channels          int
-	Method            string
-	AccumulatorType   string
-	OutputFormat      string
-	OutputScaling     string
-	RegistrationOn    bool
-	RegisteredCount   int
-	RegistrationFails []string
-	CropRect          image.Rectangle
-	SumNormalization  float32
+	Version            string
+	Timestamp          time.Time
+	InputDir           string
+	OutputDir          string
+	Discovered         int
+	Accepted           []string
+	Rejected           []rejection
+	Width              int
+	Height             int
+	Channels           int
+	Method             string
+	AccumulatorType    string
+	OutputFormat       string
+	OutputScaling      string
+	RegistrationOn     bool
+	RegisteredCount    int
+	RegistrationFails  []string
+	CropRect           image.Rectangle
+	SumNormalization   float32
 	PostProcessApplied bool
 	BGDegree           int
 	StretchFactor      float64
 	SharpenApplied     bool
 	SharpenAmount      float64
 	SharpenRadius      float64
-	OutputFiles       []string
-	Workers           int
-	Duration          time.Duration
-	Notes             []string
+	OutputFiles        []string
+	Workers            int
+	Duration           time.Duration
+	Notes              []string
 }
 
 type errWriter struct {
@@ -1601,12 +1601,12 @@ func writeFileAtomic(path string, fn func(io.Writer) error) error {
 // =========================================================================
 
 type runOptions struct {
-	InputDir  string
-	OutputDir string
-	Workers   int
-	Recursive bool
-	Overwrite bool
-	Register  bool
+	InputDir      string
+	OutputDir     string
+	Workers       int
+	Recursive     bool
+	Overwrite     bool
+	Register      bool
 	PostProcess   bool
 	StackOnly     bool
 	PostOnly      bool
@@ -1868,7 +1868,6 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 
-
 	sumTiff := filepath.Join(outputDir, "stacked_sum.tiff")
 	sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
 	meanTiff := filepath.Join(outputDir, "stacked_mean.tiff")
@@ -2062,8 +2061,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			noCorrTiff, noCorrJPG,
 			previewJPG,
 		}, append(postOutputs, reportTxt)...),
-		Workers:  workers,
-		Duration: time.Since(start),
+		Workers:            workers,
+		Duration:           time.Since(start),
 		PostProcessApplied: opts.PostProcess && !opts.StackOnly,
 		BGDegree:           opts.BGDegree,
 		StretchFactor:      opts.StretchFactor,
@@ -2746,8 +2745,8 @@ func removeBackground(f *frame, degree int) *frame {
 			sort.Slice(rV, func(i, j int) bool { return rV[i] < rV[j] })
 			sort.Slice(gV, func(i, j int) bool { return gV[i] < gV[j] })
 			sort.Slice(bV, func(i, j int) bool { return bV[i] < bV[j] })
-			cx := float64(x0+x1) / 2.0 / float64(f.Width) * 2.0 - 1.0
-			cy := float64(y0+y1) / 2.0 / float64(f.Height) * 2.0 - 1.0
+			cx := float64(x0+x1)/2.0/float64(f.Width)*2.0 - 1.0
+			cy := float64(y0+y1)/2.0/float64(f.Height)*2.0 - 1.0
 			samples = append(samples, bgSample{
 				x: cx,
 				y: cy,
