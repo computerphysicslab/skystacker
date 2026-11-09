@@ -36,6 +36,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,10 @@ type cliOptions struct {
 	Help          bool
 	SelfTest      bool
 	Register      bool
+	Method        string
+	DarkFile      string
+	FlatFile      string
+	BiasFile      string
 	PostProcess   bool
 	StackOnly     bool
 	PostOnly      bool
@@ -80,6 +85,10 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Overwrite, "overwrite", false, "permit replacing files in the output directory")
 	fs.BoolVar(&o.Version, "version", false, "print version and exit")
 	fs.BoolVar(&o.SelfTest, "selftest", false, "run internal self-tests and exit")
+	fs.StringVar(&o.Method, "method", "mean", "stacking method: mean, median, sigma")
+	fs.StringVar(&o.DarkFile, "dark", "", "path to dark frame for calibration")
+	fs.StringVar(&o.FlatFile, "flat", "", "path to flat frame for calibration")
+	fs.StringVar(&o.BiasFile, "bias", "", "path to bias frame for calibration")
 	fs.StringVar(&o.Method, "method", "mean", "stacking method: mean, median, sigma")
 	fs.StringVar(&o.DarkFile, "dark", "", "path to dark frame for calibration")
 	fs.StringVar(&o.FlatFile, "flat", "", "path to flat frame for calibration")
@@ -232,17 +241,6 @@ type frame struct {
 }
 
 
-func frameFromFITS(hdu *fits.HDU) (*frame, error) {
-	if len(hdu.Axes) < 2 { return nil, errors.New("FITS: not a 2D image") }
-	w, h := hdu.Axes[0], hdu.Axes[1]
-	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	data := hdu.Data()
-	for i := 0; i < w*h; i++ {
-		v := float32(data[i])
-		f.Pix[i*3], f.Pix[i*3+1], f.Pix[i*3+2] = v, v, v
-	}
-	return f, nil
-}
 
 func calibrate(f *frame, dark, flat, bias *frame) {
 	if dark != nil {
@@ -259,46 +257,56 @@ func calibrate(f *frame, dark, flat, bias *frame) {
 }
 
 func decodeImageConfig(path string) (image.Config, error) {
-    ext := strings.ToLower(filepath.Ext(path))
-    if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
-        cmd := exec.Command("magick", "identify", "-format", "%w %h", path)
-        var out bytes.Buffer
-        cmd.Stdout = &out
-        if err := cmd.Run(); err != nil {
-            return image.Config{}, fmt.Errorf("identify %s failed: %w", ext, err)
-        }
-        parts := strings.Fields(out.String())
-        if len(parts) != 2 { return image.Config{}, errors.New("invalid dimensions") }
-        w, _ := strconv.Atoi(parts[0])
-        h, _ := strconv.Atoi(parts[1])
-        return image.Config{Width: w, Height: h}, nil
-    }
-    f, err := os.Open(path)
-    if err != nil { return image.Config{}, err }
-    defer f.Close()
-    cfg, _, err := image.DecodeConfig(f)
-    return cfg, err
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
+		cmd := exec.Command("magick", "identify", "-format", "%w %h", path)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			return image.Config{}, fmt.Errorf("identify %s failed: %w", ext, err)
+		}
+		parts := strings.Fields(out.String())
+		if len(parts) != 2 {
+			return image.Config{}, errors.New("invalid dimensions")
+		}
+		w, _ := strconv.Atoi(parts[0])
+		h, _ := strconv.Atoi(parts[1])
+		return image.Config{Width: w, Height: h}, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return image.Config{}, err
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	return cfg, err
 }
 
 func decodeImageFile(path string) (*frame, error) {
-    ext := strings.ToLower(filepath.Ext(path))
-    if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
-        cmd := exec.Command("magick", path, "-depth", "32", "tiff:-")
-        var out bytes.Buffer
-        cmd.Stdout = &out
-        if err := cmd.Run(); err != nil {
-            return nil, fmt.Errorf("decode %s failed (requires ImageMagick): %w", ext, err)
-        }
-        img, _, err := image.Decode(&out)
-        if err != nil { return nil, err }
-        return frameFromImage(img)
-    }
-    f, err := os.Open(path)
-    if err != nil { return nil, err }
-    defer f.Close()
-    img, _, err := image.Decode(f)
-    if err != nil { return nil, err }
-    return frameFromImage(img)
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
+		cmd := exec.Command("magick", path, "-depth", "32", "tiff:-")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("decode %s failed (requires ImageMagick): %w", ext, err)
+		}
+		img, _, err := image.Decode(&out)
+		if err != nil {
+			return nil, err
+		}
+		return frameFromImage(img)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return nil, err
+	}
+	return frameFromImage(img)
 }
 
 func frameFromImage(img image.Image) (*frame, error) {
@@ -1710,7 +1718,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if _, err := os.Stat(outputDir); err != nil {
 			return fmt.Errorf("--post-only: output directory does not exist: %w", err)
 		}
-		meanPath := filepath.Join(outputDir, "stacked_mean.tiff")
+		meanPath := filepath.Join(outputDir, "TIFF", "stacked_mean.tiff")
 		if _, err := os.Stat(meanPath); err != nil {
 			return fmt.Errorf("--post-only: %s not found: %w", meanPath, err)
 		}
@@ -1802,6 +1810,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		logf("  [pass1 %d/%d] %s", i+1, len(candidates), filepath.Base(c.path))
 		f, err := decodeImageFile(c.path)
+		if err == nil {
+			calibrate(f, darkFrame, flatFrame, biasFrame)
+		}
+		if err == nil {
+			calibrate(f, darkFrame, flatFrame, biasFrame)
+		}
 		if err != nil {
 			rejected = append(rejected, rejection{
 				Path:   c.path,
@@ -1901,6 +1915,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 			logf("  [pass2 %d/%d] %s", i+1, len(accepted), filepath.Base(c.path))
 			f, err := decodeImageFile(c.path)
+		if err == nil {
+			calibrate(f, darkFrame, flatFrame, biasFrame)
+		}
+		if err == nil {
+			calibrate(f, darkFrame, flatFrame, biasFrame)
+		}
 			if err != nil {
 				// Unlikely (already decoded) but be safe.
 				return fmt.Errorf("re-decode %s: %w", c.path, err)
@@ -2933,7 +2953,8 @@ func testPipelinePostOnly() error {
 	}
 	defer os.RemoveAll(dir)
 	outDir := filepath.Join(dir, "skystacker_results")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o755)
+	os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755); err != nil {
 		return err
 	}
 
@@ -2957,6 +2978,7 @@ func testPipelinePostOnly() error {
 			f.Pix[i+2] += 0.5
 		}
 	}
+	os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755)
 	os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755)
 	os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755)
 	if err := writeFileAtomic(filepath.Join(outDir, "TIFF", "stacked_mean.tiff"),
@@ -3009,6 +3031,7 @@ func testReportContains() error {
 	}
 	os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755)
 os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755)
+	os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755)
 	if err := writeFileAtomic(filepath.Join(outDir, "TIFF", "stacked_mean.tiff"),
 		func(w io.Writer) error { return writeFloat32RGB(w, 4, 4, f.Pix) }); err != nil {
 		return err
