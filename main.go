@@ -3339,76 +3339,28 @@ func removeBackground(f *frame, degree int) *frame {
 
 // --- Step 2: contrast stretch (asinh) ---
 
-func stretchContrast(f *frame, targetBG float64) *frame {
-	const step = 4
-	var lums, rVals, gVals, bVals []float32
-	for y := 0; y < f.Height; y += step {
-		for x := 0; x < f.Width; x += step {
-			i := (y*f.Width + x) * 3
-			r := f.Pix[i]; g := f.Pix[i+1]; b := f.Pix[i+2]
-			rVals = append(rVals, r)
-			gVals = append(gVals, g)
-			bVals = append(bVals, b)
-			lums = append(lums, 0.299*r+0.587*g+0.114*b)
-		}
+func stretchContrast(f *frame, stretch float64) *frame {
+	if stretch <= 0 { stretch = 10 }
+	D := 1.5 * stretch
+	SP := 0.15
+	HP := 0.8
+	LP := 0.0
+	ghs := func(x float64) float64 {
+		if x <= LP { return 0 }
+		if x >= HP { return x }
+		xNorm := (x - LP) / (HP - LP)
+		num := (1 + D) * SP * xNorm
+		den := xNorm + D*SP
+		if den == 0 { return 0 }
+		res := num / den
+		return (1-HP)*res + HP*x
 	}
-	sort.Slice(rVals, func(i, j int) bool { return rVals[i] < rVals[j] })
-	sort.Slice(gVals, func(i, j int) bool { return gVals[i] < gVals[j] })
-	sort.Slice(bVals, func(i, j int) bool { return bVals[i] < bVals[j] })
-	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
-
-	pBlackR := float64(percentile(rVals, 0.5))
-	pBlackG := float64(percentile(gVals, 0.5))
-	pBlackB := float64(percentile(bVals, 0.5))
-
-	pWhite := float64(percentile(lums, 99.9))
-	if pWhite <= pBlackR { pWhite = pBlackR + 1e-4 }
-	if pWhite <= pBlackG { pWhite = pBlackG + 1e-4 }
-	if pWhite <= pBlackB { pWhite = pBlackB + 1e-4 }
-
-	invRangeR := 1.0 / (pWhite - pBlackR)
-	invRangeG := 1.0 / (pWhite - pBlackG)
-	invRangeB := 1.0 / (pWhite - pBlackB)
-
-	if targetBG < 0.03 { targetBG = 0.03 }
-	if targetBG > 0.50 { targetBG = 0.50 }
-
-	medianLum := float64(lums[len(lums)/2])
-	mNorm := (medianLum - pBlackR) * invRangeR
-	if mNorm < 0.001 { mNorm = 0.001 }
-	if mNorm > 0.999 { mNorm = 0.999 }
-
-	m := mNorm * (1 - targetBG) / (mNorm*(1-2*targetBG) + targetBG)
-
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
-	for i := 0; i < len(f.Pix); i += 3 {
-		vR := (float64(f.Pix[i]) - pBlackR) * invRangeR
-		if vR < 0 { vR = 0 } else if vR > 1 { vR = 1 }
-		numR := (m - 1) * vR
-		denR := (2*m-1)*vR - m
-		outR := 0.0
-		if math.Abs(denR) > 1e-10 { outR = numR / denR }
-		if outR < 0 { outR = 0 } else if outR > 1 { outR = 1 }
-
-		vG := (float64(f.Pix[i+1]) - pBlackG) * invRangeG
-		if vG < 0 { vG = 0 } else if vG > 1 { vG = 1 }
-		numG := (m - 1) * vG
-		denG := (2*m-1)*vG - m
-		outG := 0.0
-		if math.Abs(denG) > 1e-10 { outG = numG / denG }
-		if outG < 0 { outG = 0 } else if outG > 1 { outG = 1 }
-
-		vB := (float64(f.Pix[i+2]) - pBlackB) * invRangeB
-		if vB < 0 { vB = 0 } else if vB > 1 { vB = 1 }
-		numB := (m - 1) * vB
-		denB := (2*m-1)*vB - m
-		outB := 0.0
-		if math.Abs(denB) > 1e-10 { outB = numB / denB }
-		if outB < 0 { outB = 0 } else if outB > 1 { outB = 1 }
-
-		result.Pix[i] = float32(outR)
-		result.Pix[i+1] = float32(outG)
-		result.Pix[i+2] = float32(outB)
+	for i := range f.Pix {
+		v := float64(f.Pix[i])
+		out := ghs(v)
+		if out > 1 { out = 1 }
+		result.Pix[i] = float32(out)
 	}
 	return result
 }
