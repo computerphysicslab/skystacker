@@ -72,6 +72,8 @@ type cliOptions struct {
 	StretchFactor float64
 	SharpenAmount float64
 	SharpenRadius float64
+	HDRAmount     float64
+	StarReduce    float64
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -103,6 +105,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.StretchFactor, "stretch", 10.0, "asinh stretch factor")
 	fs.Float64Var(&o.SharpenAmount, "sharpen-amount", 0.8, "unsharp mask amount")
 	fs.Float64Var(&o.SharpenRadius, "sharpen-radius", 1.5, "unsharp mask radius in pixels")
+	fs.Float64Var(&o.HDRAmount, "hdr-amount", 0.5, "HDR local contrast amount")
+	fs.Float64Var(&o.StarReduce, "star-reduce", 0.5, "Star reduction amount")
 
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -1683,6 +1687,8 @@ type runOptions struct {
 	StretchFactor float64
 	SharpenAmount float64
 	SharpenRadius float64
+	HDRAmount     float64
+	StarReduce    float64
 }
 
 
@@ -2329,6 +2335,8 @@ func runSelfTests() int {
 		{"postprocess color calibration", testColorCalibration},
 		{"postprocess gaussian blur", testGaussianBlur},
 		{"postprocess unsharp mask", testUnsharpMask},
+		{"postprocess hdr", testHDR},
+		{"postprocess reduce stars", testReduceStars},
 		{"resample translation", testResampleTranslation},
 		{"resample round trip", testResampleRoundTrip},
 		{"registration with outliers", testRegistrationWithOutliers},
@@ -3007,6 +3015,30 @@ func testAtomicWriteCleanup() error {
 // testPipelineStackOnly: end-to-end through runPipeline with --stack-only.
 // This is the highest-level test the project has and catches regressions
 // in output naming, report writing, and directory creation.
+
+func testHDR() error {
+	f := &frame{Width: 10, Height: 10, Pix: make([]float32, 10*10*3)}
+	for i := range f.Pix { f.Pix[i] = 0.2 }
+	out := applyHDR(f, 0.5)
+	for _, v := range out.Pix {
+		if v < 0 || v > 1 { return errors.New("HDR out of bounds") }
+	}
+	return nil
+}
+
+func testReduceStars() error {
+	f := &frame{Width: 5, Height: 5, Pix: make([]float32, 5*5*3)}
+	// Create a fake star
+	for i := range f.Pix { f.Pix[i] = 0.1 }
+	f.Pix[(2*5+2)*3] = 1.0
+	f.Pix[(2*5+3)*3] = 1.0
+	out := reduceStars(f, 1.0)
+	if out.Pix[(2*5+2)*3] >= 1.0 {
+		return errors.New("star was not reduced")
+	}
+	return nil
+}
+
 func testPipelineStackOnly() error {
 	dir, err := os.MkdirTemp("", "skystacker-e2e-")
 	if err != nil {
@@ -3108,6 +3140,8 @@ func testPipelinePostOnly() error {
 		"post_step3c_full_stretch.jpg",
 		"post_step4_vignette_removed.jpg",
 		"post_step6_sharpened.jpg",
+		"post_step7_hdr.jpg",
+		"post_step8_star_reduced.jpg",
 		"TIFF/stacked_processed.tiff",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
@@ -3677,6 +3711,82 @@ func unsharpMask(f *frame, amount, radius float64) *frame {
 
 // --- Pipeline driver ---
 
+
+func applyHDR(f *frame, amount float64) *frame {
+	if amount <= 0 { return f }
+	// Use a large blur for Local Contrast Enhancement (LCE)
+	blurred := gaussianBlur(f, 30.0)
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for i := range f.Pix {
+		v := float64(f.Pix[i]) + (float64(f.Pix[i]) - float64(blurred.Pix[i])) * amount
+		if v < 0 { v = 0 }
+		if v > 1 { v = 1 }
+		result.Pix[i] = float32(v)
+	}
+	// Boost saturation for vivid colors
+	for i := 0; i < len(result.Pix); i += 3 {
+		r, g, b := result.Pix[i], result.Pix[i+1], result.Pix[i+2]
+		lum := 0.299*r + 0.587*g + 0.114*b
+		r = lum + (r-lum)*1.2
+		g = lum + (g-lum)*1.2
+		b = lum + (b-lum)*1.2
+		if r > 1 { r = 1 }; if g > 1 { g = 1 }; if b > 1 { b = 1 }
+		if r < 0 { r = 0 }; if g < 0 { g = 0 }; if b < 0 { b = 0 }
+		result.Pix[i], result.Pix[i+1], result.Pix[i+2] = r, g, b
+	}
+	return result
+}
+
+func reduceStars(f *frame, amount float64) *frame {
+	if amount <= 0 { return f }
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for y := 1; y < f.Height-1; y++ {
+		for x := 1; x < f.Width-1; x++ {
+			i := (y*f.Width + x) * 3
+			r, g, b := f.Pix[i], f.Pix[i+1], f.Pix[i+2]
+			lum := 0.299*r + 0.587*g + 0.114*b
+			
+			if lum > 0.3 {
+				// 3x3 morphological erosion (min filter)
+				var minLum float32 = 1.0
+				minR, minG, minB := r, g, b
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						ni := ((y+dy)*f.Width + (x+dx)) * 3
+						nLum := 0.299*f.Pix[ni] + 0.587*f.Pix[ni+1] + 0.114*f.Pix[ni+2]
+						if nLum < minLum {
+							minLum = nLum
+							minR, minG, minB = f.Pix[ni], f.Pix[ni+1], f.Pix[ni+2]
+						}
+					}
+				}
+				// Soft transition on the mask
+				strength := float32(amount)
+				if lum < 0.5 {
+					strength *= (lum - 0.3) / 0.2
+				}
+				out.Pix[i] = r*(1-strength) + minR*strength
+				out.Pix[i+1] = g*(1-strength) + minG*strength
+				out.Pix[i+2] = b*(1-strength) + minB*strength
+			} else {
+				out.Pix[i], out.Pix[i+1], out.Pix[i+2] = r, g, b
+			}
+		}
+	}
+	// Copy borders
+	for x := 0; x < f.Width; x++ {
+		top := x * 3; bot := ((f.Height-1)*f.Width + x) * 3
+		copy(out.Pix[top:top+3], f.Pix[top:top+3])
+		copy(out.Pix[bot:bot+3], f.Pix[bot:bot+3])
+	}
+	for y := 0; y < f.Height; y++ {
+		left := (y*f.Width) * 3; right := (y*f.Width + f.Width-1) * 3
+		copy(out.Pix[left:left+3], f.Pix[left:left+3])
+		copy(out.Pix[right:right+3], f.Pix[right:right+3])
+	}
+	return out
+}
+
 func floatToByte(v float32) uint8 {
 	if v <= 0 {
 		return 0
@@ -3806,9 +3916,21 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if err := writePostPreview(outputDir, filepath.Base(p6), s6); err != nil { logf("  WARNING: %v", err) }
 	outputs = append(outputs, p6)
 
+	logf("  post step 7: HDR filter (local contrast & saturation)")
+	s7 := applyHDR(s6, opts.HDRAmount)
+	p7 := filepath.Join(outputDir, "post_step7_hdr.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p7), s7); err != nil { logf("  WARNING: %v", err) }
+	outputs = append(outputs, p7)
+
+	logf("  post step 8: star reduction (pinpoint stars)")
+	s8 := reduceStars(s7, opts.StarReduce)
+	p8 := filepath.Join(outputDir, "post_step8_star_reduced.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p8), s8); err != nil { logf("  WARNING: %v", err) }
+	outputs = append(outputs, p8)
+
 	tiffPath := filepath.Join(outputDir, "TIFF", "stacked_processed.tiff")
 	if err := writeFileAtomic(tiffPath, func(w io.Writer) error {
-		return writeFloat32RGB(w, s6.Width, s6.Height, s6.Pix)
+		return writeFloat32RGB(w, s8.Width, s8.Height, s8.Pix)
 	}); err != nil {
 		return outputs, fmt.Errorf("post-process: write final tiff: %w", err)
 	}
@@ -4088,6 +4210,8 @@ func main() {
 		StretchFactor: opts.StretchFactor,
 		SharpenAmount: opts.SharpenAmount,
 		SharpenRadius: opts.SharpenRadius,
+		HDRAmount:     opts.HDRAmount,
+		StarReduce:    opts.StarReduce,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
