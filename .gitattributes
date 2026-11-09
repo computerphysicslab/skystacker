@@ -1,0 +1,25 @@
+# Force LF for text files on all platforms
+* text=auto eol=lf
+
+# Go source: LF only
+*.go    text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+
+# Docs and configuration
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+*.txt   text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Binary files — never touch
+*.jpg   binary
+*.jpeg  binary
+*.JPG   binary
+*.png   binary
+*.tif   binary
+*.tiff  binary
+*.exe   binary

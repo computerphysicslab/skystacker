@@ -7,6 +7,7 @@ on:
     branches: [main]
 
 jobs:
+  # ── Build and self-test on all three OSes ─────────────────────────────
   build-and-test:
     name: ${{ matrix.os }} — build & self-test
     runs-on: ${{ matrix.os }}
@@ -21,13 +22,12 @@ jobs:
           - os: windows-latest
             ext: ".exe"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.20'
+          cache: false   # no dependencies => no go.sum; silences cache warning
 
       - name: Build
         shell: bash
@@ -45,8 +45,17 @@ jobs:
         shell: bash
         run: go vet ./...
 
+  # ── gofmt check runs only on Linux (line endings are deterministic) ───
+  gofmt:
+    name: gofmt check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+          cache: false
       - name: gofmt
-        shell: bash
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then
@@ -55,20 +64,17 @@ jobs:
             exit 1
           fi
 
+  # ── Verify the module path works for `go install` ─────────────────────
   install:
     name: Verify go install
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.20'
-
+          cache: false
       - name: go install .
         run: go install .
-
       - name: Run installed binary
         run: $(go env GOPATH)/bin/skystacker --version
