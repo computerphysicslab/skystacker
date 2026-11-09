@@ -279,3 +279,11 @@ Please open an issue or PR. Review the technical specification first.
 
 **Working tagline:** Fast. Local. Astronomical.  
 **Status:** Early MVP — usable for basic stacking of compatible frames.
+
+---
+
+**Note on clone size:** `astro-test/M31/` originally contained full-resolution
+frames (~48 MB) which remain in git history. The current tree uses 1920px
+downsampled copies (~2 MB). For a fast clone:
+
+    git clone --depth=1 https://github.com/computerphysicslab/skystacker.git
