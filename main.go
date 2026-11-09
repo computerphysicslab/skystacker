@@ -110,7 +110,29 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.HDRAmount, "hdr-amount", 0.5, "HDR local contrast amount")
 	fs.Float64Var(&o.StarReduce, "star-reduce", 0.5, "Star reduction amount")
 
-	if err := fs.Parse(args); err != nil {
+	// Pre-process: move any non-flag arguments to the end so flags can appear anywhere
+// e.g., "skystacker Luminance --method mean" -> "skystacker --method mean Luminance"
+var flagsOnly, positionals []string
+skipNext := false
+for _, arg := range args {
+if skipNext {
+flagsOnly = append(flagsOnly, arg)
+skipNext = false
+continue
+}
+if strings.HasPrefix(arg, "-") {
+flagsOnly = append(flagsOnly, arg)
+// If it's a flag that takes a value (not a bool), skip the next arg
+if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-reduce" {
+skipNext = true
+}
+} else {
+positionals = append(positionals, arg)
+}
+}
+args = append(flagsOnly, positionals...)
+
+if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			o.Help = true
 			return o, nil
