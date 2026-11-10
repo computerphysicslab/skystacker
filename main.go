@@ -653,17 +653,105 @@ func detectStars(f *frame, maxStars int) []star {
 	return detectStarsSigma(f, maxStars, 5.0)
 }
 
+// boxBlurLuminance returns a box-blurred copy of gray using the given
+// radius. It is a separable two-pass filter (horizontal then vertical), so
+// cost is O(W*H) regardless of radius, and edges are handled by clamping
+// the window to [0, W-1] / [0, H-1].
+func boxBlurLuminance(gray []float32, w, h, radius int) []float32 {
+	if radius < 1 {
+		radius = 1
+	}
+	tmp := make([]float32, len(gray))
+	prefixX := make([]float64, w+1)
+	for y := 0; y < h; y++ {
+		rowOff := y * w
+		prefixX[0] = 0
+		for x := 0; x < w; x++ {
+			prefixX[x+1] = prefixX[x] + float64(gray[rowOff+x])
+		}
+		for x := 0; x < w; x++ {
+			x0 := x - radius
+			if x0 < 0 {
+				x0 = 0
+			}
+			x1 := x + radius + 1
+			if x1 > w {
+				x1 = w
+			}
+			tmp[rowOff+x] = float32((prefixX[x1] - prefixX[x0]) / float64(x1-x0))
+		}
+	}
+	out := make([]float32, len(gray))
+	prefixY := make([]float64, h+1)
+	for x := 0; x < w; x++ {
+		prefixY[0] = 0
+		for y := 0; y < h; y++ {
+			prefixY[y+1] = prefixY[y] + float64(tmp[y*w+x])
+		}
+		for y := 0; y < h; y++ {
+			y0 := y - radius
+			if y0 < 0 {
+				y0 = 0
+			}
+			y1 := y + radius + 1
+			if y1 > h {
+				y1 = h
+			}
+			out[y*w+x] = float32((prefixY[y1] - prefixY[y0]) / float64(y1-y0))
+		}
+	}
+	return out
+}
+
+// estimateResidualNoise returns the median absolute deviation (times
+// 1.4826) of a zero-centred residual, which is the standard robust
+// estimate of the background noise sigma.
+func estimateResidualNoise(residual []float32) float64 {
+	const step = 4
+	n := (len(residual) + step - 1) / step
+	sample := make([]float32, 0, n)
+	for i := 0; i < len(residual); i += step {
+		v := residual[i]
+		if v < 0 {
+			v = -v
+		}
+		sample = append(sample, v)
+	}
+	if len(sample) == 0 {
+		return 1e-6
+	}
+	sort.Slice(sample, func(i, j int) bool { return sample[i] < sample[j] })
+	mad := float64(sample[len(sample)/2])
+	sigma := 1.4826 * mad
+	if sigma < 1e-6 {
+		sigma = 1e-6
+	}
+	return sigma
+}
+
 func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 	w, h := f.Width, f.Height
 	gray := grayscale(f)
-	bg, noise := estimateBackgroundNoise(gray)
-	// The histogram returns the lower edge of the median bin. Add one
-	// bin width (1/256) so that background pixels — which may lie
-	// anywhere within the median bin — fall below the threshold rather
-	// than leak through as one giant connected component.
-	bg += 1.0 / 256.0
-	threshold := float32(bg + sigma*noise)
-	bg32 := float32(bg)
+	// High-pass filter: subtract a large-scale box blur so the local
+	// background (dark sky, nebula, galaxy disk, vignetting) is removed
+	// before thresholding. Without this, a single global threshold either
+	// misses stars on bright backgrounds (they do not stand out) or lets
+	// the whole nebula merge into one giant rejected component.
+	//
+	// Radius must exceed the largest star we want to catch (typically
+	// <= 6 px) but stay below the scale of any real nebula structure.
+	// 12 px is a good compromise for 50-200 mm lenses and small refractors.
+	const hpRadius = 12
+	blurred := boxBlurLuminance(gray, w, h, hpRadius)
+	residual := make([]float32, len(gray))
+	for i := range gray {
+		residual[i] = gray[i] - blurred[i]
+	}
+	noise := estimateResidualNoise(residual)
+	threshold := float32(sigma * noise)
+	if threshold < 1.0/512.0 {
+		threshold = 1.0 / 512.0
+	}
 
 	visited := make([]bool, w*h)
 	type comp struct {
@@ -675,7 +763,7 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			i := y*w + x
-			if visited[i] || gray[i] <= threshold {
+			if visited[i] || residual[i] <= threshold {
 				continue
 			}
 			// BFS
@@ -697,7 +785,7 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 							continue
 						}
 						ni := ny*w + nx
-						if visited[ni] || gray[ni] <= threshold {
+						if visited[ni] || residual[ni] <= threshold {
 							continue
 						}
 						visited[ni] = true
@@ -718,7 +806,7 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 		minX, minY, maxX, maxY := w, h, -1, -1
 		for _, p := range c.pixels {
 			py, px := p/w, p%w
-			val := float64(gray[p] - bg32)
+			val := float64(residual[p])
 			if val < 0 {
 				val = 0
 			}
@@ -2767,6 +2855,7 @@ func runSelfTests() int {
 		{"registration with outliers", testRegistrationWithOutliers},
 		{"star detection empty", testStarDetectionEmpty},
 		{"star detection edge stars", testStarDetectionEdgeStars},
+		{"star detection on bright background", testStarDetectionOnBrightBackground},
 		{"parse args", testParseArgs},
 		{"atomic write cleanup", testAtomicWriteCleanup},
 		{"pipeline stack-only", testPipelineStackOnly},
@@ -3402,6 +3491,68 @@ func testStarDetectionEdgeStars() error {
 // testParseArgs: invalid CLI configurations must be rejected at parse time.
 // Right now any --bg-degree, including "0" or "99", is accepted and silently
 // clamped inside removeBackground.
+// testStarDetectionOnBrightBackground verifies that stars sitting on a
+// bright nebula-like gradient are detected just like stars on dark sky.
+// Before the high-pass fix, detectStarsSigma used a single global
+// threshold, which either missed these stars or merged the whole nebula
+// into one giant rejected component.
+func testStarDetectionOnBrightBackground() error {
+	const w, h = 200, 200
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	// Radial nebula: 0.5 in the centre, 0.05 at the edges.
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx := float64(x-100) / 100.0
+			dy := float64(y-100) / 100.0
+			d := math.Sqrt(dx*dx + dy*dy)
+			if d > 1 {
+				d = 1
+			}
+			v := float32(0.5 - 0.45*d)
+			i := (y*w + x) * 3
+			f.Pix[i] = v
+			f.Pix[i+1] = v
+			f.Pix[i+2] = v
+		}
+	}
+	// A star at the very centre of the nebula (brightest local background).
+	for dy := -2; dy <= 2; dy++ {
+		for dx := -2; dx <= 2; dx++ {
+			i := ((100+dy)*w + (100 + dx)) * 3
+			f.Pix[i] += 0.4
+			f.Pix[i+1] += 0.4
+			f.Pix[i+2] += 0.4
+		}
+	}
+	// A second star on dark sky for comparison.
+	for dy := -2; dy <= 2; dy++ {
+		for dx := -2; dx <= 2; dx++ {
+			i := ((20+dy)*w + (20 + dx)) * 3
+			f.Pix[i] += 0.4
+			f.Pix[i+1] += 0.4
+			f.Pix[i+2] += 0.4
+		}
+	}
+	detected := detectStarsSigma(f, 100, 4.0)
+	nebulaStar := false
+	skyStar := false
+	for _, s := range detected {
+		if math.Abs(s.X-100) < 2 && math.Abs(s.Y-100) < 2 {
+			nebulaStar = true
+		}
+		if math.Abs(s.X-20) < 2 && math.Abs(s.Y-20) < 2 {
+			skyStar = true
+		}
+	}
+	if !nebulaStar {
+		return fmt.Errorf("star on bright nebula not detected (got %d stars)", len(detected))
+	}
+	if !skyStar {
+		return fmt.Errorf("star on dark sky not detected (got %d stars)", len(detected))
+	}
+	return nil
+}
+
 func testParseArgs() error {
 	cases := []struct {
 		args    []string
