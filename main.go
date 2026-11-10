@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -2069,6 +2070,13 @@ type frameTransform struct {
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
 
+	// Tighter GC while we hold large frame buffers.  Default GOGC=100 lets
+	// the heap double between collections, which on a sigma/median stack
+	// of ~86 frames x ~46 MB easily pushes RSS past the OS limit and gets
+	// the process OOM-killed during pass 2.  GOGC=50 halves the slack.
+	oldGC := debug.SetGCPercent(50)
+	defer debug.SetGCPercent(oldGC)
+
 	inputDir, err := filepath.Abs(opts.InputDir)
 	if err != nil {
 		return err
@@ -2362,6 +2370,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if unregAcc.Count == 0 && len(storedFrames) == 0 {
 		return fmt.Errorf("no frames accumulated")
 	}
+	// The stacked result now lives in unregAcc.Pix.  Free the raw stored
+	// frames and force a collection: on a sigma/median stack they account
+	// for N x frameSize of live heap (3.8 GB on 86 x 2400x1600 RGB), and
+	// keeping them alive through pass 2 doubles the peak footprint.
+	if n := len(storedFrames); n > 0 {
+		storedFrames = nil
+		runtime.GC()
+		logf("Freed %d stored frame(s) (%.0f MB) before pass 2",
+			n, float64(n)*float64(refW*refH*3*4)/(1024*1024))
+	}
 	starLists = starLists[:len(accepted)]
 
 	// ============== Registration: pick reference, compute transforms
@@ -2453,6 +2471,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				return fmt.Errorf("accumulate %s: %w", c.path, err)
 			}
 		}
+		runtime.GC()
 		cropRect = findSafeCrop(validCount, refW, refH, int32(registeredCount))
 		logf("Crop: x=%d..%d, y=%d..%d (%dx%d)", cropRect.Min.X, cropRect.Max.X-1,
 			cropRect.Min.Y, cropRect.Max.Y-1, cropRect.Dx(), cropRect.Dy())
