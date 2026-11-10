@@ -51,36 +51,40 @@ const version = "0.4.1"
 // =========================================================================
 
 type cliOptions struct {
-	InputDir      string
-	OutputDir     string
-	Workers       int
-	Recursive     bool
-	Overwrite     bool
-	Version       bool
-	Help          bool
-	SelfTest      bool
-	Register      bool
-	Method        string
-	MaskBG        bool
-	DarkFile      string
-	FlatFile      string
-	BiasFile      string
-	CalibRoot     string
-	PostProcess   bool
-	StackOnly     bool
-	PostOnly      bool
-	NoColorCalib  bool
-	NoSharpen     bool
-	BGDegree      int
-	StretchFactor float64
-	SharpenAmount float64
-	SharpenRadius float64
-	HDRAmount     float64
-	StarRadius    int
-	StarSigma     float64
-	BgPercentile  float64
-	Scale         int
-	Force         bool
+	InputDir       string
+	OutputDir      string
+	Workers        int
+	Recursive      bool
+	Overwrite      bool
+	Version        bool
+	Help           bool
+	SelfTest       bool
+	Register       bool
+	Method         string
+	MaskBG         bool
+	DarkFile       string
+	FlatFile       string
+	BiasFile       string
+	CalibRoot      string
+	PostProcess    bool
+	StackOnly      bool
+	PostOnly       bool
+	NoColorCalib   bool
+	NoSharpen      bool
+	BGDegree       int
+	StretchFactor  float64
+	SharpenAmount  float64
+	SharpenRadius  float64
+	HDRAmount      float64
+	StarRadius     int
+	StarSigma      float64
+	BgPercentile   float64
+	NoAutoStretch  bool
+	STFShadowsClip float64
+	STFTargetBG    float64
+	STFLinked      bool
+	Scale          int
+	Force          bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -125,6 +129,10 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.IntVar(&o.StarRadius, "star-radius", 0, "star removal radius in px (0 = auto)")
 	fs.Float64Var(&o.StarSigma, "star-sigma", 4.0, "star detection sigma (lower = more aggressive)")
 	fs.Float64Var(&o.BgPercentile, "bg-percentile", 10.0, "subtract this percentile of luminance (0 disables); higher = darker background")
+	fs.BoolVar(&o.NoAutoStretch, "no-auto-stretch", false, "skip the final PixInsight-style STF/MTF auto-stretch")
+	fs.Float64Var(&o.STFShadowsClip, "stf-shadows", -2.8, "STF shadow clip in units of sigma (default -2.8)")
+	fs.Float64Var(&o.STFTargetBG, "stf-target", 0.25, "STF target background level (default 0.25)")
+	fs.BoolVar(&o.STFLinked, "stf-linked", false, "use linked channels for STF (default unlinked for auto color balance)")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
@@ -229,6 +237,10 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --stretch F       asinh stretch factor (default 10)")
 	fmt.Fprintln(w, "  --sharpen-amount F  unsharp mask amount (default 0.8)")
 	fmt.Fprintln(w, "  --sharpen-radius F  unsharp mask radius (default 1.5)")
+	fmt.Fprintln(w, "  --no-auto-stretch  skip the final STF/MTF auto-stretch")
+	fmt.Fprintln(w, "  --stf-shadows F    STF shadow clip in sigma units (default -2.8)")
+	fmt.Fprintln(w, "  --stf-target F     STF target background level (default 0.25)")
+	fmt.Fprintln(w, "  --stf-linked       use linked channels for STF (default: unlinked)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -1950,33 +1962,37 @@ func writeFileAtomic(path string, fn func(io.Writer) error) error {
 // =========================================================================
 
 type runOptions struct {
-	InputDir      string
-	OutputDir     string
-	Workers       int
-	Recursive     bool
-	Overwrite     bool
-	Register      bool
-	DarkFile      string
-	FlatFile      string
-	BiasFile      string
-	CalibRoot     string
-	Method        string
-	MaskBG        bool
-	PostProcess   bool
-	StackOnly     bool
-	PostOnly      bool
-	NoColorCalib  bool
-	NoSharpen     bool
-	BGDegree      int
-	StretchFactor float64
-	SharpenAmount float64
-	SharpenRadius float64
-	HDRAmount     float64
-	StarRadius    int
-	StarSigma     float64
-	BgPercentile  float64
-	Scale         int
-	Force         bool
+	InputDir       string
+	OutputDir      string
+	Workers        int
+	Recursive      bool
+	Overwrite      bool
+	Register       bool
+	DarkFile       string
+	FlatFile       string
+	BiasFile       string
+	CalibRoot      string
+	Method         string
+	MaskBG         bool
+	PostProcess    bool
+	StackOnly      bool
+	PostOnly       bool
+	NoColorCalib   bool
+	NoSharpen      bool
+	BGDegree       int
+	StretchFactor  float64
+	SharpenAmount  float64
+	SharpenRadius  float64
+	HDRAmount      float64
+	StarRadius     int
+	StarSigma      float64
+	BgPercentile   float64
+	NoAutoStretch  bool
+	STFShadowsClip float64
+	STFTargetBG    float64
+	STFLinked      bool
+	Scale          int
+	Force          bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -2752,6 +2768,8 @@ func runSelfTests() int {
 		{"find CR2 tool", testFindCR2Tool},
 		{"parse dcraw output", testParseDcrawOutput},
 		{"black point shift", testBlackPointShift},
+		{"MTF", testMTF},
+		{"auto stretch", testAutoStretch},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -3550,6 +3568,7 @@ func testPipelinePostOnly() error {
 		"post_step1_background_removed.jpg",
 		"post_step2_star_removed.jpg",
 		"post_step3_dark_background.jpg",
+		"post_step4_auto_stretched.jpg",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			return fmt.Errorf("missing post output %s: %w", name, err)
@@ -3965,6 +3984,60 @@ func testBlackPointShift() error {
 	bright := result.Pix[(w*h-1)*3]
 	if bright < 0.08 {
 		return fmt.Errorf("bright pixel shifted too much: %v", bright)
+	}
+	return nil
+}
+
+func testMTF() error {
+	for _, x := range []float64{0.1, 0.25, 0.5, 0.75, 0.9} {
+		if got := mtf(0.5, x); math.Abs(got-x) > 1e-9 {
+			return fmt.Errorf("MTF(0.5, %v) = %v, want %v", x, got, x)
+		}
+	}
+	for _, x := range []float64{0.05, 0.1, 0.3} {
+		for _, target := range []float64{0.15, 0.25, 0.4} {
+			m := mtf(target, x)
+			back := mtf(m, x)
+			if math.Abs(back-target) > 1e-6 {
+				return fmt.Errorf("roundtrip MTF(MTF(%v,%v),%v) = %v, want %v", target, x, x, back, target)
+			}
+		}
+	}
+	if mtf(0.5, -0.1) != 0 {
+		return errors.New("negative input not clamped")
+	}
+	if mtf(0.5, 1.5) != 1 {
+		return errors.New("overflow input not clamped")
+	}
+	return nil
+}
+
+func testAutoStretch() error {
+	const w, h = 100, 100
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w*h; i++ {
+		v := float32(0.05) + float32(0.001)*float32(i%10)
+		f.Pix[i*3] = v
+		f.Pix[i*3+1] = v
+		f.Pix[i*3+2] = v
+	}
+	f.Pix[(50*w+50)*3] = 0.9
+	f.Pix[(50*w+50)*3+1] = 0.9
+	f.Pix[(50*w+50)*3+2] = 0.9
+
+	out := autoStretch(f, -2.8, 0.25, true)
+	for i, v := range out.Pix {
+		if math.IsNaN(float64(v)) || v < 0 || v > 1.0001 {
+			return fmt.Errorf("out-of-range at %d: %v", i, v)
+		}
+	}
+	bgOut := out.Pix[(10*w+10)*3]
+	if bgOut < 0.10 || bgOut > 0.40 {
+		return fmt.Errorf("background pixel %.3f, want ~0.25", bgOut)
+	}
+	starOut := out.Pix[(50*w+50)*3]
+	if starOut < 0.85 {
+		return fmt.Errorf("bright star %.3f, want ~1.0", starOut)
 	}
 	return nil
 }
@@ -4787,6 +4860,151 @@ func blackPointShift(f *frame, percentile float64) *frame {
 	return result
 }
 
+// mtf implements the Midtones Transfer Function used by PixInsight's STF.
+// MTF(m, x) = ((m-1)*x) / ((2m-1)*x - m).  MTF(0.5, x) = x (identity).
+func mtf(m, x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	if x >= 1 {
+		return 1
+	}
+	num := (m - 1) * x
+	den := (2*m-1)*x - m
+	if den == 0 {
+		return 0
+	}
+	v := num / den
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+// computeSTFParams returns the shadow clip point (c0) and midtones balance
+// (m) for one channel. shadowsClip is in sigma units (PixInsight default
+// -2.8); targetBG is the desired background level after stretching.
+func computeSTFParams(vals []float32, shadowsClip, targetBG float64) (c0, m float64) {
+	if shadowsClip >= 0 {
+		shadowsClip = -2.8
+	}
+	if shadowsClip < -10 {
+		shadowsClip = -10
+	}
+	if targetBG <= 0 || targetBG >= 1 {
+		targetBG = 0.25
+	}
+	if len(vals) == 0 {
+		return 0, 0.5
+	}
+	step := 1
+	if len(vals) > 200000 {
+		step = len(vals) / 100000
+		if step < 1 {
+			step = 1
+		}
+	}
+	sampled := make([]float32, 0, len(vals)/step+1)
+	for i := 0; i < len(vals); i += step {
+		sampled = append(sampled, vals[i])
+	}
+	sort.Slice(sampled, func(i, j int) bool { return sampled[i] < sampled[j] })
+	n := len(sampled)
+	if n == 0 {
+		return 0, 0.5
+	}
+	median := float64(sampled[n/2])
+	absDev := make([]float32, n)
+	for i := 0; i < n; i++ {
+		absDev[i] = float32(math.Abs(float64(sampled[i]) - median))
+	}
+	sort.Slice(absDev, func(i, j int) bool { return absDev[i] < absDev[j] })
+	mad := float64(absDev[n/2])
+	sigma := 1.4826 * mad
+	c0 = median + shadowsClip*sigma
+	if c0 < 0 {
+		c0 = 0
+	}
+	if c0 > 0.99 {
+		c0 = 0.99
+	}
+	medNorm := (median - c0) / (1 - c0)
+	if medNorm <= 1e-4 {
+		medNorm = 1e-4
+	}
+	if medNorm >= 0.999 {
+		medNorm = 0.999
+	}
+	m = mtf(targetBG, medNorm)
+	if math.IsNaN(m) || math.IsInf(m, 0) {
+		m = 0.5
+	}
+	return c0, m
+}
+
+// autoStretch applies a PixInsight-style STF/MTF auto-stretch.  shadowsClip
+// is in units of sigma (default -2.8); targetBG is the target background
+// level (default 0.25).  linked=true shares a single transform across all
+// three channels (preserves channel ratios); linked=false computes a
+// separate transform per channel (better automatic colour balance).
+func autoStretch(f *frame, shadowsClip, targetBG float64, linked bool) *frame {
+	if shadowsClip >= 0 {
+		shadowsClip = -2.8
+	}
+	if targetBG <= 0 || targetBG >= 1 {
+		targetBG = 0.25
+	}
+	const nCh = 3
+	type chanStats struct {
+		c0, m float64
+	}
+	stats := [nCh]chanStats{}
+	if linked {
+		lums := make([]float32, 0, f.Width*f.Height)
+		for i := 0; i < len(f.Pix); i += 3 {
+			lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
+		}
+		c0, m := computeSTFParams(lums, shadowsClip, targetBG)
+		for c := 0; c < nCh; c++ {
+			stats[c] = chanStats{c0: c0, m: m}
+		}
+		logf("  auto-stretch (linked): c0=%.4f m=%.4f", c0, m)
+	} else {
+		for c := 0; c < nCh; c++ {
+			vals := make([]float32, 0, f.Width*f.Height)
+			for i := c; i < len(f.Pix); i += 3 {
+				vals = append(vals, f.Pix[i])
+			}
+			c0, m := computeSTFParams(vals, shadowsClip, targetBG)
+			stats[c] = chanStats{c0: c0, m: m}
+			logf("  auto-stretch: channel %d c0=%.4f m=%.4f", c, c0, m)
+		}
+	}
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for y := 0; y < f.Height; y++ {
+		for x := 0; x < f.Width; x++ {
+			i := (y*f.Width + x) * 3
+			for c := 0; c < nCh; c++ {
+				st := stats[c]
+				v := float64(f.Pix[i+c])
+				norm := (v - st.c0) / (1 - st.c0)
+				out := mtf(st.m, norm)
+				if math.IsNaN(out) || math.IsInf(out, 0) {
+					out = 0
+				}
+				result.Pix[i+c] = float32(out)
+			}
+		}
+	}
+	return result
+}
+
 func floatToByte(v float32) uint8 {
 	if v <= 0 {
 		return 0
@@ -4938,6 +5156,20 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		cur = blackPointShift(cur, opts.BgPercentile)
 		p = filepath.Join(outputDir, "post_step3_dark_background.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	// Auto-stretch (FINAL): PixInsight-style STF/MTF.  Lifts the
+	// background to a target level and reveals faint detail without
+	// clipping bright stars.  Disable with --no-auto-stretch.
+	if !opts.NoAutoStretch {
+		logf("  post: auto-stretch (STF: shadows=%.1f target=%.2f linked=%v)",
+			opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		stretched := autoStretch(cur, opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		p = filepath.Join(outputDir, "post_step4_auto_stretched.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), stretched); err != nil {
 			logf("  WARNING: %v", err)
 		}
 		outputs = append(outputs, p)
@@ -5221,39 +5453,43 @@ func main() {
 		return
 	}
 	err = runPipeline(context.Background(), runOptions{
-		InputDir:      opts.InputDir,
-		OutputDir:     opts.OutputDir,
-		Workers:       opts.Workers,
-		Recursive:     opts.Recursive,
-		Overwrite:     opts.Overwrite,
-		Register:      opts.Register,
-		DarkFile:      opts.DarkFile,
-		FlatFile:      opts.FlatFile,
-		BiasFile:      opts.BiasFile,
-		Method:        opts.Method,
-		MaskBG:        opts.MaskBG,
-		PostProcess:   opts.PostProcess,
-		StackOnly:     opts.StackOnly,
-		PostOnly:      opts.PostOnly,
-		NoColorCalib:  opts.NoColorCalib,
-		NoSharpen:     opts.NoSharpen,
-		BGDegree:      opts.BGDegree,
-		StretchFactor: opts.StretchFactor,
-		SharpenAmount: opts.SharpenAmount,
-		SharpenRadius: opts.SharpenRadius,
-		HDRAmount:     opts.HDRAmount,
-		StarRadius:    opts.StarRadius,
-		StarSigma:     opts.StarSigma,
-		BgPercentile:  opts.BgPercentile,
-		Scale:         opts.Scale,
-		Force:         opts.Force,
-		CreateTIFF:    opts.CreateTIFF,
-		PostCA:        opts.PostCA,
-		PostColor:     opts.PostColor,
-		PostFlatten:   opts.PostFlatten,
-		PostSharpen:   opts.PostSharpen,
-		PostHDR:       opts.PostHDR,
-		PostStretch:   opts.PostStretch,
+		InputDir:       opts.InputDir,
+		OutputDir:      opts.OutputDir,
+		Workers:        opts.Workers,
+		Recursive:      opts.Recursive,
+		Overwrite:      opts.Overwrite,
+		Register:       opts.Register,
+		DarkFile:       opts.DarkFile,
+		FlatFile:       opts.FlatFile,
+		BiasFile:       opts.BiasFile,
+		Method:         opts.Method,
+		MaskBG:         opts.MaskBG,
+		PostProcess:    opts.PostProcess,
+		StackOnly:      opts.StackOnly,
+		PostOnly:       opts.PostOnly,
+		NoColorCalib:   opts.NoColorCalib,
+		NoSharpen:      opts.NoSharpen,
+		BGDegree:       opts.BGDegree,
+		StretchFactor:  opts.StretchFactor,
+		SharpenAmount:  opts.SharpenAmount,
+		SharpenRadius:  opts.SharpenRadius,
+		HDRAmount:      opts.HDRAmount,
+		StarRadius:     opts.StarRadius,
+		StarSigma:      opts.StarSigma,
+		BgPercentile:   opts.BgPercentile,
+		NoAutoStretch:  opts.NoAutoStretch,
+		STFShadowsClip: opts.STFShadowsClip,
+		STFTargetBG:    opts.STFTargetBG,
+		STFLinked:      opts.STFLinked,
+		Scale:          opts.Scale,
+		Force:          opts.Force,
+		CreateTIFF:     opts.CreateTIFF,
+		PostCA:         opts.PostCA,
+		PostColor:      opts.PostColor,
+		PostFlatten:    opts.PostFlatten,
+		PostSharpen:    opts.PostSharpen,
+		PostHDR:        opts.PostHDR,
+		PostStretch:    opts.PostStretch,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
