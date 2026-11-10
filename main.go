@@ -52,42 +52,45 @@ const version = "0.4.1"
 // =========================================================================
 
 type cliOptions struct {
-	InputDir       string
-	OutputDir      string
-	Workers        int
-	Recursive      bool
-	Overwrite      bool
-	Version        bool
-	Help           bool
-	SelfTest       bool
-	Register       bool
-	Method         string
-	MaskBG         bool
-	DarkFile       string
-	FlatFile       string
-	BiasFile       string
-	CalibRoot      string
-	PostProcess    bool
-	StackOnly      bool
-	PostOnly       bool
-	NoColorCalib   bool
-	NoSharpen      bool
-	BGDegree       int
-	StretchFactor  float64
-	SharpenAmount  float64
-	SharpenRadius  float64
-	HDRAmount      float64
-	StarRadius     int
-	StarSigma      float64
-	BgPercentile   float64
-	NoAutoStretch  bool
-	STFShadowsClip float64
-	STFTargetBG    float64
-	STFLinked      bool
-	NoHDRBlend     bool
-	HDRBlendFactor float64
-	Scale          int
-	Force          bool
+	InputDir        string
+	OutputDir       string
+	Workers         int
+	Recursive       bool
+	Overwrite       bool
+	Version         bool
+	Help            bool
+	SelfTest        bool
+	Register        bool
+	Method          string
+	MaskBG          bool
+	DarkFile        string
+	FlatFile        string
+	BiasFile        string
+	CalibRoot       string
+	PostProcess     bool
+	StackOnly       bool
+	PostOnly        bool
+	NoColorCalib    bool
+	NoSharpen       bool
+	BGDegree        int
+	StretchFactor   float64
+	SharpenAmount   float64
+	SharpenRadius   float64
+	HDRAmount       float64
+	StarRadius      int
+	StarSigma       float64
+	BgPercentile    float64
+	NoAutoStretch   bool
+	STFShadowsClip  float64
+	STFTargetBG     float64
+	STFLinked       bool
+	NoHDRBlend      bool
+	HDRBlendFactor  float64
+	NoDenoise       bool
+	DenoiseStrength float64
+	DenoiseRadius   int
+	Scale           int
+	Force           bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -138,6 +141,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.STFLinked, "stf-linked", false, "use linked channels for STF (default unlinked for auto color balance)")
 	fs.BoolVar(&o.NoHDRBlend, "no-hdr-blend", false, "skip the final HDR blend step (post_step5_hdr.jpg)")
 	fs.Float64Var(&o.HDRBlendFactor, "hdr-blend-factor", 1.0, "HDR blend amount: post_step4 + factor*post_step1 (default 1.0)")
+	fs.BoolVar(&o.NoDenoise, "no-denoise", false, "skip the final denoise step")
+	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 1.0, "denoise strength (0=skip)")
+	fs.IntVar(&o.DenoiseRadius, "denoise-radius", 3, "guided-filter denoise radius")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
@@ -161,7 +167,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--scale" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--scale" {
 				skipNext = true
 			}
 		} else {
@@ -198,6 +204,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.Scale < 1 {
 		return nil, fmt.Errorf("--scale must be >= 1, got %d", o.Scale)
+	}
+	if o.DenoiseStrength < 0 || o.DenoiseStrength > 2 {
+		return nil, fmt.Errorf("--denoise-strength must be in [0, 2], got %g", o.DenoiseStrength)
+	}
+	if o.DenoiseRadius < 1 || o.DenoiseRadius > 20 {
+		return nil, fmt.Errorf("--denoise-radius must be in [1, 20], got %d", o.DenoiseRadius)
 	}
 	rest := fs.Args()
 	if len(rest) > 1 {
@@ -248,6 +260,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --stf-linked       use linked channels for STF (default: unlinked)")
 	fmt.Fprintln(w, "  --no-hdr-blend    skip the final HDR blend (post_step5_hdr.jpg)")
 	fmt.Fprintln(w, "  --hdr-blend-factor F  HDR blend amount: post_step4 + F*post_step1 (default 1.0)")
+	fmt.Fprintln(w, "  --no-denoise      skip the final denoise step (post_step5_denoised.jpg)")
+	fmt.Fprintln(w, "  --denoise-strength F  denoise strength (0=skip, 1=default, 2=aggressive)")
+	fmt.Fprintln(w, "  --denoise-radius N    guided-filter denoise radius in px (1-20, default 3)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -2057,39 +2072,42 @@ func writeFileAtomic(path string, fn func(io.Writer) error) error {
 // =========================================================================
 
 type runOptions struct {
-	InputDir       string
-	OutputDir      string
-	Workers        int
-	Recursive      bool
-	Overwrite      bool
-	Register       bool
-	DarkFile       string
-	FlatFile       string
-	BiasFile       string
-	CalibRoot      string
-	Method         string
-	MaskBG         bool
-	PostProcess    bool
-	StackOnly      bool
-	PostOnly       bool
-	NoColorCalib   bool
-	NoSharpen      bool
-	BGDegree       int
-	StretchFactor  float64
-	SharpenAmount  float64
-	SharpenRadius  float64
-	HDRAmount      float64
-	StarRadius     int
-	StarSigma      float64
-	BgPercentile   float64
-	NoAutoStretch  bool
-	STFShadowsClip float64
-	STFTargetBG    float64
-	STFLinked      bool
-	NoHDRBlend     bool
-	HDRBlendFactor float64
-	Scale          int
-	Force          bool
+	InputDir        string
+	OutputDir       string
+	Workers         int
+	Recursive       bool
+	Overwrite       bool
+	Register        bool
+	DarkFile        string
+	FlatFile        string
+	BiasFile        string
+	CalibRoot       string
+	Method          string
+	MaskBG          bool
+	PostProcess     bool
+	StackOnly       bool
+	PostOnly        bool
+	NoColorCalib    bool
+	NoSharpen       bool
+	BGDegree        int
+	StretchFactor   float64
+	SharpenAmount   float64
+	SharpenRadius   float64
+	HDRAmount       float64
+	StarRadius      int
+	StarSigma       float64
+	BgPercentile    float64
+	NoAutoStretch   bool
+	STFShadowsClip  float64
+	STFTargetBG     float64
+	STFLinked       bool
+	NoHDRBlend      bool
+	HDRBlendFactor  float64
+	NoDenoise       bool
+	DenoiseStrength float64
+	DenoiseRadius   int
+	Scale           int
+	Force           bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -2936,6 +2954,8 @@ func runSelfTests() int {
 		{"auto stretch", testAutoStretch},
 		{"strict uniform dimensions", testStrictUniformDimensions},
 		{"same dimensions succeed", testSameDimensionsSucceeds},
+		{"guided filter gray", testGuidedFilterGray},
+		{"denoise frame", testDenoiseFrame},
 		{"HDR blend", testHDRBlend},
 		{"report contains", testReportContains},
 	}
@@ -3788,7 +3808,8 @@ func testPipelinePostOnly() error {
 
 	if err := runPipeline(context.Background(), runOptions{
 		InputDir: dir, PostOnly: true, BGDegree: 2, StretchFactor: 10,
-		SharpenAmount: 0.8, SharpenRadius: 1.5, BgPercentile: 10, HDRBlendFactor: 1.0,
+		SharpenAmount: 0.8, SharpenRadius: 1.5, BgPercentile: 10,
+		HDRBlendFactor: 1.0, DenoiseStrength: 1.0, DenoiseRadius: 3,
 	}); err != nil {
 		return fmt.Errorf("runPipeline --post-only: %w", err)
 	}
@@ -3798,7 +3819,8 @@ func testPipelinePostOnly() error {
 		"post_step2_star_removed.jpg",
 		"post_step3_dark_background.jpg",
 		"post_step4_auto_stretched.jpg",
-		"post_step5_hdr.jpg",
+		"post_step5_denoised.jpg",
+		"post_step6_hdr.jpg",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			return fmt.Errorf("missing post output %s: %w", name, err)
@@ -4407,6 +4429,66 @@ func testHDRBlend() error {
 	out = blendHDR(base, detail, 1.0)
 	if math.Abs(float64(out.Pix[0]-0.5)) > 1e-6 {
 		return fmt.Errorf("negative detail not clamped: %v", out.Pix[0])
+	}
+	return nil
+}
+
+func testGuidedFilterGray() error {
+	const w, h = 16, 16
+	uniform := make([]float32, w*h)
+	for i := range uniform {
+		uniform[i] = 0.5
+	}
+	out := guidedFilterGray(uniform, w, h, 2, 0.01)
+	for i, v := range out {
+		if math.Abs(float64(v)-0.5) > 1e-3 {
+			return fmt.Errorf("uniform image changed at %d: %v", i, v)
+		}
+	}
+	spotted := make([]float32, w*h)
+	for i := range spotted {
+		spotted[i] = 0.5
+	}
+	spotted[(h/2)*w+w/2] = 1.0
+	out = guidedFilterGray(spotted, w, h, 2, 0.01)
+	center := out[(h/2)*w+w/2]
+	if center >= 1.0 {
+		return fmt.Errorf("bright spot not smoothed: %v", center)
+	}
+	if center <= 0.5 {
+		return fmt.Errorf("bright spot fully erased: %v", center)
+	}
+	return nil
+}
+
+func testDenoiseFrame() error {
+	const w, h = 16, 16
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w*h; i++ {
+		v := float32(0.5)
+		if i%2 == 0 {
+			v = 0.6
+		} else {
+			v = 0.4
+		}
+		f.Pix[i*3] = v
+		f.Pix[i*3+1] = v
+		f.Pix[i*3+2] = v
+	}
+	out := denoiseFrame(f, 3, 0.01, 1.0)
+	beforeDev, afterDev := 0.0, 0.0
+	for i := 0; i < w*h; i++ {
+		beforeDev += math.Abs(float64(f.Pix[i*3]) - 0.5)
+		afterDev += math.Abs(float64(out.Pix[i*3]) - 0.5)
+	}
+	if afterDev >= beforeDev*0.9 {
+		return fmt.Errorf("deviation not reduced: before %.3f after %.3f", beforeDev, afterDev)
+	}
+	passthru := denoiseFrame(f, 3, 0.01, 0)
+	for i := range f.Pix {
+		if passthru.Pix[i] != f.Pix[i] {
+			return fmt.Errorf("strength 0 altered pixel %d", i)
+		}
 	}
 	return nil
 }
@@ -5405,6 +5487,74 @@ func blendHDR(base, detail *frame, factor float64) *frame {
 	return result
 }
 
+// guidedFilterGray is a self-guided filter (He et al., 2010).
+func guidedFilterGray(I []float32, w, h, radius int, eps float64) []float32 {
+	n := w * h
+	if n == 0 {
+		return nil
+	}
+	if radius < 1 {
+		radius = 1
+	}
+	if eps <= 0 {
+		eps = 1e-4
+	}
+	mean_I := boxBlurLuminance(I, w, h, radius)
+	II := make([]float32, n)
+	for i := 0; i < n; i++ {
+		II[i] = I[i] * I[i]
+	}
+	mean_II := boxBlurLuminance(II, w, h, radius)
+	a := make([]float32, n)
+	b := make([]float32, n)
+	for i := 0; i < n; i++ {
+		varI := float64(mean_II[i]) - float64(mean_I[i])*float64(mean_I[i])
+		if varI < 0 {
+			varI = 0
+		}
+		av := varI / (varI + eps)
+		a[i] = float32(av)
+		b[i] = mean_I[i] * float32(1-av)
+	}
+	mean_a := boxBlurLuminance(a, w, h, radius)
+	mean_b := boxBlurLuminance(b, w, h, radius)
+	q := make([]float32, n)
+	for i := 0; i < n; i++ {
+		q[i] = mean_a[i]*I[i] + mean_b[i]
+	}
+	return q
+}
+
+func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
+	if strength <= 0 {
+		return f
+	}
+	if radius < 1 {
+		radius = 3
+	}
+	nPix := f.Width * f.Height
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	I := make([]float32, nPix)
+	str := float32(strength)
+	for c := 0; c < 3; c++ {
+		for i := 0; i < nPix; i++ {
+			I[i] = f.Pix[i*3+c]
+		}
+		den := guidedFilterGray(I, f.Width, f.Height, radius, eps)
+		for i := 0; i < nPix; i++ {
+			orig := f.Pix[i*3+c]
+			v := orig + str*(den[i]-orig)
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			result.Pix[i*3+c] = v
+		}
+	}
+	return result
+}
+
 func floatToByte(v float32) uint8 {
 	if v <= 0 {
 		return 0
@@ -5578,14 +5728,39 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		outputs = append(outputs, p)
 	}
 
-	// Step 5 (HDR): add the auto-stretched result (step 4) to the
+	// Step 5: denoise the auto-stretched frame. The guided filter
+	// smooths flat regions while preserving edges and stars. Skippable
+	// with --no-denoise, tunable with --denoise-strength / --denoise-radius.
+	var hdrBase *frame
+	if step4Frame != nil {
+		hdrBase = step4Frame
+	}
+	if step4Frame != nil && !opts.NoDenoise && opts.DenoiseStrength > 0 {
+		logf("  post: denoise (guided filter, radius=%d, strength=%g)",
+			opts.DenoiseRadius, opts.DenoiseStrength)
+		denoised := denoiseFrame(step4Frame, opts.DenoiseRadius, 0.01, opts.DenoiseStrength)
+		hdrBase = denoised
+		p = filepath.Join(outputDir, "post_step5_denoised.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), denoised); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	} else {
+		logf("  post: denoise skipped")
+	}
+
+	// Step 6 (HDR): add the display base (step 5 if denoised, else
+	// step 4) to the background-removed frame (step 1). The stretched base
+	// gives the overall tone; the linear detail recovers bright-core and
+	// high-contrast regions that the auto-stretch compressed.
+
 	// background-removed frame (step 1). The stretched base gives the
 	// overall tone; adding the linear detail recovers bright-core and
 	// high-contrast regions that the auto-stretch compressed.
-	if step1Frame != nil && step4Frame != nil && !opts.NoHDRBlend && opts.HDRBlendFactor > 0 {
+	if step1Frame != nil && hdrBase != nil && !opts.NoHDRBlend && opts.HDRBlendFactor > 0 {
 		logf("  post: HDR blend (step4 + %g*step1)", opts.HDRBlendFactor)
-		blended := blendHDR(step4Frame, step1Frame, opts.HDRBlendFactor)
-		p = filepath.Join(outputDir, "post_step5_hdr.jpg")
+		blended := blendHDR(hdrBase, step1Frame, opts.HDRBlendFactor)
+		p = filepath.Join(outputDir, "post_step6_hdr.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), blended); err != nil {
 			logf("  WARNING: %v", err)
 		}
@@ -5874,45 +6049,48 @@ func main() {
 		return
 	}
 	err = runPipeline(context.Background(), runOptions{
-		InputDir:       opts.InputDir,
-		OutputDir:      opts.OutputDir,
-		Workers:        opts.Workers,
-		Recursive:      opts.Recursive,
-		Overwrite:      opts.Overwrite,
-		Register:       opts.Register,
-		DarkFile:       opts.DarkFile,
-		FlatFile:       opts.FlatFile,
-		BiasFile:       opts.BiasFile,
-		Method:         opts.Method,
-		MaskBG:         opts.MaskBG,
-		PostProcess:    opts.PostProcess,
-		StackOnly:      opts.StackOnly,
-		PostOnly:       opts.PostOnly,
-		NoColorCalib:   opts.NoColorCalib,
-		NoSharpen:      opts.NoSharpen,
-		BGDegree:       opts.BGDegree,
-		StretchFactor:  opts.StretchFactor,
-		SharpenAmount:  opts.SharpenAmount,
-		SharpenRadius:  opts.SharpenRadius,
-		HDRAmount:      opts.HDRAmount,
-		StarRadius:     opts.StarRadius,
-		StarSigma:      opts.StarSigma,
-		BgPercentile:   opts.BgPercentile,
-		NoAutoStretch:  opts.NoAutoStretch,
-		STFShadowsClip: opts.STFShadowsClip,
-		STFTargetBG:    opts.STFTargetBG,
-		STFLinked:      opts.STFLinked,
-		NoHDRBlend:     opts.NoHDRBlend,
-		HDRBlendFactor: opts.HDRBlendFactor,
-		Scale:          opts.Scale,
-		Force:          opts.Force,
-		CreateTIFF:     opts.CreateTIFF,
-		PostCA:         opts.PostCA,
-		PostColor:      opts.PostColor,
-		PostFlatten:    opts.PostFlatten,
-		PostSharpen:    opts.PostSharpen,
-		PostHDR:        opts.PostHDR,
-		PostStretch:    opts.PostStretch,
+		InputDir:        opts.InputDir,
+		OutputDir:       opts.OutputDir,
+		Workers:         opts.Workers,
+		Recursive:       opts.Recursive,
+		Overwrite:       opts.Overwrite,
+		Register:        opts.Register,
+		DarkFile:        opts.DarkFile,
+		FlatFile:        opts.FlatFile,
+		BiasFile:        opts.BiasFile,
+		Method:          opts.Method,
+		MaskBG:          opts.MaskBG,
+		PostProcess:     opts.PostProcess,
+		StackOnly:       opts.StackOnly,
+		PostOnly:        opts.PostOnly,
+		NoColorCalib:    opts.NoColorCalib,
+		NoSharpen:       opts.NoSharpen,
+		BGDegree:        opts.BGDegree,
+		StretchFactor:   opts.StretchFactor,
+		SharpenAmount:   opts.SharpenAmount,
+		SharpenRadius:   opts.SharpenRadius,
+		HDRAmount:       opts.HDRAmount,
+		StarRadius:      opts.StarRadius,
+		StarSigma:       opts.StarSigma,
+		BgPercentile:    opts.BgPercentile,
+		NoAutoStretch:   opts.NoAutoStretch,
+		STFShadowsClip:  opts.STFShadowsClip,
+		STFTargetBG:     opts.STFTargetBG,
+		STFLinked:       opts.STFLinked,
+		NoHDRBlend:      opts.NoHDRBlend,
+		HDRBlendFactor:  opts.HDRBlendFactor,
+		NoDenoise:       opts.NoDenoise,
+		DenoiseStrength: opts.DenoiseStrength,
+		DenoiseRadius:   opts.DenoiseRadius,
+		Scale:           opts.Scale,
+		Force:           opts.Force,
+		CreateTIFF:      opts.CreateTIFF,
+		PostCA:          opts.PostCA,
+		PostColor:       opts.PostColor,
+		PostFlatten:     opts.PostFlatten,
+		PostSharpen:     opts.PostSharpen,
+		PostHDR:         opts.PostHDR,
+		PostStretch:     opts.PostStretch,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
