@@ -76,6 +76,7 @@ type cliOptions struct {
 	SharpenRadius float64
 	HDRAmount     float64
 	StarReduce    float64
+	Scale         int
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -110,6 +111,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.SharpenRadius, "sharpen-radius", 1.5, "unsharp mask radius in pixels")
 	fs.Float64Var(&o.HDRAmount, "hdr-amount", 0.5, "HDR local contrast amount")
 	fs.Float64Var(&o.StarReduce, "star-reduce", 0.5, "Star reduction amount")
+	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 
 	// Pre-process: move any non-flag arguments to the end so flags can appear anywhere
 // e.g., "skystacker Luminance --method mean" -> "skystacker --method mean Luminance"
@@ -158,6 +160,9 @@ if err := fs.Parse(args); err != nil {
 	}
 	if o.SharpenRadius <= 0 || o.SharpenRadius > 20 {
 		return nil, fmt.Errorf("--sharpen-radius must be in (0, 20], got %g", o.SharpenRadius)
+	}
+	if o.Scale < 1 {
+		return nil, fmt.Errorf("--scale must be >= 1, got %d", o.Scale)
 	}
 	rest := fs.Args()
 	if len(rest) > 1 {
@@ -313,31 +318,72 @@ func decodeImageConfig(path string) (image.Config, error) {
 	return cfg, err
 }
 
-func decodeImageFile(path string) (*frame, error) {
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
-		cmd := exec.Command("convert", path, "-depth", "16", "png:-")
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("decode %s failed (requires ImageMagick): %w", ext, err)
-		}
-		img, _, err := image.Decode(&out)
-		if err != nil {
-			return nil, err
-		}
-		return frameFromImage(img)
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	img, _, err := image.Decode(f)
-	if err != nil {
-		return nil, err
-	}
-	return frameFromImage(img)
+func decodeImageFile(path string, targetW, targetH int) (*frame, error) {
+ext := strings.ToLower(filepath.Ext(path))
+if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
+args := []string{path}
+if targetW > 0 && targetH > 0 {
+args = append(args, "-resize", fmt.Sprintf("%dx%d!", targetW, targetH))
+}
+args = append(args, "-depth", "16", "png:-")
+cmd := exec.Command("convert", args...)
+var out bytes.Buffer
+cmd.Stdout = &out
+if err := cmd.Run(); err != nil {
+return nil, fmt.Errorf("decode %s failed: %w", ext, err)
+}
+img, _, err := image.Decode(&out)
+if err != nil {
+return nil, err
+}
+return frameFromImage(img)
+}
+f, err := os.Open(path)
+if err != nil {
+return nil, err
+}
+defer f.Close()
+img, _, err := image.Decode(f)
+if err != nil {
+return nil, err
+}
+frm, err := frameFromImage(img)
+if err != nil {
+return nil, err
+}
+if targetW > 0 && targetH > 0 && (frm.Width != targetW || frm.Height != targetH) {
+return resizeFrame(frm, targetW, targetH), nil
+}
+return frm, nil
+}
+
+
+func resizeFrame(f *frame, w, h int) *frame {
+if f.Width == w && f.Height == h {
+return f
+}
+out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+scaleX := float64(f.Width) / float64(w)
+scaleY := float64(f.Height) / float64(h)
+for y := 0; y < h; y++ {
+for x := 0; x < w; x++ {
+srcX := float64(x) * scaleX
+srcY := float64(y) * scaleY
+x0, y0 := int(srcX), int(srcY)
+x1, y1 := x0+1, y0+1
+if x1 >= f.Width { x1 = f.Width - 1 }
+if y1 >= f.Height { y1 = f.Height - 1 }
+fx, fy := float32(srcX-float64(x0)), float32(srcY-float64(y0))
+for c := 0; c < 3; c++ {
+p00 := f.Pix[(y0*f.Width+x0)*3+c]
+p10 := f.Pix[(y0*f.Width+x1)*3+c]
+p01 := f.Pix[(y1*f.Width+x0)*3+c]
+p11 := f.Pix[(y1*f.Width+x1)*3+c]
+out.Pix[(y*w+x)*3+c] = (1-fy)*((1-fx)*p00+fx*p10) + fy*((1-fx)*p01+fx*p11)
+}
+}
+}
+return out
 }
 
 func frameFromImage(img image.Image) (*frame, error) {
@@ -1715,15 +1761,16 @@ type runOptions struct {
 	SharpenRadius float64
 	HDRAmount     float64
 	StarReduce    float64
+	Scale         int
 }
 
 
 
-func stackCalibrationFolder(path string) (*frame, error) {
+func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
 	info, err := os.Stat(path)
 	if err != nil { return nil, err }
 	if !info.IsDir() {
-		return decodeImageFile(path)
+		return decodeImageFile(path, targetW, targetH)
 	}
 	files, err := discoverFiles(path, false, nil)
 	if err != nil || len(files) == 0 {
@@ -1733,7 +1780,7 @@ func stackCalibrationFolder(path string) (*frame, error) {
 	var master *frame
 	count := 0
 	for _, f := range files {
-		img, err := decodeImageFile(f)
+		img, err := decodeImageFile(f, targetW, targetH)
 		if err != nil { continue }
 		if master == nil {
 			master = &frame{Width: img.Width, Height: img.Height, Pix: make([]float32, len(img.Pix))}
@@ -1854,8 +1901,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			continue
 		}
 		if refW == 0 {
-			refW, refH = cfg.Width, cfg.Height
-		} else if cfg.Width != refW || cfg.Height != refH {
+			refW, refH = cfg.Width/opts.Scale, cfg.Height/opts.Scale
+		} else if cfg.Width/opts.Scale != refW || cfg.Height/opts.Scale != refH {
 			rejected = append(rejected, rejection{
 				Path:   path,
 				Reason: fmt.Sprintf("dimensions %dx%d differ from reference %dx%d", cfg.Width, cfg.Height, refW, refH),
@@ -1899,8 +1946,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	estMemMB := int(baseMem + storedMem)
 	availMemMB := getAvailableMemoryMB()
 	logf("Memory: estimated %d MB needed, %d MB available", estMemMB, availMemMB)
-	if availMemMB > 0 && estMemMB > availMemMB {
-		logf("WARNING: Estimated memory usage exceeds available RAM! Out-of-memory crash is likely.")
+	if availMemMB > 0 && estMemMB > availMemMB-1000 {
+		return fmt.Errorf("OUT OF MEMORY PREVENTED: Estimated %d MB needed, but only %d MB available.\nPlease use --scale 2 (reduces memory by 4x) or --method mean (streaming) to avoid crashing your system.", estMemMB, availMemMB)
 	}
 	if opts.Register {
 		logf("Registration: ON (use --no-register to disable)")
@@ -1918,15 +1965,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	var darkFrame, flatFrame, biasFrame *frame
 	if opts.DarkFile != "" {
-		darkFrame, err = stackCalibrationFolder(opts.DarkFile)
+		darkFrame, err = stackCalibrationFolder(opts.DarkFile, refW, refH)
 		if err != nil { return err }
 	}
 	if opts.FlatFile != "" {
-		flatFrame, err = stackCalibrationFolder(opts.FlatFile)
+		flatFrame, err = stackCalibrationFolder(opts.FlatFile, refW, refH)
 		if err != nil { return err }
 	}
 	if opts.BiasFile != "" {
-		biasFrame, err = stackCalibrationFolder(opts.BiasFile)
+		biasFrame, err = stackCalibrationFolder(opts.BiasFile, refW, refH)
 		if err != nil { return err }
 	}
 
@@ -1941,7 +1988,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return err
 		}
 		logf("  [pass1 %d/%d] %s", i+1, len(candidates), filepath.Base(c.path))
-		f, err := decodeImageFile(c.path)
+		f, err := decodeImageFile(c.path, refW, refH)
 		if err != nil {
 			rejected = append(rejected, rejection{
 				Path:   c.path,
@@ -2084,7 +2131,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				continue
 			}
 			logf("  [pass2 %d/%d] %s", i+1, len(accepted), filepath.Base(c.path))
-			f, err := decodeImageFile(c.path)
+			f, err := decodeImageFile(c.path, refW, refH)
 			if err != nil {
 				// Unlikely (already decoded) but be safe.
 				return fmt.Errorf("re-decode %s: %w", c.path, err)
@@ -3133,7 +3180,7 @@ func testPipelineStackOnly() error {
 	}
 
 	if err := runPipeline(context.Background(), runOptions{
-		InputDir: dir, Workers: 2, Register: true, StackOnly: true,
+		InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1,
 	}); err != nil {
 		return fmt.Errorf("runPipeline: %w", err)
 	}
@@ -4280,6 +4327,7 @@ func main() {
 		SharpenRadius: opts.SharpenRadius,
 		HDRAmount:     opts.HDRAmount,
 		StarReduce:    opts.StarReduce,
+		Scale:         opts.Scale,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
