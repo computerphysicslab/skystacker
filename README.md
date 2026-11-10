@@ -351,15 +351,6 @@ Astrophotography session
 SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.4.1**.
 
 The feature set, output names and command-line interface may change between development revisions. Treat the source code and `--help` output from the checked-out commit as authoritative.
-
-Potential future improvements include:
-
-- Better automatic routing of different input formats through format-specific pipelines.
-- Weighted stacking based on image quality metrics such as star count or FWHM.
-- Deconvolution.
-- Further calibration and registration improvements.
-- A more modular architecture and expanded automated test coverage.
-
 ## Planned Potential Features and Technologies Roadmap
 
 To evolve SkyStacker into a more complete scientific astrophotography preprocessing and image-processing platform, the following features and technologies are planned for future integration:
