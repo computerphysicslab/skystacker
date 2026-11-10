@@ -1,0 +1,1 @@
+Proceed to creating a step-by-step update of the main.go code by using the one-liner triple quote scheme so I can copy and paste into my command line and have the main.go file immediately updated. Provide me with the compile and test commands. Also provide the commands to update the repo https://github.com/computerphysicslab/skystacker . 
