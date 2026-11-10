@@ -142,7 +142,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.NoHDRBlend, "no-hdr-blend", false, "skip the final HDR blend step (post_step5_hdr.jpg)")
 	fs.Float64Var(&o.HDRBlendFactor, "hdr-blend-factor", 1.0, "HDR blend amount: post_step4 + factor*post_step1 (default 1.0)")
 	fs.BoolVar(&o.NoDenoise, "no-denoise", false, "skip the final denoise step")
-	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 1.0, "denoise strength (0=skip)")
+	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 1.0, "denoise iterations (0=skip, 1=one pass, N=N passes)")
 	fs.IntVar(&o.DenoiseRadius, "denoise-radius", 3, "guided-filter denoise radius")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
@@ -205,8 +205,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.Scale < 1 {
 		return nil, fmt.Errorf("--scale must be >= 1, got %d", o.Scale)
 	}
-	if o.DenoiseStrength < 0 || o.DenoiseStrength > 2 {
-		return nil, fmt.Errorf("--denoise-strength must be in [0, 2], got %g", o.DenoiseStrength)
+	if o.DenoiseStrength < 0 || o.DenoiseStrength > 10 {
+		return nil, fmt.Errorf("--denoise-strength must be in [0, 10], got %g", o.DenoiseStrength)
 	}
 	if o.DenoiseRadius < 1 || o.DenoiseRadius > 20 {
 		return nil, fmt.Errorf("--denoise-radius must be in [1, 20], got %d", o.DenoiseRadius)
@@ -261,7 +261,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --no-hdr-blend    skip the final HDR blend (post_step5_hdr.jpg)")
 	fmt.Fprintln(w, "  --hdr-blend-factor F  HDR blend amount: post_step4 + F*post_step1 (default 1.0)")
 	fmt.Fprintln(w, "  --no-denoise      skip the final denoise step (post_step5_denoised.jpg)")
-	fmt.Fprintln(w, "  --denoise-strength F  denoise strength (0=skip, 1=default, 2=aggressive)")
+	fmt.Fprintln(w, "  --denoise-strength F  denoise iterations (0=skip, 1=one pass, N=N passes, max 10)")
 	fmt.Fprintln(w, "  --denoise-radius N    guided-filter denoise radius in px (1-20, default 3)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
@@ -2956,6 +2956,7 @@ func runSelfTests() int {
 		{"same dimensions succeed", testSameDimensionsSucceeds},
 		{"guided filter gray", testGuidedFilterGray},
 		{"denoise frame", testDenoiseFrame},
+		{"denoise iterations", testDenoiseFrameIterations},
 		{"HDR blend", testHDRBlend},
 		{"report contains", testReportContains},
 	}
@@ -4493,6 +4494,51 @@ func testDenoiseFrame() error {
 	return nil
 }
 
+func testDenoiseFrameIterations() error {
+	const w, h = 32, 32
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	// Checkerboard of +/-0.1 around a 0.5 baseline.
+	for i := 0; i < w*h; i++ {
+		v := float32(0.5)
+		if i%2 == 0 {
+			v = 0.6
+		} else {
+			v = 0.4
+		}
+		f.Pix[i*3] = v
+		f.Pix[i*3+1] = v
+		f.Pix[i*3+2] = v
+	}
+	deviation := func(x *frame) float64 {
+		total := 0.0
+		for i := 0; i < w*h; i++ {
+			total += math.Abs(float64(x.Pix[i*3]) - 0.5)
+		}
+		return total
+	}
+	one := denoiseFrame(f, 3, 0.01, 1.0)
+	two := denoiseFrame(f, 3, 0.01, 2.0)
+	five := denoiseFrame(f, 3, 0.01, 2.5)
+	three := denoiseFrame(f, 3, 0.01, 3.0)
+	oneDev := deviation(one)
+	twoDev := deviation(two)
+	fiveDev := deviation(five)
+	threeDev := deviation(three)
+	if threeDev >= oneDev {
+		return fmt.Errorf("strength 3 not smoother than strength 1: %.3f vs %.3f", threeDev, oneDev)
+	}
+	if !(twoDev >= fiveDev && fiveDev >= threeDev) {
+		return fmt.Errorf("monotonicity violated: two=%.3f five=%.3f three=%.3f", twoDev, fiveDev, threeDev)
+	}
+	pass := denoiseFrame(f, 3, 0.01, 0)
+	for i := range f.Pix {
+		if pass.Pix[i] != f.Pix[i] {
+			return fmt.Errorf("strength 0 altered pixel %d", i)
+		}
+	}
+	return nil
+}
+
 func testReportContains() error {
 	dir, err := os.MkdirTemp("", "skystacker-report-")
 	if err != nil {
@@ -5525,25 +5571,20 @@ func guidedFilterGray(I []float32, w, h, radius int, eps float64) []float32 {
 	return q
 }
 
-func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
-	if strength <= 0 {
-		return f
-	}
-	if radius < 1 {
-		radius = 3
-	}
+// guidedFilterFrameOnce applies the self-guided filter to every channel of f
+// without any blending. The result IS the fully filtered frame; the caller
+// decides how much of it to keep.
+func guidedFilterFrameOnce(f *frame, radius int, eps float64) *frame {
 	nPix := f.Width * f.Height
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	I := make([]float32, nPix)
-	str := float32(strength)
 	for c := 0; c < 3; c++ {
 		for i := 0; i < nPix; i++ {
 			I[i] = f.Pix[i*3+c]
 		}
 		den := guidedFilterGray(I, f.Width, f.Height, radius, eps)
 		for i := 0; i < nPix; i++ {
-			orig := f.Pix[i*3+c]
-			v := orig + str*(den[i]-orig)
+			v := den[i]
 			if v < 0 {
 				v = 0
 			} else if v > 1 {
@@ -5553,6 +5594,44 @@ func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
 		}
 	}
 	return result
+}
+
+// denoiseFrame reduces pixel noise in f by applying the self-guided filter
+// per channel. strength controls how many passes are run: 1.0 is one full
+// pass, 2.0 is two full passes, 2.5 is two full passes followed by a third
+// blended at 50%. Values in (0, 1) do a single pass blended by the given
+// fraction. Each additional full pass compounds the smoothing power of the
+// filter, so strength=4.0 is meaningfully smoother than strength=1.0 without
+// raising radius. Pass counts are capped at 10 by parseArgs.
+func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
+	if strength <= 0 {
+		return f
+	}
+	if radius < 1 {
+		radius = 3
+	}
+	nFull := int(math.Floor(strength))
+	frac := float32(strength - float64(nFull))
+
+	cur := f
+	for i := 0; i < nFull; i++ {
+		cur = guidedFilterFrameOnce(cur, radius, eps)
+	}
+	if frac > 1e-6 {
+		filtered := guidedFilterFrameOnce(cur, radius, eps)
+		out := &frame{Width: cur.Width, Height: cur.Height, Pix: make([]float32, len(cur.Pix))}
+		for i := range cur.Pix {
+			v := cur.Pix[i] + frac*(filtered.Pix[i]-cur.Pix[i])
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			out.Pix[i] = v
+		}
+		cur = out
+	}
+	return cur
 }
 
 func floatToByte(v float32) uint8 {
