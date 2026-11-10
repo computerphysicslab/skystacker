@@ -1174,7 +1174,15 @@ func matchStarsToReference(refStars, tgtStars []star) (similarity, int, bool) {
 			bestSim = sim
 		}
 	}
-	if bestInliers < 4 {
+	minCount := len(tgtStars)
+	if len(refStars) < minCount {
+		minCount = len(refStars)
+	}
+	if minCount == 0 {
+		return identitySimilarity, bestInliers, false
+	}
+	ratio := float64(bestInliers) / float64(minCount)
+	if bestInliers < 8 || ratio < 0.20 {
 		return identitySimilarity, bestInliers, false
 	}
 	// Refine with all inliers
@@ -1952,6 +1960,8 @@ type processingReport struct {
 	Workers            int
 	Duration           time.Duration
 	Notes              []string
+	FrameDiags         []frameDiag
+	CropExplanation    string
 }
 
 type errWriter struct {
@@ -2017,6 +2027,38 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		ew.printf("  %s\n", f)
 	}
 	ew.printf("\n")
+
+	if len(r.FrameDiags) > 0 {
+		ew.printf("Frame diagnostics (per-frame quality, sorted by quality descending):\n")
+		sorted := make([]frameDiag, len(r.FrameDiags))
+		copy(sorted, r.FrameDiags)
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].Quality > sorted[j].Quality
+		})
+		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %22s %7s %s\n",
+			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "Box(x,y,w,h)", "Box%", "Note")
+		for i, d := range sorted {
+			ratioStr := "-"
+			if d.Stars > 0 {
+				ratioStr = fmt.Sprintf("%.0f%%", 100.0*float64(d.Inliers)/float64(d.Stars))
+			}
+			boxStr := fmt.Sprintf("%d,%d,%d,%d", d.BoxMinX, d.BoxMinY, d.BoxMaxX-d.BoxMinX, d.BoxMaxY-d.BoxMinY)
+			if d.Stars == 0 {
+				boxStr = "-"
+			}
+			ew.printf("  %-3d %-22s %5d %4d %6s %8.4f %8.2f %16s %7.1f %22s %6.1f%% %s\n",
+				i+1, filepath.Base(d.Path), d.Stars, d.Inliers, ratioStr,
+				d.Scale, d.RotationDeg,
+				fmt.Sprintf("(%.1f,%.1f)", d.OffsetX, d.OffsetY),
+				d.Quality, boxStr, d.BoxPct, d.Note)
+		}
+		ew.printf("\n")
+	}
+
+	if r.CropExplanation != "" {
+		ew.printf("Crop explanation:\n")
+		ew.printf("  %s\n\n", r.CropExplanation)
+	}
 
 	ew.printf("Accepted files:\n")
 	for _, p := range r.Accepted {
@@ -2181,8 +2223,91 @@ func logf(format string, args ...any) {
 }
 
 type frameTransform struct {
-	sim   similarity
-	valid bool
+	sim       similarity
+	valid     bool
+	starCount int
+	inliers   int
+}
+
+// frameDiag carries per-frame diagnostics for the report: detected stars,
+// matched inliers, the estimated transform (scale/rotation/offset), a
+// combined quality score (0-100), the transformed bounding box in
+// reference coordinates, and the fraction of the reference area that box
+// covers (Box%). Used to explain the crop rectangle and to spot frames
+// that should be removed.
+type frameDiag struct {
+	Path        string
+	Stars       int
+	Inliers     int
+	Scale       float64
+	RotationDeg float64
+	OffsetX     float64
+	OffsetY     float64
+	Quality     float64
+	BoxMinX     int
+	BoxMinY     int
+	BoxMaxX     int
+	BoxMaxY     int
+	BoxPct      float64 // 100 * box area / reference area
+	Note        string
+}
+
+// computeFrameQuality returns a 0-100 score combining inlier ratio, a
+// penalty for scale deviation from 1.0, and a penalty for rotation away
+// from 0 degrees. Frames scoring below ~30 are strong candidates for
+// removal (typically because they were registered on noise).
+func computeFrameQuality(inliers, stars, refStars int, scale, rotDeg float64) float64 {
+	minCount := stars
+	if refStars < minCount {
+		minCount = refStars
+	}
+	if minCount == 0 {
+		return 0
+	}
+	ratio := float64(inliers) / float64(minCount)
+	if ratio > 1 {
+		ratio = 1
+	}
+	q := 100.0 * ratio
+	if math.Abs(scale-1.0) > 0.05 {
+		q *= 0.5
+	}
+	if math.Abs(rotDeg) > 5.0 {
+		q *= 0.5
+	}
+	return q
+}
+
+// frameBoxInReference returns the axis-aligned bounding box of a frame
+// of size fw x fh after its four corners have been mapped through sim
+// into the reference coordinate system. For an identity sim, the box is
+// (0, 0, fw-1, fh-1). Rotated frames get a larger box.
+func frameBoxInReference(fw, fh int, sim similarity) (minX, minY, maxX, maxY int) {
+	pts := []point2D{
+		{0, 0},
+		{float64(fw - 1), 0},
+		{float64(fw - 1), float64(fh - 1)},
+		{0, float64(fh - 1)},
+	}
+	minX, minY = math.MaxInt32, math.MaxInt32
+	maxX, maxY = -1, -1
+	for _, p := range pts {
+		q := sim.apply(p)
+		x, y := int(q.X), int(q.Y)
+		if x < minX {
+			minX = x
+		}
+		if y < minY {
+			minY = y
+		}
+		if x > maxX {
+			maxX = x
+		}
+		if y > maxY {
+			maxY = y
+		}
+	}
+	return minX, minY, maxX, maxY
 }
 
 func runPipeline(ctx context.Context, opts runOptions) error {
@@ -2556,16 +2681,17 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	var registeredCount int
 	var regFailures []string
 	registrationOn := opts.Register
+	refIdx := 0
+	var refStars []star
 
 	if registrationOn {
 		// Reference = frame with the most stars.
-		refIdx := 0
 		for i := 1; i < len(starLists); i++ {
 			if len(starLists[i]) > len(starLists[refIdx]) {
 				refIdx = i
 			}
 		}
-		refStars := starLists[refIdx]
+		refStars = starLists[refIdx]
 		logf("Reference frame: %s (%d stars)", filepath.Base(accepted[refIdx].path), len(refStars))
 
 		if len(refStars) < 5 {
@@ -2573,6 +2699,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			registrationOn = false
 		} else {
 			registeredCount = 1
+			transforms[refIdx].starCount = len(refStars)
+			transforms[refIdx].inliers = len(refStars)
 			for i := range accepted {
 				if i == refIdx {
 					continue
@@ -2594,7 +2722,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				rotDeg := sim.rotation() * 180 / math.Pi
 				logf("  register %s: scale=%.4f rot=%.2f° inliers=%d",
 					filepath.Base(accepted[i].path), scale, rotDeg, inliers)
-				transforms[i] = frameTransform{sim: sim, valid: true}
+				transforms[i] = frameTransform{
+					sim:       sim,
+					valid:     true,
+					starCount: len(starLists[i]),
+					inliers:   inliers,
+				}
 				registeredCount++
 			}
 			if registeredCount < 2 {
@@ -2614,6 +2747,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	var regAcc *accumulator
 	var validCount []int32
 	var cropRect image.Rectangle
+	var frameDiags []frameDiag
+	cropExplanation := ""
 	if registrationOn {
 		logf("Resampling %d registered frame(s)", registeredCount)
 		regAcc = newAccumulator(refW, refH)
@@ -2641,6 +2776,79 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		cropRect = findSafeCrop(validCount, refW, refH, int32(registeredCount))
 		logf("Crop: x=%d..%d, y=%d..%d (%dx%d)", cropRect.Min.X, cropRect.Max.X-1,
 			cropRect.Min.Y, cropRect.Max.Y-1, cropRect.Dx(), cropRect.Dy())
+
+		// Per-frame diagnostics. refIdx and refStars were hoisted to
+		// function scope above so both this pass-2 block and the
+		// registration block can see them.
+		frameDiags = make([]frameDiag, len(accepted))
+		for i := 0; i < len(accepted); i++ {
+			td := frameDiag{Path: accepted[i].path}
+			if i == refIdx {
+				td.Note = "[ref]"
+			}
+			if !transforms[i].valid {
+				td.Note = "REGISTRATION FAILED"
+				frameDiags[i] = td
+				continue
+			}
+			td.Stars = transforms[i].starCount
+			td.Inliers = transforms[i].inliers
+			td.Scale = transforms[i].sim.scale()
+			td.RotationDeg = transforms[i].sim.rotation() * 180 / math.Pi
+			origin := transforms[i].sim.apply(point2D{0, 0})
+			td.OffsetX = origin.X
+			td.OffsetY = origin.Y
+			td.Quality = computeFrameQuality(td.Inliers, td.Stars, len(refStars), td.Scale, td.RotationDeg)
+			td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReference(refW, refH, transforms[i].sim)
+			bx0, by0 := td.BoxMinX, td.BoxMinY
+			bx1, by1 := td.BoxMaxX, td.BoxMaxY
+			if bx0 < 0 {
+				bx0 = 0
+			}
+			if by0 < 0 {
+				by0 = 0
+			}
+			if bx1 >= refW {
+				bx1 = refW - 1
+			}
+			if by1 >= refH {
+				by1 = refH - 1
+			}
+			if bx1 >= bx0 && by1 >= by0 {
+				td.BoxPct = 100.0 * float64((bx1-bx0+1)*(by1-by0+1)) / float64(refW*refH)
+			}
+			frameDiags[i] = td
+		}
+
+		// Identify limiting frames
+		limiterNames := []string{}
+		for i := range frameDiags {
+			if i == refIdx || !transforms[i].valid {
+				continue
+			}
+			var flags []string
+			if frameDiags[i].Quality < 30 {
+				flags = append(flags, "LOW QUALITY")
+			}
+			if frameDiags[i].BoxPct < 50 {
+				flags = append(flags, "LOW BOX%")
+			}
+			if len(flags) > 0 {
+				frameDiags[i].Note = strings.TrimSpace(frameDiags[i].Note + " ** " + strings.Join(flags, ", ") + " **")
+				limiterNames = append(limiterNames, filepath.Base(frameDiags[i].Path))
+			}
+		}
+		cropPct := 100.0 * float64(cropRect.Dx()*cropRect.Dy()) / float64(refW*refH)
+		if len(limiterNames) > 0 {
+			logf("Crop limited by %d frame(s): %s", len(limiterNames), strings.Join(limiterNames, ", "))
+			cropExplanation = fmt.Sprintf(
+				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The following frames constrain the crop or have low registration quality: %s. A normal frame has scale~1.0 and rotation~0deg (translation-only alignment); frames with scale far from 1 or rotation far from 0 were typically fitted on only a few noise stars, which shrinks their actual footprint inside the reference and forces the safe crop to shrink to the common overlap. Removing these frames would yield a larger crop.",
+				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
+		} else {
+			cropExplanation = fmt.Sprintf(
+				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). All registered frames cover the full reference image, so no frame is limiting the crop.",
+				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH)
+		}
 	}
 
 	// ============== Write outputs
@@ -2856,6 +3064,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		SharpenAmount:      opts.SharpenAmount,
 		SharpenRadius:      opts.SharpenRadius,
 		Notes:              notes,
+		FrameDiags:         frameDiags,
+		CropExplanation:    cropExplanation,
 	}
 	if err := writeFileAtomic(reportTxt, func(w io.Writer) error {
 		return rep.writeTo(w)
@@ -2963,6 +3173,9 @@ func runSelfTests() int {
 		{"denoise iterations", testDenoiseFrameIterations},
 		{"blend weighted", testBlendWeighted},
 		{"HDR blend", testHDRBlend},
+		{"compute frame quality", testComputeFrameQuality},
+		{"frame box in reference", testFrameBoxInReference},
+		{"match rejects few inliers", testMatchStarsRejectsFewInliers},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -4589,6 +4802,58 @@ func testBlendWeighted() error {
 	out = blendWeighted(a, bad, 0.5)
 	if out != a {
 		return errors.New("mismatched dims should return first frame")
+	}
+	return nil
+}
+
+func testComputeFrameQuality() error {
+	cases := []struct {
+		inliers, stars, ref int
+		scale, rot          float64
+		min, max            float64
+	}{
+		{100, 100, 100, 1.0, 0.0, 99.9, 100.1},
+		{50, 100, 100, 1.0, 0.0, 49.9, 50.1},
+		{4, 45, 100, 0.5, 108.0, 0.0, 5.0},
+		{0, 0, 0, 1.0, 0.0, 0.0, 0.1},
+	}
+	for i, c := range cases {
+		q := computeFrameQuality(c.inliers, c.stars, c.ref, c.scale, c.rot)
+		if q < c.min || q > c.max {
+			return fmt.Errorf("case %d: q=%.2f, want [%.2f, %.2f]", i, q, c.min, c.max)
+		}
+	}
+	return nil
+}
+
+func testFrameBoxInReference() error {
+	minX, minY, maxX, maxY := frameBoxInReference(100, 50, identitySimilarity)
+	if minX != 0 || minY != 0 || maxX != 99 || maxY != 49 {
+		return fmt.Errorf("identity box = (%d,%d,%d,%d), want (0,0,99,49)", minX, minY, maxX, maxY)
+	}
+	sim := similarity{SC: 1, SS: 0, Tx: 10, Ty: 20}
+	minX, minY, maxX, maxY = frameBoxInReference(100, 50, sim)
+	if minX != 10 || minY != 20 || maxX != 109 || maxY != 69 {
+		return fmt.Errorf("translated box = (%d,%d,%d,%d), want (10,20,109,69)", minX, minY, maxX, maxY)
+	}
+	return nil
+}
+
+func testMatchStarsRejectsFewInliers() error {
+	refStars := make([]star, 9)
+	for i := range refStars {
+		refStars[i] = star{X: float64(100 + i*50), Y: float64(100 + i*30), Flux: 1000}
+	}
+	var tgtStars []star
+	for i := 0; i < 4; i++ {
+		tgtStars = append(tgtStars, star{X: refStars[i].X + 1, Y: refStars[i].Y + 1, Flux: 1000})
+	}
+	for i := 0; i < 10; i++ {
+		tgtStars = append(tgtStars, star{X: float64(2000 + i*100), Y: float64(2000 + i*100), Flux: 100})
+	}
+	_, inliers, ok := matchStarsToReference(refStars, tgtStars)
+	if ok {
+		return fmt.Errorf("expected rejection for %d inliers, but got ok=true", inliers)
 	}
 	return nil
 }
