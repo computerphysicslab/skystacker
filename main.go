@@ -78,6 +78,7 @@ type cliOptions struct {
 	HDRAmount     float64
 	StarRadius    int
 	StarSigma     float64
+	BgPercentile  float64
 	Scale         int
 	Force         bool
 
@@ -123,6 +124,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.HDRAmount, "hdr-amount", 0.5, "HDR local contrast amount")
 	fs.IntVar(&o.StarRadius, "star-radius", 0, "star removal radius in px (0 = auto)")
 	fs.Float64Var(&o.StarSigma, "star-sigma", 4.0, "star detection sigma (lower = more aggressive)")
+	fs.Float64Var(&o.BgPercentile, "bg-percentile", 10.0, "subtract this percentile of luminance (0 disables); higher = darker background")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
@@ -329,12 +331,23 @@ func findCR2Tool() string {
 func decodeCR2Config(path string) (image.Config, error) {
 	tool := findCR2Tool()
 	if tool != "" {
-		cmd := exec.Command(tool, "-i", path)
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		if err := cmd.Run(); err == nil {
-			re := regexp.MustCompile(`Output size:\s+(\d+)\s+x\s+(\d+)`)
-			if m := re.FindStringSubmatch(out.String()); len(m) == 3 {
+		// dcraw -i (non-verbose) prints only "FNAME is a MAKE MODEL image."
+		// to stderr, with no dimensions. -i -v prints additional metadata
+		// (also to stderr) that includes "Output size: N x M". Combine
+		// stdout+stderr in case a dcraw variant prints to stdout instead.
+		cmd := exec.Command(tool, "-i", "-v", path)
+		var outBuf, errBuf bytes.Buffer
+		cmd.Stdout = &outBuf
+		cmd.Stderr = &errBuf
+		_ = cmd.Run()
+		text := outBuf.String() + errBuf.String()
+		for _, pat := range []string{
+			`Output size:\s*(\d+)\s*x\s*(\d+)`,
+			`Image size:\s*(\d+)\s*x\s*(\d+)`,
+			`Full size:\s*(\d+)\s*x\s*(\d+)`,
+		} {
+			re := regexp.MustCompile(pat)
+			if m := re.FindStringSubmatch(text); len(m) == 3 {
 				w, _ := strconv.Atoi(m[1])
 				h, _ := strconv.Atoi(m[2])
 				if w > 0 && h > 0 {
@@ -343,16 +356,17 @@ func decodeCR2Config(path string) (image.Config, error) {
 			}
 		}
 	}
+	// Fallback: ImageMagick direct (works only with a raw delegate)
 	cmd := exec.Command("identify", "-format", "%w %h", path)
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return image.Config{}, fmt.Errorf("cannot read CR2 %s: install dcraw (sudo apt install dcraw)", path)
+		return image.Config{}, fmt.Errorf("cannot read CR2 %s: dcraw ran but reported no dimensions, and ImageMagick also failed: %s", path, errBuf.String())
 	}
 	parts := strings.Fields(out.String())
 	if len(parts) != 2 {
-		return image.Config{}, errors.New("invalid dimensions")
+		return image.Config{}, fmt.Errorf("cannot read CR2 %s: unexpected identify output %q", path, out.String())
 	}
 	w, _ := strconv.Atoi(parts[0])
 	h, _ := strconv.Atoi(parts[1])
@@ -367,7 +381,12 @@ func decodeCR2File(path string, targetW, targetH int) (*frame, error) {
 		dcraw.Stdout = &dcrawBuf
 		dcraw.Stderr = &dcrawErr
 		if err := dcraw.Run(); err != nil {
-			return nil, fmt.Errorf("%s failed: %w (%s)", tool, err, dcrawErr.String())
+			return nil, fmt.Errorf("%s failed on %s: %w\n  stderr: %s",
+				tool, filepath.Base(path), err, strings.TrimSpace(dcrawErr.String()))
+		}
+		if dcrawBuf.Len() < 100 {
+			return nil, fmt.Errorf("%s produced %d bytes for %s (expected TIFF data); stderr: %s",
+				tool, dcrawBuf.Len(), filepath.Base(path), strings.TrimSpace(dcrawErr.String()))
 		}
 		convArgs := []string{"tiff:-"}
 		if targetW > 0 && targetH > 0 {
@@ -380,14 +399,16 @@ func decodeCR2File(path string, targetW, targetH int) (*frame, error) {
 		conv.Stdout = &convBuf
 		conv.Stderr = &convErr
 		if err := conv.Run(); err != nil {
-			return nil, fmt.Errorf("CR2->PNG convert failed: %w (%s)", err, convErr.String())
+			return nil, fmt.Errorf("CR2->PNG convert failed on %s: %w\n  stderr: %s",
+				filepath.Base(path), err, strings.TrimSpace(convErr.String()))
 		}
 		img, _, err := image.Decode(&convBuf)
 		if err != nil {
-			return nil, fmt.Errorf("decode CR2 PNG: %w", err)
+			return nil, fmt.Errorf("decode CR2 PNG (%s): %w", filepath.Base(path), err)
 		}
 		return frameFromImage(img)
 	}
+	// Fallback: direct ImageMagick (requires a raw delegate)
 	args := []string{path}
 	if targetW > 0 && targetH > 0 {
 		args = append(args, "-resize", fmt.Sprintf("%dx%d!", targetW, targetH))
@@ -398,7 +419,8 @@ func decodeCR2File(path string, targetW, targetH int) (*frame, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("cannot decode CR2 %s: install dcraw (sudo apt install dcraw): %s", path, errBuf.String())
+		return nil, fmt.Errorf("cannot decode CR2 %s: no dcraw/dcraw_emu in PATH and ImageMagick has no raw delegate: %s",
+			filepath.Base(path), strings.TrimSpace(errBuf.String()))
 	}
 	img, _, err := image.Decode(&out)
 	if err != nil {
@@ -1952,6 +1974,7 @@ type runOptions struct {
 	HDRAmount     float64
 	StarRadius    int
 	StarSigma     float64
+	BgPercentile  float64
 	Scale         int
 	Force         bool
 
@@ -2146,6 +2169,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	// Assuming ~0.05s per megapixel per worker
 	// Time estimation: ~0.35s per MP per frame + 10s for post-processing
 	estSecs := float64(len(candidates)) * (float64(refW*refH) / 1e6) * 0.35
+	// CR2/CR3 decode via dcraw + convert adds ~12 s of subprocess overhead
+	// per frame, which dominates pixel-level processing for typical sizes.
+	for _, c := range candidates {
+		ext := strings.ToLower(filepath.Ext(c.path))
+		if ext == ".cr2" || ext == ".cr3" {
+			estSecs += float64(len(candidates)) * 12.0
+			break
+		}
+	}
 	if opts.PostProcess && !opts.StackOnly {
 		estSecs += 10.0
 	}
@@ -2718,6 +2750,8 @@ func runSelfTests() int {
 		{"detect stars sigma single pixel", testDetectStarsSigmaSinglePixel},
 		{"remove stars fine stars", testRemoveStarsFineStars},
 		{"find CR2 tool", testFindCR2Tool},
+		{"parse dcraw output", testParseDcrawOutput},
+		{"black point shift", testBlackPointShift},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -3507,7 +3541,7 @@ func testPipelinePostOnly() error {
 
 	if err := runPipeline(context.Background(), runOptions{
 		InputDir: dir, PostOnly: true, BGDegree: 2, StretchFactor: 10,
-		SharpenAmount: 0.8, SharpenRadius: 1.5,
+		SharpenAmount: 0.8, SharpenRadius: 1.5, BgPercentile: 10,
 	}); err != nil {
 		return fmt.Errorf("runPipeline --post-only: %w", err)
 	}
@@ -3515,6 +3549,7 @@ func testPipelinePostOnly() error {
 	for _, name := range []string{
 		"post_step1_background_removed.jpg",
 		"post_step2_star_removed.jpg",
+		"post_step3_dark_background.jpg",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			return fmt.Errorf("missing post output %s: %w", name, err)
@@ -3869,8 +3904,68 @@ func testRemoveStarsFineStars() error {
 	return nil
 }
 
+func testParseDcrawOutput() error {
+	// Realistic outputs from `dcraw -i -v`. Some dcraw builds pad the
+	// numbers with spaces inside "%4d x %4d", others don't.
+	samples := []struct {
+		text string
+		w, h int
+	}{
+		{"Output size: 6000 x 4000\n", 6000, 4000},
+		{"Output size:  6000 x  4000\n", 6000, 4000},
+		{"Output size: 6024 x 4020\nImage size: 6000 x 4000\n", 6024, 4020},
+		{"Image size: 5000 x 3000\n", 5000, 3000},
+		{"Full size: 4000 x 2500\n", 4000, 2500},
+	}
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`Output size:\s*(\d+)\s*x\s*(\d+)`),
+		regexp.MustCompile(`Image size:\s*(\d+)\s*x\s*(\d+)`),
+		regexp.MustCompile(`Full size:\s*(\d+)\s*x\s*(\d+)`),
+	}
+	for i, s := range samples {
+		matched := false
+		for _, re := range patterns {
+			if m := re.FindStringSubmatch(s.text); len(m) == 3 {
+				w, _ := strconv.Atoi(m[1])
+				h, _ := strconv.Atoi(m[2])
+				if w == s.w && h == s.h {
+					matched = true
+					break
+				}
+				return fmt.Errorf("sample %d: got %dx%d, want %dx%d", i, w, h, s.w, s.h)
+			}
+		}
+		if !matched {
+			return fmt.Errorf("sample %d: no pattern matched %q", i, s.text)
+		}
+	}
+	return nil
+}
+
 func testFindCR2Tool() error {
 	_ = findCR2Tool()
+	return nil
+}
+
+func testBlackPointShift() error {
+	const w, h = 10, 10
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w*h; i++ {
+		v := float32(0.05 + 0.10*float64(i)/float64(w*h))
+		f.Pix[i*3] = v
+		f.Pix[i*3+1] = v
+		f.Pix[i*3+2] = v
+	}
+	result := blackPointShift(f, 10.0)
+	for i := 0; i < w*h/10; i++ {
+		if result.Pix[i*3] > 0.01 {
+			return fmt.Errorf("darkest pixel %d not zeroed: %v", i, result.Pix[i*3])
+		}
+	}
+	bright := result.Pix[(w*h-1)*3]
+	if bright < 0.08 {
+		return fmt.Errorf("bright pixel shifted too much: %v", bright)
+	}
 	return nil
 }
 
@@ -4531,9 +4626,12 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 			radius = 8
 		}
 	}
-	stars := detectStarsSigma(f, 10000, sigma)
+	stars := detectStarsSigma(f, 100000, sigma)
 	logf("  star removal: %d stars detected (sigma=%.1f, maxRadius=%d)",
 		len(stars), sigma, radius)
+	if len(stars) >= 100000 {
+		logf("  WARNING: hit 100000-star detection cap; some very faint stars may remain")
+	}
 
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	copy(result.Pix, f.Pix)
@@ -4650,6 +4748,43 @@ func reduceStars(f *frame, amount float64) *frame {
 		}
 	}
 	return out
+}
+
+// blackPointShift subtracts the given percentile of the luminance
+// histogram from every channel and clamps to [0, 1]. This gives the darkest
+// regions of the image a true-black floor, which visually reads as a "dark
+// background" after stretch. A percentile of 0 disables the step.
+func blackPointShift(f *frame, percentile float64) *frame {
+	if percentile <= 0 || percentile >= 100 {
+		return f
+	}
+	var lums []float32
+	const step = 4
+	for y := 0; y < f.Height; y += step {
+		for x := 0; x < f.Width; x += step {
+			i := (y*f.Width + x) * 3
+			lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
+		}
+	}
+	if len(lums) == 0 {
+		return f
+	}
+	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+	idx := int(float64(len(lums)-1) * percentile / 100)
+	threshold := float64(lums[idx])
+
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for i := range f.Pix {
+		v := float64(f.Pix[i]) - threshold
+		if v < 0 {
+			v = 0
+		} else if v > 1 {
+			v = 1
+		}
+		result.Pix[i] = float32(v)
+	}
+	logf("  black point shift: subtract P%g = %.4f", percentile, threshold)
+	return result
 }
 
 func floatToByte(v float32) uint8 {
@@ -4793,6 +4928,20 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  WARNING: %v", err)
 	}
 	outputs = append(outputs, p)
+
+	// Black point polish (ALWAYS, unless --bg-percentile 0): subtract the
+	// configured percentile of luminance so the darkest parts of the image
+	// are truly black. Combined with the star removal above, this gives the
+	// "near-dark background" that makes faint stars disappear into the sky.
+	if opts.BgPercentile > 0 {
+		logf("  post: black point shift (P%g)", opts.BgPercentile)
+		cur = blackPointShift(cur, opts.BgPercentile)
+		p = filepath.Join(outputDir, "post_step3_dark_background.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
 
 	if opts.PostStretch {
 		logf("  post: stretch gentle")
@@ -5095,6 +5244,7 @@ func main() {
 		HDRAmount:     opts.HDRAmount,
 		StarRadius:    opts.StarRadius,
 		StarSigma:     opts.StarSigma,
+		BgPercentile:  opts.BgPercentile,
 		Scale:         opts.Scale,
 		Force:         opts.Force,
 		CreateTIFF:    opts.CreateTIFF,
