@@ -35,6 +35,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -315,9 +316,103 @@ func calibrate(f *frame, dark, flat, bias *frame) {
 	}
 }
 
+// findCR2Tool returns the first available CR2 decoder, or "".
+func findCR2Tool() string {
+	for _, name := range []string{"dcraw_emu", "dcraw"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return name
+		}
+	}
+	return ""
+}
+
+func decodeCR2Config(path string) (image.Config, error) {
+	tool := findCR2Tool()
+	if tool != "" {
+		cmd := exec.Command(tool, "-i", path)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err == nil {
+			re := regexp.MustCompile(`Output size:\s+(\d+)\s+x\s+(\d+)`)
+			if m := re.FindStringSubmatch(out.String()); len(m) == 3 {
+				w, _ := strconv.Atoi(m[1])
+				h, _ := strconv.Atoi(m[2])
+				if w > 0 && h > 0 {
+					return image.Config{Width: w, Height: h}, nil
+				}
+			}
+		}
+	}
+	cmd := exec.Command("identify", "-format", "%w %h", path)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return image.Config{}, fmt.Errorf("cannot read CR2 %s: install dcraw (sudo apt install dcraw)", path)
+	}
+	parts := strings.Fields(out.String())
+	if len(parts) != 2 {
+		return image.Config{}, errors.New("invalid dimensions")
+	}
+	w, _ := strconv.Atoi(parts[0])
+	h, _ := strconv.Atoi(parts[1])
+	return image.Config{Width: w, Height: h}, nil
+}
+
+func decodeCR2File(path string, targetW, targetH int) (*frame, error) {
+	tool := findCR2Tool()
+	if tool != "" {
+		dcraw := exec.Command(tool, "-c", "-T", "-4", path)
+		var dcrawBuf, dcrawErr bytes.Buffer
+		dcraw.Stdout = &dcrawBuf
+		dcraw.Stderr = &dcrawErr
+		if err := dcraw.Run(); err != nil {
+			return nil, fmt.Errorf("%s failed: %w (%s)", tool, err, dcrawErr.String())
+		}
+		convArgs := []string{"tiff:-"}
+		if targetW > 0 && targetH > 0 {
+			convArgs = append(convArgs, "-resize", fmt.Sprintf("%dx%d!", targetW, targetH))
+		}
+		convArgs = append(convArgs, "-depth", "16", "png:-")
+		conv := exec.Command("convert", convArgs...)
+		conv.Stdin = &dcrawBuf
+		var convBuf, convErr bytes.Buffer
+		conv.Stdout = &convBuf
+		conv.Stderr = &convErr
+		if err := conv.Run(); err != nil {
+			return nil, fmt.Errorf("CR2->PNG convert failed: %w (%s)", err, convErr.String())
+		}
+		img, _, err := image.Decode(&convBuf)
+		if err != nil {
+			return nil, fmt.Errorf("decode CR2 PNG: %w", err)
+		}
+		return frameFromImage(img)
+	}
+	args := []string{path}
+	if targetW > 0 && targetH > 0 {
+		args = append(args, "-resize", fmt.Sprintf("%dx%d!", targetW, targetH))
+	}
+	args = append(args, "-depth", "16", "png:-")
+	cmd := exec.Command("convert", args...)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("cannot decode CR2 %s: install dcraw (sudo apt install dcraw): %s", path, errBuf.String())
+	}
+	img, _, err := image.Decode(&out)
+	if err != nil {
+		return nil, err
+	}
+	return frameFromImage(img)
+}
+
 func decodeImageConfig(path string) (image.Config, error) {
 	ext := strings.ToLower(filepath.Ext(path))
-	if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
+	if ext == ".cr2" || ext == ".cr3" {
+		return decodeCR2Config(path)
+	}
+	if ext == ".fits" || ext == ".fit" {
 		cmd := exec.Command("identify", "-format", "%w %h", path)
 		var out bytes.Buffer
 		cmd.Stdout = &out
@@ -343,7 +438,10 @@ func decodeImageConfig(path string) (image.Config, error) {
 
 func decodeImageFile(path string, targetW, targetH int) (*frame, error) {
 	ext := strings.ToLower(filepath.Ext(path))
-	if ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
+	if ext == ".cr2" || ext == ".cr3" {
+		return decodeCR2File(path, targetW, targetH)
+	}
+	if ext == ".fits" || ext == ".fit" {
 		args := []string{path}
 		if targetW > 0 && targetH > 0 {
 			args = append(args, "-resize", fmt.Sprintf("%dx%d!", targetW, targetH))
@@ -465,6 +563,7 @@ func grayscale(f *frame) []float32 {
 type star struct {
 	X, Y float64 // sub-pixel centroid
 	Flux float64 // background-subtracted integrated intensity
+	Size int     // connected component pixel count
 }
 
 // estimateBackgroundNoise uses a 256-bin histogram over a subsample to
@@ -571,7 +670,7 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 					}
 				}
 			}
-			if len(pixels) >= 2 && len(pixels) <= 200 {
+			if len(pixels) >= 1 && len(pixels) <= 200 {
 				comps = append(comps, comp{pixels: pixels})
 			}
 		}
@@ -619,7 +718,7 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 		if aspect < 0.33 || aspect > 3.0 {
 			continue
 		}
-		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux})
+		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux, Size: len(c.pixels)})
 	}
 	sort.Slice(stars, func(i, j int) bool { return stars[i].Flux > stars[j].Flux })
 	if len(stars) > maxStars {
@@ -2019,6 +2118,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		candidates = append(candidates, candidate{path: path})
 	}
 	if len(candidates) == 0 {
+		for i, rj := range rejected {
+			if i >= 5 {
+				logf("  ... and %d more rejected (see report.txt)", len(rejected)-5)
+				break
+			}
+			logf("  rejected %s: %s", filepath.Base(rj.Path), rj.Reason)
+		}
 		return fmt.Errorf("no valid images (all %d candidates rejected)", len(files))
 	}
 
@@ -2608,6 +2714,10 @@ func runSelfTests() int {
 		{"output files list", testOutputFilesList},
 		{"resize frame", testResizeFrame},
 		{"tiff flag only sum", testTiffFlagOnlySum},
+		{"star struct has size", testStarStructHasSize},
+		{"detect stars sigma single pixel", testDetectStarsSigmaSinglePixel},
+		{"remove stars fine stars", testRemoveStarsFineStars},
+		{"find CR2 tool", testFindCR2Tool},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -3710,6 +3820,60 @@ func testTiffFlagOnlySum() error {
 	return nil
 }
 
+func testStarStructHasSize() error {
+	s := star{X: 1, Y: 2, Flux: 3, Size: 4}
+	if s.Size != 4 {
+		return fmt.Errorf("Size field not set")
+	}
+	return nil
+}
+
+func testDetectStarsSigmaSinglePixel() error {
+	const w, h = 100, 100
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.1
+	}
+	i := (50*w + 50) * 3
+	f.Pix[i], f.Pix[i+1], f.Pix[i+2] = 0.9, 0.9, 0.9
+	got := detectStarsSigma(f, 100, 4.0)
+	for _, s := range got {
+		if math.Abs(s.X-50) < 1 && math.Abs(s.Y-50) < 1 {
+			if s.Size < 1 {
+				return fmt.Errorf("detected star has Size=0")
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("single-pixel star not detected (got %d stars)", len(got))
+}
+
+func testRemoveStarsFineStars() error {
+	const w, h = 200, 200
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.1
+	}
+	positions := [][2]int{{20, 20}, {50, 80}, {120, 30}, {180, 190}, {100, 100}, {150, 150}}
+	for _, p := range positions {
+		i := (p[1]*w + p[0]) * 3
+		f.Pix[i], f.Pix[i+1], f.Pix[i+2] = 0.9, 0.9, 0.9
+	}
+	result := removeStars(f, 4.0, 8)
+	for _, p := range positions {
+		i := (p[1]*w + p[0]) * 3
+		if result.Pix[i] > 0.3 {
+			return fmt.Errorf("fine star at %v not removed: %v", p, result.Pix[i])
+		}
+	}
+	return nil
+}
+
+func testFindCR2Tool() error {
+	_ = findCR2Tool()
+	return nil
+}
+
 func testReportContains() error {
 	dir, err := os.MkdirTemp("", "skystacker-report-")
 	if err != nil {
@@ -4367,8 +4531,8 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 			radius = 8
 		}
 	}
-	stars := detectStarsSigma(f, 2000, sigma)
-	logf("  star removal: %d stars detected (sigma=%.1f, radius=%d)",
+	stars := detectStarsSigma(f, 10000, sigma)
+	logf("  star removal: %d stars detected (sigma=%.1f, maxRadius=%d)",
 		len(stars), sigma, radius)
 
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
@@ -4376,8 +4540,27 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 
 	for _, s := range stars {
 		cx, cy := int(s.X+0.5), int(s.Y+0.5)
-		rInner := radius
-		rOuter := radius * 2
+
+		starRadius := radius
+		switch {
+		case s.Size <= 2:
+			starRadius = 2
+		case s.Size <= 5:
+			starRadius = radius / 2
+			if starRadius < 3 {
+				starRadius = 3
+			}
+		case s.Size <= 20:
+			starRadius = (radius * 2) / 3
+			if starRadius < 4 {
+				starRadius = 4
+			}
+		}
+		rInner := starRadius
+		rOuter := starRadius * 2
+		if rOuter > radius*2 {
+			rOuter = radius * 2
+		}
 
 		var rS, gS, bS []float32
 		for dy := -rOuter; dy <= rOuter; dy++ {
@@ -4396,7 +4579,7 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 				bS = append(bS, f.Pix[i+2])
 			}
 		}
-		if len(rS) < 8 {
+		if len(rS) == 0 {
 			continue
 		}
 		sort.Slice(rS, func(i, j int) bool { return rS[i] < rS[j] })
@@ -4406,9 +4589,9 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 		gMed := gS[len(gS)/2]
 		bMed := bS[len(bS)/2]
 
-		for dy := -radius; dy <= radius; dy++ {
-			for dx := -radius; dx <= radius; dx++ {
-				if dx*dx+dy*dy > radius*radius {
+		for dy := -starRadius; dy <= starRadius; dy++ {
+			for dx := -starRadius; dx <= starRadius; dx++ {
+				if dx*dx+dy*dy > starRadius*starRadius {
 					continue
 				}
 				nx, ny := cx+dx, cy+dy
