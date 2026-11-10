@@ -84,6 +84,8 @@ type cliOptions struct {
 	STFShadowsClip float64
 	STFTargetBG    float64
 	STFLinked      bool
+	NoHDRBlend     bool
+	HDRBlendFactor float64
 	Scale          int
 	Force          bool
 
@@ -134,6 +136,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.STFShadowsClip, "stf-shadows", -2.8, "STF shadow clip in units of sigma (default -2.8)")
 	fs.Float64Var(&o.STFTargetBG, "stf-target", 0.25, "STF target background level (default 0.25)")
 	fs.BoolVar(&o.STFLinked, "stf-linked", false, "use linked channels for STF (default unlinked for auto color balance)")
+	fs.BoolVar(&o.NoHDRBlend, "no-hdr-blend", false, "skip the final HDR blend step (post_step5_hdr.jpg)")
+	fs.Float64Var(&o.HDRBlendFactor, "hdr-blend-factor", 1.0, "HDR blend amount: post_step4 + factor*post_step1 (default 1.0)")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
@@ -157,7 +161,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--scale" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--scale" {
 				skipNext = true
 			}
 		} else {
@@ -242,6 +246,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --stf-shadows F    STF shadow clip in sigma units (default -2.8)")
 	fmt.Fprintln(w, "  --stf-target F     STF target background level (default 0.25)")
 	fmt.Fprintln(w, "  --stf-linked       use linked channels for STF (default: unlinked)")
+	fmt.Fprintln(w, "  --no-hdr-blend    skip the final HDR blend (post_step5_hdr.jpg)")
+	fmt.Fprintln(w, "  --hdr-blend-factor F  HDR blend amount: post_step4 + F*post_step1 (default 1.0)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -2080,6 +2086,8 @@ type runOptions struct {
 	STFShadowsClip float64
 	STFTargetBG    float64
 	STFLinked      bool
+	NoHDRBlend     bool
+	HDRBlendFactor float64
 	Scale          int
 	Force          bool
 
@@ -2928,6 +2936,7 @@ func runSelfTests() int {
 		{"auto stretch", testAutoStretch},
 		{"strict uniform dimensions", testStrictUniformDimensions},
 		{"same dimensions succeed", testSameDimensionsSucceeds},
+		{"HDR blend", testHDRBlend},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -3779,7 +3788,7 @@ func testPipelinePostOnly() error {
 
 	if err := runPipeline(context.Background(), runOptions{
 		InputDir: dir, PostOnly: true, BGDegree: 2, StretchFactor: 10,
-		SharpenAmount: 0.8, SharpenRadius: 1.5, BgPercentile: 10,
+		SharpenAmount: 0.8, SharpenRadius: 1.5, BgPercentile: 10, HDRBlendFactor: 1.0,
 	}); err != nil {
 		return fmt.Errorf("runPipeline --post-only: %w", err)
 	}
@@ -3789,6 +3798,7 @@ func testPipelinePostOnly() error {
 		"post_step2_star_removed.jpg",
 		"post_step3_dark_background.jpg",
 		"post_step4_auto_stretched.jpg",
+		"post_step5_hdr.jpg",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			return fmt.Errorf("missing post output %s: %w", name, err)
@@ -4348,6 +4358,55 @@ func testSameDimensionsSucceeds() error {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "skystacker_results")); err == nil {
 		return errors.New("old 'skystacker_results' folder should not exist")
+	}
+	return nil
+}
+
+func testHDRBlend() error {
+	const w, h = 8, 8
+	base := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	detail := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w*h; i++ {
+		base.Pix[i*3] = 0.2
+		base.Pix[i*3+1] = 0.3
+		base.Pix[i*3+2] = 0.4
+		detail.Pix[i*3] = 0.1
+		detail.Pix[i*3+1] = 0.1
+		detail.Pix[i*3+2] = 0.1
+	}
+	out := blendHDR(base, detail, 1.0)
+	for i := 0; i < w*h; i++ {
+		if math.Abs(float64(out.Pix[i*3]-0.3)) > 1e-6 {
+			return fmt.Errorf("R pixel %d = %v, want 0.3", i, out.Pix[i*3])
+		}
+		if math.Abs(float64(out.Pix[i*3+1]-0.4)) > 1e-6 {
+			return fmt.Errorf("G pixel %d = %v, want 0.4", i, out.Pix[i*3+1])
+		}
+		if math.Abs(float64(out.Pix[i*3+2]-0.5)) > 1e-6 {
+			return fmt.Errorf("B pixel %d = %v, want 0.5", i, out.Pix[i*3+2])
+		}
+	}
+	out = blendHDR(base, detail, 0.5)
+	for i := 0; i < w*h; i++ {
+		if math.Abs(float64(out.Pix[i*3]-0.25)) > 1e-6 {
+			return fmt.Errorf("factor 0.5 R pixel %d = %v, want 0.25", i, out.Pix[i*3])
+		}
+	}
+	out = blendHDR(base, detail, 0)
+	for i := 0; i < w*h*3; i++ {
+		if out.Pix[i] != base.Pix[i] {
+			return fmt.Errorf("factor 0 altered pixel %d", i)
+		}
+	}
+	base.Pix[0], detail.Pix[0] = 0.8, 0.5
+	out = blendHDR(base, detail, 1.0)
+	if out.Pix[0] != 1.0 {
+		return fmt.Errorf("overflow not clamped: %v", out.Pix[0])
+	}
+	base.Pix[0], detail.Pix[0] = 0.5, -0.3
+	out = blendHDR(base, detail, 1.0)
+	if math.Abs(float64(out.Pix[0]-0.5)) > 1e-6 {
+		return fmt.Errorf("negative detail not clamped: %v", out.Pix[0])
 	}
 	return nil
 }
@@ -5315,6 +5374,37 @@ func autoStretch(f *frame, shadowsClip, targetBG float64, linked bool) *frame {
 	return result
 }
 
+// blendHDR combines a stretched display frame (base, typically step 4)
+// with a linear background-removed frame (detail, typically step 1) via
+// pixel-wise addition, clamped to [0, 1]. The stretched base supplies the
+// overall tone curve; the linear detail supplies bright-core information
+// that the auto-stretch compressed toward white. factor controls how much
+// of the detail frame is mixed in (1.0 = full addition, 0 = base only).
+func blendHDR(base, detail *frame, factor float64) *frame {
+	if base.Width != detail.Width || base.Height != detail.Height {
+		return base
+	}
+	if factor <= 0 {
+		return base
+	}
+	result := &frame{Width: base.Width, Height: base.Height, Pix: make([]float32, len(base.Pix))}
+	f := float32(factor)
+	for i := range base.Pix {
+		d := detail.Pix[i]
+		if d < 0 {
+			d = 0
+		}
+		v := base.Pix[i] + f*d
+		if v < 0 {
+			v = 0
+		} else if v > 1 {
+			v = 1
+		}
+		result.Pix[i] = v
+	}
+	return result
+}
+
 func floatToByte(v float32) uint8 {
 	if v <= 0 {
 		return 0
@@ -5388,10 +5478,12 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 
 	var outputs []string
 	cur := src
+	var step1Frame, step4Frame *frame
 
 	// Step 1: background removal (ALWAYS)
 	logf("  post: background removal (degree %d)", opts.BGDegree)
 	cur = removeBackground(cur, opts.BGDegree, opts.MaskBG)
+	step1Frame = cur
 	p := filepath.Join(outputDir, "post_step1_background_removed.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
 		logf("  WARNING: %v", err)
@@ -5478,11 +5570,30 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  post: auto-stretch (STF: shadows=%.1f target=%.2f linked=%v)",
 			opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
 		stretched := autoStretch(cur, opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		step4Frame = stretched
 		p = filepath.Join(outputDir, "post_step4_auto_stretched.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), stretched); err != nil {
 			logf("  WARNING: %v", err)
 		}
 		outputs = append(outputs, p)
+	}
+
+	// Step 5 (HDR): add the auto-stretched result (step 4) to the
+	// background-removed frame (step 1). The stretched base gives the
+	// overall tone; adding the linear detail recovers bright-core and
+	// high-contrast regions that the auto-stretch compressed.
+	if step1Frame != nil && step4Frame != nil && !opts.NoHDRBlend && opts.HDRBlendFactor > 0 {
+		logf("  post: HDR blend (step4 + %g*step1)", opts.HDRBlendFactor)
+		blended := blendHDR(step4Frame, step1Frame, opts.HDRBlendFactor)
+		p = filepath.Join(outputDir, "post_step5_hdr.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), blended); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	} else if opts.NoAutoStretch {
+		logf("  post: HDR blend skipped (auto-stretch disabled)")
+	} else if opts.NoHDRBlend {
+		logf("  post: HDR blend skipped (--no-hdr-blend)")
 	}
 
 	if opts.PostStretch {
@@ -5791,6 +5902,8 @@ func main() {
 		STFShadowsClip: opts.STFShadowsClip,
 		STFTargetBG:    opts.STFTargetBG,
 		STFLinked:      opts.STFLinked,
+		NoHDRBlend:     opts.NoHDRBlend,
+		HDRBlendFactor: opts.HDRBlendFactor,
 		Scale:          opts.Scale,
 		Force:          opts.Force,
 		CreateTIFF:     opts.CreateTIFF,
