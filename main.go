@@ -102,7 +102,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 
 	o := &cliOptions{}
 	var noRegister bool
-	fs.StringVar(&o.OutputDir, "output", "", "output directory (default: <input>/skystacker_results)")
+	fs.StringVar(&o.OutputDir, "output", "", "output directory (default: <input>/0_skystacker_results)")
 	fs.IntVar(&o.Workers, "workers", runtime.NumCPU(), "maximum concurrent workers")
 	fs.BoolVar(&o.Recursive, "recursive", false, "search subdirectories")
 	fs.BoolVar(&o.Overwrite, "overwrite", false, "permit replacing files in the output directory")
@@ -220,7 +220,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  input-directory   directory containing JPG/JPEG files (default: .)")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
-	fmt.Fprintln(w, "  --output string   output directory (default: <input>/skystacker_results)")
+	fmt.Fprintln(w, "  --output string   output directory (default: <input>/0_skystacker_results)")
 	fmt.Fprintln(w, "  --workers int     maximum concurrent workers (default: NumCPU)")
 	fmt.Fprintln(w, "  --recursive       search subdirectories")
 	fmt.Fprintln(w, "  --overwrite       permit replacing files in the output directory")
@@ -2179,7 +2179,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	var outputDir string
 	if opts.OutputDir == "" {
-		outputDir = filepath.Join(inputDir, "skystacker_results")
+		outputDir = filepath.Join(inputDir, "0_skystacker_results")
 	} else {
 		outputDir, err = filepath.Abs(opts.OutputDir)
 		if err != nil {
@@ -2217,7 +2217,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("output directory: %w", err)
 	}
 
-	files, err := discoverFiles(inputDir, opts.Recursive, []string{outputDir})
+	files, err := discoverFiles(inputDir, opts.Recursive, []string{
+		outputDir,
+		filepath.Join(inputDir, "skystacker_results"),
+		filepath.Join(inputDir, "0_skystacker_results"),
+	})
 	if err != nil {
 		return err
 	}
@@ -2231,6 +2235,17 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		rejected   []rejection
 		refW, refH int
 	)
+
+	// Decode dimensions of every file. Files that fail to decode or
+	// report invalid dimensions are soft-rejected here and never enter
+	// the size-uniformity check below; they are reported in report.txt.
+	type dimKey struct{ w, h int }
+	type decodedFile struct {
+		path string
+		rawW int
+		rawH int
+	}
+	decodable := make([]decodedFile, 0, len(files))
 	for _, path := range files {
 		cfg, err := decodeImageConfig(path)
 		if err != nil {
@@ -2241,18 +2256,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			rejected = append(rejected, rejection{Path: path, Reason: fmt.Sprintf("invalid dimensions %dx%d", cfg.Width, cfg.Height)})
 			continue
 		}
-		if refW == 0 {
-			refW, refH = cfg.Width/opts.Scale, cfg.Height/opts.Scale
-		} else if cfg.Width/opts.Scale != refW || cfg.Height/opts.Scale != refH {
-			rejected = append(rejected, rejection{
-				Path:   path,
-				Reason: fmt.Sprintf("dimensions %dx%d differ from reference %dx%d", cfg.Width, cfg.Height, refW, refH),
-			})
-			continue
-		}
-		candidates = append(candidates, candidate{path: path})
+		decodable = append(decodable, decodedFile{path: path, rawW: cfg.Width, rawH: cfg.Height})
 	}
-	if len(candidates) == 0 {
+	if len(decodable) == 0 {
 		for i, rj := range rejected {
 			if i >= 5 {
 				logf("  ... and %d more rejected (see report.txt)", len(rejected)-5)
@@ -2261,6 +2267,48 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			logf("  rejected %s: %s", filepath.Base(rj.Path), rj.Reason)
 		}
 		return fmt.Errorf("no valid images (all %d candidates rejected)", len(files))
+	}
+
+	// Group decodable files by their scaled dimensions.
+	refW, refH = decodable[0].rawW/opts.Scale, decodable[0].rawH/opts.Scale
+	groups := make(map[dimKey][]string, len(decodable))
+	order := make([]dimKey, 0, len(decodable))
+	for _, d := range decodable {
+		k := dimKey{d.rawW / opts.Scale, d.rawH / opts.Scale}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], d.path)
+	}
+
+	// Fail-fast: a single folder that mixes dimensions is almost always
+	// a mistake (previews left behind next to the raw subs, a different
+	// exposure accidentally copied in, an old output directory that was
+	// not excluded). Silently stacking only one subset is the worst
+	// possible answer; the user deserves a loud, actionable error.
+	if len(order) > 1 {
+		var sb strings.Builder
+		sb.WriteString("input folder mixes images of different dimensions; all images in the folder must be exactly the same size\n")
+		sb.WriteString(fmt.Sprintf("found %d distinct size group(s) among %d decodable file(s):\n", len(order), len(decodable)))
+		for _, k := range order {
+			names := groups[k]
+			var sample []string
+			for i, p := range names {
+				if i >= 5 {
+					sample = append(sample, fmt.Sprintf("... and %d more", len(names)-5))
+					break
+				}
+				sample = append(sample, filepath.Base(p))
+			}
+			sb.WriteString(fmt.Sprintf("  %dx%d  (%d file(s)): %s\n", k.w, k.h, len(names), strings.Join(sample, ", ")))
+		}
+		sb.WriteString("Move the mismatching files out of the folder, or resize them to a common size, then retry.")
+		return errors.New(sb.String())
+	}
+
+	// All decodable files share the same size: register them all.
+	for _, d := range decodable {
+		candidates = append(candidates, candidate{path: d.path})
 	}
 
 	workers := opts.Workers
@@ -2878,6 +2926,8 @@ func runSelfTests() int {
 		{"black point shift", testBlackPointShift},
 		{"MTF", testMTF},
 		{"auto stretch", testAutoStretch},
+		{"strict uniform dimensions", testStrictUniformDimensions},
+		{"same dimensions succeed", testSameDimensionsSucceeds},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -3677,7 +3727,7 @@ func testPipelineStackOnly() error {
 		return fmt.Errorf("runPipeline: %w", err)
 	}
 
-	outDir := filepath.Join(dir, "skystacker_results")
+	outDir := filepath.Join(dir, "0_skystacker_results")
 	for _, name := range []string{
 		"_work/stacked_mean.f32raw", "stacked_mean.jpg",
 		"stacked_no_correction_mean.jpg",
@@ -3701,7 +3751,7 @@ func testPipelinePostOnly() error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	outDir := filepath.Join(dir, "skystacker_results")
+	outDir := filepath.Join(dir, "0_skystacker_results")
 	os.MkdirAll(outDir, 0o755)
 	os.MkdirAll(filepath.Join(outDir, "_work"), 0o755)
 
@@ -3932,7 +3982,7 @@ func testPreviewJPGRemoved() error {
 	}); err != nil {
 		return err
 	}
-	previewPath := filepath.Join(dir, "skystacker_results", "stacked_preview.jpg")
+	previewPath := filepath.Join(dir, "0_skystacker_results", "stacked_preview.jpg")
 	if _, err := os.Stat(previewPath); err == nil {
 		return fmt.Errorf("stacked_preview.jpg should not exist")
 	}
@@ -3966,7 +4016,7 @@ func testOutputFilesList() error {
 	}); err != nil {
 		return err
 	}
-	outDir := filepath.Join(dir, "skystacker_results")
+	outDir := filepath.Join(dir, "0_skystacker_results")
 	required := []string{
 		"stacked_sum.jpg", "stacked_mean.jpg",
 		"stacked_no_correction_mean.jpg",
@@ -4030,7 +4080,7 @@ func testTiffFlagOnlySum() error {
 	}); err != nil {
 		return err
 	}
-	tiffDir := filepath.Join(dir, "skystacker_results", "TIFF")
+	tiffDir := filepath.Join(dir, "0_skystacker_results", "TIFF")
 	entries, err := os.ReadDir(tiffDir)
 	if err != nil {
 		return err
@@ -4208,6 +4258,96 @@ func testAutoStretch() error {
 	starOut := out.Pix[(50*w+50)*3]
 	if starOut < 0.85 {
 		return fmt.Errorf("bright star %.3f, want ~1.0", starOut)
+	}
+	return nil
+}
+
+func testStrictUniformDimensions() error {
+	dir, err := os.MkdirTemp("", "skystacker-strict-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	writeJPEG := func(name string, w, h int) error {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
+			}
+		}
+		fp, err := os.Create(filepath.Join(dir, name))
+		if err != nil {
+			return err
+		}
+		defer fp.Close()
+		return jpeg.Encode(fp, img, &jpeg.Options{Quality: 90})
+	}
+	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		if err := writeJPEG(name, 32, 32); err != nil {
+			return err
+		}
+	}
+	if err := writeJPEG("d.jpg", 16, 16); err != nil {
+		return err
+	}
+	err = runPipeline(context.Background(), runOptions{
+		InputDir: dir, Workers: 1, Register: false, StackOnly: true, Scale: 1,
+	})
+	if err == nil {
+		return errors.New("expected error for mixed dimensions")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "must be exactly the same size") {
+		return fmt.Errorf("error message missing required phrase: %v", err)
+	}
+	if !strings.Contains(msg, "32x32") || !strings.Contains(msg, "16x16") {
+		return fmt.Errorf("error message missing size groups: %v", err)
+	}
+	if !strings.Contains(msg, "(3 file(s))") {
+		return fmt.Errorf("error message missing file count for 32x32 group: %v", err)
+	}
+	if !strings.Contains(msg, "(1 file(s))") {
+		return fmt.Errorf("error message missing file count for 16x16 group: %v", err)
+	}
+	return nil
+}
+
+func testSameDimensionsSucceeds() error {
+	dir, err := os.MkdirTemp("", "skystacker-same-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	writeJPEG := func(name string, w, h int) error {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
+			}
+		}
+		fp, err := os.Create(filepath.Join(dir, name))
+		if err != nil {
+			return err
+		}
+		defer fp.Close()
+		return jpeg.Encode(fp, img, &jpeg.Options{Quality: 90})
+	}
+	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		if err := writeJPEG(name, 32, 32); err != nil {
+			return err
+		}
+	}
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, Workers: 1, Register: false, StackOnly: true, Scale: 1,
+	}); err != nil {
+		return fmt.Errorf("runPipeline: %w", err)
+	}
+	// Output folder must be 0_skystacker_results.
+	if _, err := os.Stat(filepath.Join(dir, "0_skystacker_results", "report.txt")); err != nil {
+		return fmt.Errorf("expected output in 0_skystacker_results: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "skystacker_results")); err == nil {
+		return errors.New("old 'skystacker_results' folder should not exist")
 	}
 	return nil
 }
