@@ -78,7 +78,14 @@ type cliOptions struct {
 	StarReduce    float64
 	Scale         int
 	Force         bool
-}
+
+CreateTIFF    bool
+PostCA        bool
+PostColor     bool
+PostFlatten   bool
+PostSharpen   bool
+PostHDR       bool
+PostStretch   bool}
 
 func parseArgs(args []string) (*cliOptions, error) {
 	fs := flag.NewFlagSet("skystacker", flag.ContinueOnError)
@@ -111,9 +118,16 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.SharpenAmount, "sharpen-amount", 0.8, "unsharp mask amount")
 	fs.Float64Var(&o.SharpenRadius, "sharpen-radius", 1.5, "unsharp mask radius in pixels")
 	fs.Float64Var(&o.HDRAmount, "hdr-amount", 0.5, "HDR local contrast amount")
-	fs.Float64Var(&o.StarReduce, "star-reduce", 0.5, "Star reduction amount")
+	fs.Float64Var(&o.StarReduce, "star-reduce", 0.9, "Star reduction amount (0..1, higher = more aggressive)")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
-	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (not recommended)")
+	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
+fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
+fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
+fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
+fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
+fs.BoolVar(&o.PostSharpen, "post-sharpen", false, "enable unsharp mask")
+fs.BoolVar(&o.PostHDR, "post-hdr", false, "enable HDR local contrast")
+fs.BoolVar(&o.PostStretch, "post-stretch", false, "enable 3-level stretch")
 
 	// Pre-process: move any non-flag arguments to the end so flags can appear anywhere
 // e.g., "skystacker Luminance --method mean" -> "skystacker --method mean Luminance"
@@ -128,7 +142,7 @@ continue
 if strings.HasPrefix(arg, "-") {
 flagsOnly = append(flagsOnly, arg)
 // If it's a flag that takes a value (not a bool), skip the next arg
-if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-reduce" {
+if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-reduce" || arg == "--scale" {
 skipNext = true
 }
 } else {
@@ -1229,6 +1243,62 @@ func writeFloat32RGB(w io.Writer, width, height int, pix []float32) error {
 	return writeFloat32RGBScaled(w, width, height, pix, 1.0)
 }
 
+
+func writeRawFloat32RGB(w io.Writer, width, height int, pix []float32) error {
+n := width * height * 3
+if len(pix) != n {
+return fmt.Errorf("raw: buffer mismatch: got %d want %d", len(pix), n)
+}
+hdr := make([]byte, 8)
+binary.LittleEndian.PutUint32(hdr[0:], uint32(width))
+binary.LittleEndian.PutUint32(hdr[4:], uint32(height))
+if _, err := w.Write(hdr); err != nil {
+return err
+}
+const chunk = 4096
+buf := make([]byte, chunk*4)
+for i := 0; i < n; {
+count := n - i
+if count > chunk { count = chunk }
+for j := 0; j < count; j++ {
+binary.LittleEndian.PutUint32(buf[j*4:], math.Float32bits(pix[i+j]))
+}
+if _, err := w.Write(buf[:count*4]); err != nil {
+return err
+}
+i += count
+}
+return nil
+}
+
+func readRawFloat32RGB(path string) (int, int, []float32, error) {
+f, err := os.Open(path)
+if err != nil { return 0, 0, nil, err }
+defer f.Close()
+hdr := make([]byte, 8)
+if _, err := io.ReadFull(f, hdr); err != nil {
+return 0, 0, nil, fmt.Errorf("raw header: %w", err)
+}
+w := int(binary.LittleEndian.Uint32(hdr[0:]))
+h := int(binary.LittleEndian.Uint32(hdr[4:]))
+n := w * h * 3
+pix := make([]float32, n)
+const chunk = 4096
+buf := make([]byte, chunk*4)
+for i := 0; i < n; {
+count := n - i
+if count > chunk { count = chunk }
+if _, err := io.ReadFull(f, buf[:count*4]); err != nil {
+return 0, 0, nil, fmt.Errorf("raw data: %w", err)
+}
+for j := 0; j < count; j++ {
+pix[i+j] = math.Float32frombits(binary.LittleEndian.Uint32(buf[j*4:]))
+}
+i += count
+}
+return w, h, pix, nil
+}
+
 func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, divisor float32) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("tiff: invalid dimensions %dx%d", width, height)
@@ -1765,7 +1835,14 @@ type runOptions struct {
 	StarReduce    float64
 	Scale         int
 	Force         bool
-}
+
+CreateTIFF    bool
+PostCA        bool
+PostColor     bool
+PostFlatten   bool
+PostSharpen   bool
+PostHDR       bool
+PostStretch   bool}
 
 
 
@@ -1855,7 +1932,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if _, err := os.Stat(outputDir); err != nil {
 			return fmt.Errorf("--post-only: output directory does not exist: %w", err)
 		}
-		meanPath := filepath.Join(outputDir, "TIFF", "stacked_mean.tiff")
+		meanPath := filepath.Join(outputDir, "_work", "stacked_mean.f32raw")
 		if _, err := os.Stat(meanPath); err != nil {
 			return fmt.Errorf("--post-only: %s not found: %w", meanPath, err)
 		}
@@ -2174,158 +2251,147 @@ estMemMB, realPeak, requiredMB, availMemMB, hint)
 			cropRect.Min.Y, cropRect.Max.Y-1, cropRect.Dx(), cropRect.Dy())
 	}
 
-	// ============== Write outputs
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Errorf("create output directory: %w", err)
-	}
-	tiffDir := filepath.Join(outputDir, "TIFF")
-	if err := os.MkdirAll(tiffDir, 0o755); err != nil {
-		return fmt.Errorf("create TIFF directory: %w", err)
-	}
+// ============== Write outputs
+if err := os.MkdirAll(outputDir, 0o755); err != nil {
+return fmt.Errorf("create output directory: %w", err)
+}
+workDir := filepath.Join(outputDir, "_work")
+if err := os.MkdirAll(workDir, 0o755); err != nil {
+return fmt.Errorf("create work directory: %w", err)
+}
+tiffDir := filepath.Join(outputDir, "TIFF")
+if opts.CreateTIFF {
+if err := os.MkdirAll(tiffDir, 0o755); err != nil {
+return fmt.Errorf("create TIFF directory: %w", err)
+}
+}
 
-	sumTiff := filepath.Join(tiffDir, "stacked_sum.tiff")
-	sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
-	meanTiff := filepath.Join(tiffDir, "stacked_mean.tiff")
-	meanJPG := filepath.Join(outputDir, "stacked_mean.jpg")
-	noCorrTiff := filepath.Join(tiffDir, "stacked_no_correction_mean.tiff")
-	noCorrJPG := filepath.Join(outputDir, "stacked_no_correction_mean.jpg")
-	previewJPG := filepath.Join(outputDir, "stacked_preview.jpg")
-	reportTxt := filepath.Join(outputDir, "report.txt")
+sumTiff := filepath.Join(tiffDir, "stacked_sum.tif")
+sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
+meanWorkPath := filepath.Join(workDir, "stacked_mean.f32raw")
+meanJPG := filepath.Join(outputDir, "stacked_mean.jpg")
+noCorrJPG := filepath.Join(outputDir, "stacked_no_correction_mean.jpg")
+previewJPG := filepath.Join(outputDir, "stacked_preview.jpg")
+reportTxt := filepath.Join(outputDir, "report.txt")
+maxJPG := filepath.Join(outputDir, "stacked_max.jpg")
+minJPG := filepath.Join(outputDir, "stacked_min.jpg")
 
-	var sumMax float32
-	var outW, outH int
+var sumMax float32
+var outW, outH int
 
-	if registrationOn {
-		// Registered output: crop then divide the crop.
-		croppedSum := cropAccumulator(regAcc, cropRect)
-		croppedCounts := cropCounts(validCount, refW, cropRect)
-		outW, outH = cropRect.Dx(), cropRect.Dy()
+if registrationOn {
+croppedSum := cropAccumulator(regAcc, cropRect)
+croppedCounts := cropCounts(validCount, refW, cropRect)
+outW, outH = cropRect.Dx(), cropRect.Dy()
 
-		sumMax = croppedSum.maxValue()
-		if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
-			sumMax = 1.0
-		}
-		sumDivisor := float32(1.0)
-		if sumMax > 1.0 {
-			sumDivisor = sumMax
-		}
-		logf("Registered sum max = %g (normalising sum TIFF by %g)", sumMax, sumDivisor)
+sumMax = croppedSum.maxValue()
+if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+sumMax = 1.0
+}
+sumDivisor := float32(1.0)
+if sumMax > 1.0 {
+sumDivisor = sumMax
+}
+logf("Registered sum max = %g (normalising sum TIFF by %g)", sumMax, sumDivisor)
 
-		logf("Writing registered sum TIFF")
-		if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
-			return writeFloat32RGBScaled(w, outW, outH, croppedSum.Pix, sumDivisor)
-		}); err != nil {
-			return fmt.Errorf("write sum tiff: %w", err)
-		}
-		logf("Writing registered sum preview")
-		if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
-			return writeAutoNormalizedPreviewJPEG(w, outW, outH, croppedSum.Pix)
-		}); err != nil {
-			return fmt.Errorf("write sum jpg: %w", err)
-		}
+if opts.CreateTIFF {
+logf("Writing registered sum TIFF")
+if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
+return writeFloat32RGBScaled(w, outW, outH, croppedSum.Pix, sumDivisor)
+}); err != nil {
+return fmt.Errorf("write sum tiff: %w", err)
+}
+}
+logf("Writing registered sum preview")
+if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
+return writeAutoNormalizedPreviewJPEG(w, outW, outH, croppedSum.Pix)
+}); err != nil {
+return fmt.Errorf("write sum jpg: %w", err)
+}
 
-		croppedSum.divideByCount(croppedCounts)
-		logf("Writing registered mean TIFF")
-		if err := writeFileAtomic(meanTiff, func(w io.Writer) error {
-			return writeFloat32RGB(w, outW, outH, croppedSum.Pix)
-		}); err != nil {
-			return fmt.Errorf("write mean tiff: %w", err)
-		}
-		logf("Writing registered mean preview")
-		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
-			return writePreviewJPEG(w, outW, outH, croppedSum.Pix)
-		}); err != nil {
-			return fmt.Errorf("write mean jpg: %w", err)
-		}
-		if err := writeFileAtomic(previewJPG, func(w io.Writer) error {
-			return writePreviewJPEG(w, outW, outH, croppedSum.Pix)
-		}); err != nil {
-			return fmt.Errorf("write preview: %w", err)
-		}
-	} else {
-		// Unregistered output (v0.2 behaviour).
-		outW, outH = refW, refH
-		sumMax = unregAcc.maxValue()
-		if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
-			sumMax = 1.0
-		}
-		sumDivisor := float32(1.0)
-		if sumMax > 1.0 {
-			sumDivisor = sumMax
-		}
-		logf("Sum max = %g (normalising sum TIFF by %g)", sumMax, sumDivisor)
+croppedSum.divideByCount(croppedCounts)
+logf("Writing work file (mean, float32 raw)")
+if err := writeFileAtomic(meanWorkPath, func(w io.Writer) error {
+return writeRawFloat32RGB(w, outW, outH, croppedSum.Pix)
+}); err != nil {
+return fmt.Errorf("write mean work file: %w", err)
+}
+logf("Writing registered mean preview")
+if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
+return writePreviewJPEG(w, outW, outH, croppedSum.Pix)
+}); err != nil {
+return fmt.Errorf("write mean jpg: %w", err)
+}
+if err := writeFileAtomic(previewJPG, func(w io.Writer) error {
+return writePreviewJPEG(w, outW, outH, croppedSum.Pix)
+}); err != nil {
+return fmt.Errorf("write preview: %w", err)
+}
+} else {
+outW, outH = refW, refH
+sumMax = unregAcc.maxValue()
+if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+sumMax = 1.0
+}
+sumDivisor := float32(1.0)
+if sumMax > 1.0 {
+sumDivisor = sumMax
+}
+logf("Sum max = %g (normalising sum TIFF by %g)", sumMax, sumDivisor)
 
-		logf("Writing sum TIFF")
-		if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
-			return writeFloat32RGBScaled(w, outW, outH, unregAcc.Pix, sumDivisor)
-		}); err != nil {
-			return fmt.Errorf("write sum tiff: %w", err)
-		}
-		logf("Writing sum preview")
-		if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
-			return writeAutoNormalizedPreviewJPEG(w, outW, outH, unregAcc.Pix)
-		}); err != nil {
-			return fmt.Errorf("write sum jpg: %w", err)
-		}
+if opts.CreateTIFF {
+logf("Writing sum TIFF")
+if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
+return writeFloat32RGBScaled(w, outW, outH, unregAcc.Pix, sumDivisor)
+}); err != nil {
+return fmt.Errorf("write sum tiff: %w", err)
+}
+}
+logf("Writing sum preview")
+if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
+return writeAutoNormalizedPreviewJPEG(w, outW, outH, unregAcc.Pix)
+}); err != nil {
+return fmt.Errorf("write sum jpg: %w", err)
+}
 
-		unregAcc.divide()
-		logf("Writing mean TIFF")
-		if err := writeFileAtomic(meanTiff, func(w io.Writer) error {
-			return writeFloat32RGB(w, outW, outH, unregAcc.Pix)
-		}); err != nil {
-			return fmt.Errorf("write mean tiff: %w", err)
-		}
-		logf("Writing mean preview")
-		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
-			return writePreviewJPEG(w, outW, outH, unregAcc.Pix)
-		}); err != nil {
-			return fmt.Errorf("write mean jpg: %w", err)
-		}
-		if err := writeFileAtomic(previewJPG, func(w io.Writer) error {
-			return writePreviewJPEG(w, outW, outH, unregAcc.Pix)
-		}); err != nil {
-			return fmt.Errorf("write preview: %w", err)
-		}
-	}
+unregAcc.divide()
+logf("Writing work file (mean, float32 raw)")
+if err := writeFileAtomic(meanWorkPath, func(w io.Writer) error {
+return writeRawFloat32RGB(w, outW, outH, unregAcc.Pix)
+}); err != nil {
+return fmt.Errorf("write mean work file: %w", err)
+}
+logf("Writing mean preview")
+if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
+return writePreviewJPEG(w, outW, outH, unregAcc.Pix)
+}); err != nil {
+return fmt.Errorf("write mean jpg: %w", err)
+}
+if err := writeFileAtomic(previewJPG, func(w io.Writer) error {
+return writePreviewJPEG(w, outW, outH, unregAcc.Pix)
+}); err != nil {
+return fmt.Errorf("write preview: %w", err)
+}
+}
 
-	// Max/Min outputs
-	maxTiff := filepath.Join(tiffDir, "stacked_max.tiff")
-	minTiff := filepath.Join(tiffDir, "stacked_min.tiff")
-	maxJPG := filepath.Join(outputDir, "stacked_max.jpg")
-	minJPG := filepath.Join(outputDir, "stacked_min.jpg")
+logf("Writing max (brightest pixels) preview")
+if err := writeFileAtomic(maxJPG, func(w io.Writer) error {
+return writePreviewJPEG(w, refW, refH, maxPix)
+}); err != nil { return fmt.Errorf("write max jpg: %w", err) }
+logf("Writing min (darkest pixels) preview")
+if err := writeFileAtomic(minJPG, func(w io.Writer) error {
+return writePreviewJPEG(w, refW, refH, minPix)
+}); err != nil { return fmt.Errorf("write min jpg: %w", err) }
 
-	logf("Writing max (brightest pixels) TIFF")
-	if err := writeFileAtomic(maxTiff, func(w io.Writer) error {
-		return writeFloat32RGB(w, refW, refH, maxPix)
-	}); err != nil { return fmt.Errorf("write max tiff: %w", err) }
-	if err := writeFileAtomic(maxJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, maxPix)
-	}); err != nil { return fmt.Errorf("write max jpg: %w", err) }
-
-	logf("Writing min (darkest pixels) TIFF")
-	if err := writeFileAtomic(minTiff, func(w io.Writer) error {
-		return writeFloat32RGB(w, refW, refH, minPix)
-	}); err != nil { return fmt.Errorf("write min tiff: %w", err) }
-	if err := writeFileAtomic(minJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, minPix)
-	}); err != nil { return fmt.Errorf("write min jpg: %w", err) }
-
-	// No-correction mean (always from unregistered accumulator)
-	if registrationOn {
-		unregAcc.divide()
-	}
-	logf("Writing no-correction mean TIFF")
-	if err := writeFileAtomic(noCorrTiff, func(w io.Writer) error {
-		return writeFloat32RGB(w, refW, refH, unregAcc.Pix)
-	}); err != nil {
-		return fmt.Errorf("write no_correction_mean tiff: %w", err)
-	}
-	logf("Writing no-correction mean preview")
-	if err := writeFileAtomic(noCorrJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, unregAcc.Pix)
-	}); err != nil {
-		return fmt.Errorf("write no_correction_mean jpg: %w", err)
-	}
+if registrationOn {
+unregAcc.divide()
+}
+logf("Writing no-correction mean preview")
+if err := writeFileAtomic(noCorrJPG, func(w io.Writer) error {
+return writePreviewJPEG(w, refW, refH, unregAcc.Pix)
+}); err != nil {
+return fmt.Errorf("write no_correction_mean jpg: %w", err)
+}
 
 	// Post-processing pipeline
 	var postOutputs []string
@@ -2392,13 +2458,10 @@ estMemMB, realPeak, requiredMB, availMemMB, hint)
 		RegistrationFails: regFailures,
 		CropRect:          cropRect,
 		SumNormalization:  sumMax,
-		OutputFiles: append([]string{
-			sumTiff, sumJPG,
-			meanTiff, meanJPG,
-			noCorrTiff, noCorrJPG,
-			maxTiff, maxJPG, minTiff, minJPG,
-			previewJPG,
-		}, append(postOutputs, reportTxt)...),
+		OutputFiles: append(append(append([]string{},
+appendIf(opts.CreateTIFF, sumTiff)...),
+sumJPG, meanJPG, noCorrJPG, maxJPG, minJPG, previewJPG,
+), append(postOutputs, reportTxt)...),
 		Workers:            workers,
 		Duration:           time.Since(start),
 		PostProcessApplied: opts.PostProcess && !opts.StackOnly,
@@ -2420,6 +2483,11 @@ estMemMB, realPeak, requiredMB, availMemMB, hint)
 	return nil
 }
 
+
+func appendIf(cond bool, item string) []string {
+if cond { return []string{item} }
+return nil
+}
 func methodString(registered bool) string {
 	if registered {
 		return "sum and arithmetic mean over registered frames; no-correction mean over all frames"
@@ -3177,116 +3245,112 @@ func testReduceStars() error {
 }
 
 func testPipelineStackOnly() error {
-	dir, err := os.MkdirTemp("", "skystacker-e2e-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
+dir, err := os.MkdirTemp("", "skystacker-e2e-")
+if err != nil { return err }
+defer os.RemoveAll(dir)
 
-	const w, h = 32, 32
-	for i := 0; i < 3; i++ {
-		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
-				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
-			}
-		}
-		for dy := -1; dy <= 1; dy++ {
-			for dx := -1; dx <= 1; dx++ {
-				img.SetRGBA(16+dx, 16+dy, color.RGBA{255, 255, 255, 255})
-			}
-		}
-		path := filepath.Join(dir, fmt.Sprintf("frame_%02d.jpg", i))
-		fp, err := os.Create(path)
-		if err != nil { return err }
-		if err := jpeg.Encode(fp, img, &jpeg.Options{Quality: 95}); err != nil {
-			fp.Close()
-			return err
-		}
-		fp.Close()
-	}
+const w, h = 32, 32
+for i := 0; i < 3; i++ {
+img := image.NewRGBA(image.Rect(0, 0, w, h))
+for y := 0; y < h; y++ {
+for x := 0; x < w; x++ {
+img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
+}
+}
+for dy := -1; dy <= 1; dy++ {
+for dx := -1; dx <= 1; dx++ {
+img.SetRGBA(16+dx, 16+dy, color.RGBA{255, 255, 255, 255})
+}
+}
+path := filepath.Join(dir, fmt.Sprintf("frame_%02d.jpg", i))
+fp, err := os.Create(path)
+if err != nil { return err }
+if err := jpeg.Encode(fp, img, &jpeg.Options{Quality: 95}); err != nil {
+fp.Close()
+return err
+}
+fp.Close()
+}
 
-	if err := runPipeline(context.Background(), runOptions{
-		InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1,
-	}); err != nil {
-		return fmt.Errorf("runPipeline: %w", err)
-	}
+if err := runPipeline(context.Background(), runOptions{
+InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1,
+}); err != nil {
+return fmt.Errorf("runPipeline: %w", err)
+}
 
-	outDir := filepath.Join(dir, "skystacker_results")
-	for _, name := range []string{
-		"TIFF/stacked_mean.tiff", "stacked_mean.jpg",
-		"TIFF/stacked_no_correction_mean.tiff", "stacked_no_correction_mean.jpg",
-		"TIFF/stacked_sum.tiff", "stacked_sum.jpg", "report.txt",
-	} {
-		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
-			return fmt.Errorf("missing output %s: %w", name, err)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(outDir, "post_step6_sharpened.jpg")); err == nil {
-		return errors.New("post-processing ran during --stack-only")
-	}
-	return nil
+outDir := filepath.Join(dir, "skystacker_results")
+for _, name := range []string{
+"_work/stacked_mean.f32raw", "stacked_mean.jpg",
+"stacked_no_correction_mean.jpg",
+"stacked_sum.jpg", "stacked_max.jpg", "stacked_min.jpg", "report.txt",
+} {
+if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+return fmt.Errorf("missing output %s: %w", name, err)
+}
+}
+if _, err := os.Stat(filepath.Join(outDir, "TIFF")); err == nil {
+return errors.New("TIFF folder should not exist without --tiff flag")
+}
+return nil
 }
 
 // testPipelinePostOnly: --post-only must consume an existing stacked_mean.tiff
 // and produce the four step files. This path is completely untested today.
 func testPipelinePostOnly() error {
-	dir, err := os.MkdirTemp("", "skystacker-postonly-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	outDir := filepath.Join(dir, "skystacker_results")
-	os.MkdirAll(outDir, 0o755)
-	os.MkdirAll(filepath.Join(outDir, "TIFF"), 0o755)
+dir, err := os.MkdirTemp("", "skystacker-postonly-")
+if err != nil { return err }
+defer os.RemoveAll(dir)
+outDir := filepath.Join(dir, "skystacker_results")
+os.MkdirAll(outDir, 0o755)
+os.MkdirAll(filepath.Join(outDir, "_work"), 0o755)
 
-	const w, h = 64, 64
-	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
-		x, y := i%w, i/w
-		bg := float32(0.1 + 0.3*float64(x)/float64(w) + 0.1*float64(y)/float64(h))
-		f.Pix[i*3] = bg
-		f.Pix[i*3+1] = bg
-		f.Pix[i*3+2] = bg
-	}
-	for dy := -2; dy <= 2; dy++ {
-		for dx := -2; dx <= 2; dx++ {
-			i := ((30+dy)*w + 32+dx) * 3
-			f.Pix[i] += 0.5
-			f.Pix[i+1] += 0.5
-			f.Pix[i+2] += 0.5
-		}
-	}
-	if err := writeFileAtomic(filepath.Join(outDir, "TIFF", "stacked_mean.tiff"),
-		func(out io.Writer) error { return writeFloat32RGB(out, w, h, f.Pix) }); err != nil {
-		return err
-	}
+const w, h = 64, 64
+f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+for i := 0; i < w*h; i++ {
+x, y := i%w, i/w
+bg := float32(0.1 + 0.3*float64(x)/float64(w) + 0.1*float64(y)/float64(h))
+f.Pix[i*3] = bg
+f.Pix[i*3+1] = bg
+f.Pix[i*3+2] = bg
+}
+for dy := -2; dy <= 2; dy++ {
+for dx := -2; dx <= 2; dx++ {
+i := ((30+dy)*w + 32+dx) * 3
+f.Pix[i] += 0.5
+f.Pix[i+1] += 0.5
+f.Pix[i+2] += 0.5
+}
+}
+if err := writeFileAtomic(filepath.Join(outDir, "_work", "stacked_mean.f32raw"),
+func(out io.Writer) error { return writeRawFloat32RGB(out, w, h, f.Pix) }); err != nil {
+return err
+}
 
-	if err := runPipeline(context.Background(), runOptions{
-		InputDir: dir, PostOnly: true, BGDegree: 2, StretchFactor: 10,
-		SharpenAmount: 0.8, SharpenRadius: 1.5,
-	}); err != nil {
-		return fmt.Errorf("runPipeline --post-only: %w", err)
-	}
+if err := runPipeline(context.Background(), runOptions{
+InputDir: dir, PostOnly: true, BGDegree: 2, StretchFactor: 10,
+SharpenAmount: 0.8, SharpenRadius: 1.5,
+}); err != nil {
+return fmt.Errorf("runPipeline --post-only: %w", err)
+}
 
-	for _, name := range []string{
-		"post_step1_background_removed.jpg",
-		"post_step2_chromatic_aberration_reduced.jpg",
-		"post_step8a_gentle_stretch.jpg",
-		"post_step8b_moderate_stretch.jpg",
-		"post_step8c_full_stretch.jpg",
-		"post_step4_vignette_removed.jpg",
-		"post_step5_sharpened.jpg",
-		"post_step6_hdr.jpg",
-		"post_step7_star_reduced.jpg",
-		"post_step3_color_calibrated.jpg",
-		"TIFF/stacked_processed.tiff",
-	} {
-		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
-			return fmt.Errorf("missing post output %s: %w", name, err)
-		}
-	}
-	return nil
+for _, name := range []string{
+"post_step1_background_removed.jpg",
+"post_step2_star_reduced.jpg",
+} {
+if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+return fmt.Errorf("missing post output %s: %w", name, err)
+}
+}
+for _, name := range []string{
+"post_step_ca.jpg", "post_step_color_calibrated.jpg",
+"post_step_flattened.jpg", "post_step_sharpened.jpg",
+"post_step_hdr.jpg", "post_step_stretch_gentle.jpg",
+} {
+if _, err := os.Stat(filepath.Join(outDir, name)); err == nil {
+return fmt.Errorf("unexpected output %s (should require flag)", name)
+}
+}
+return nil
 }
 
 // testReportContains: report.txt must contain the exact caveats the project
@@ -3876,53 +3940,43 @@ func applyHDR(f *frame, amount float64) *frame {
 }
 
 func reduceStars(f *frame, amount float64) *frame {
-	if amount <= 0 { return f }
-	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
-	for y := 1; y < f.Height-1; y++ {
-		for x := 1; x < f.Width-1; x++ {
-			i := (y*f.Width + x) * 3
-			r, g, b := f.Pix[i], f.Pix[i+1], f.Pix[i+2]
-			lum := 0.299*r + 0.587*g + 0.114*b
-			
-			if lum > 0.3 {
-				// 3x3 morphological erosion (min filter)
-				var minLum float32 = 1.0
-				minR, minG, minB := r, g, b
-				for dy := -1; dy <= 1; dy++ {
-					for dx := -1; dx <= 1; dx++ {
-						ni := ((y+dy)*f.Width + (x+dx)) * 3
-						nLum := 0.299*f.Pix[ni] + 0.587*f.Pix[ni+1] + 0.114*f.Pix[ni+2]
-						if nLum < minLum {
-							minLum = nLum
-							minR, minG, minB = f.Pix[ni], f.Pix[ni+1], f.Pix[ni+2]
-						}
-					}
-				}
-				// Soft transition on the mask
-				strength := float32(amount)
-				if lum < 0.5 {
-					strength *= (lum - 0.3) / 0.2
-				}
-				out.Pix[i] = r*(1-strength) + minR*strength
-				out.Pix[i+1] = g*(1-strength) + minG*strength
-				out.Pix[i+2] = b*(1-strength) + minB*strength
-			} else {
-				out.Pix[i], out.Pix[i+1], out.Pix[i+2] = r, g, b
-			}
-		}
-	}
-	// Copy borders
-	for x := 0; x < f.Width; x++ {
-		top := x * 3; bot := ((f.Height-1)*f.Width + x) * 3
-		copy(out.Pix[top:top+3], f.Pix[top:top+3])
-		copy(out.Pix[bot:bot+3], f.Pix[bot:bot+3])
-	}
-	for y := 0; y < f.Height; y++ {
-		left := (y*f.Width) * 3; right := (y*f.Width + f.Width-1) * 3
-		copy(out.Pix[left:left+3], f.Pix[left:left+3])
-		copy(out.Pix[right:right+3], f.Pix[right:right+3])
-	}
-	return out
+if amount <= 0 { return f }
+const threshold = 0.15
+const fullStrengthAbove = 0.5
+const radius = 2
+out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+for y := 0; y < f.Height; y++ {
+for x := 0; x < f.Width; x++ {
+i := (y*f.Width + x) * 3
+out.Pix[i], out.Pix[i+1], out.Pix[i+2] = f.Pix[i], f.Pix[i+1], f.Pix[i+2]
+if y < radius || y >= f.Height-radius || x < radius || x >= f.Width-radius {
+continue
+}
+r, g, b := f.Pix[i], f.Pix[i+1], f.Pix[i+2]
+lum := 0.299*r + 0.587*g + 0.114*b
+if lum <= threshold { continue }
+var minLum float32 = 1.0
+minR, minG, minB := r, g, b
+for dy := -radius; dy <= radius; dy++ {
+for dx := -radius; dx <= radius; dx++ {
+ni := ((y+dy)*f.Width + (x+dx)) * 3
+nLum := 0.299*f.Pix[ni] + 0.587*f.Pix[ni+1] + 0.114*f.Pix[ni+2]
+if nLum < minLum {
+minLum = nLum
+minR, minG, minB = f.Pix[ni], f.Pix[ni+1], f.Pix[ni+2]
+}
+}
+}
+strength := float32(amount)
+if lum < fullStrengthAbove {
+strength *= (lum - threshold) / (fullStrengthAbove - threshold)
+}
+out.Pix[i] = r*(1-strength) + minR*strength
+out.Pix[i+1] = g*(1-strength) + minG*strength
+out.Pix[i+2] = b*(1-strength) + minB*strength
+}
+}
+return out
 }
 
 func floatToByte(v float32) uint8 {
@@ -3989,96 +4043,89 @@ func writePostPreview(dir, name string, f *frame) error {
 }
 
 func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
-	meanPath := filepath.Join(outputDir, "TIFF", "stacked_mean.tiff")
-	fh, err := os.Open(meanPath)
-	if err != nil { return nil, fmt.Errorf("post-process: open mean tiff: %w", err) }
-	w, h, pix, err := readFloat32RGB(fh)
-	fh.Close()
-	if err != nil { return nil, fmt.Errorf("post-process: read mean tiff: %w", err) }
-	src := &frame{Width: w, Height: h, Pix: pix}
+workPath := filepath.Join(outputDir, "_work", "stacked_mean.f32raw")
+w, h, pix, err := readRawFloat32RGB(workPath)
+if err != nil {
+return nil, fmt.Errorf("post-process: read work file: %w", err)
+}
+src := &frame{Width: w, Height: h, Pix: pix}
 
-	var outputs []string
+var outputs []string
+cur := src
 
-	logf("  post step 1: linear background removal")
-	s1 := removeBackground(src, opts.BGDegree, opts.MaskBG)
-	p1 := filepath.Join(outputDir, "post_step1_background_removed.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p1), s1); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p1)
+// Step 1: background removal (ALWAYS)
+logf("  post: background removal (degree %d)", opts.BGDegree)
+cur = removeBackground(cur, opts.BGDegree, opts.MaskBG)
+p := filepath.Join(outputDir, "post_step1_background_removed.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
 
-	logf("  post step 2: chromatic aberration reduction")
-	s2 := suppressChromaticAberration(s1)
-	p2 := filepath.Join(outputDir, "post_step2_chromatic_aberration_reduced.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p2), s2); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p2)
+if opts.PostCA {
+logf("  post: chromatic aberration reduction")
+cur = suppressChromaticAberration(cur)
+p = filepath.Join(outputDir, "post_step_ca.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+}
 
-	logf("  post step 3: color calibration (pre-stretch)")
-	var s3 *frame
-	if opts.NoColorCalib {
-		s3 = s2
-	} else {
-		s3 = calibrateColor(s2)
-	}
-	p3 := filepath.Join(outputDir, "post_step3_color_calibrated.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p3), s3); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p3)
+if opts.PostColor {
+logf("  post: color calibration")
+cur = calibrateColor(cur)
+p = filepath.Join(outputDir, "post_step_color_calibrated.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+}
 
-	logf("  post step 4: post-stretch background flattening")
-	s4 := flattenBackground(s3, 2, opts.MaskBG)
-	p4 := filepath.Join(outputDir, "post_step4_vignette_removed.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p4), s4); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p4)
+if opts.PostFlatten {
+logf("  post: vignette flattening")
+cur = flattenBackground(cur, 2, opts.MaskBG)
+p = filepath.Join(outputDir, "post_step_flattened.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+}
 
-	logf("  post step 5: unsharp mask")
-	var s5 *frame
-	if opts.NoSharpen {
-		s5 = s4
-	} else {
-		s5 = unsharpMask(s4, opts.SharpenAmount, opts.SharpenRadius)
-	}
-	p5 := filepath.Join(outputDir, "post_step5_sharpened.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p5), s5); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p5)
+if opts.PostSharpen {
+logf("  post: unsharp mask (amount=%g radius=%g)", opts.SharpenAmount, opts.SharpenRadius)
+cur = unsharpMask(cur, opts.SharpenAmount, opts.SharpenRadius)
+p = filepath.Join(outputDir, "post_step_sharpened.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+}
 
-	logf("  post step 6: HDR filter (local contrast & saturation)")
-	s6 := applyHDR(s5, opts.HDRAmount)
-	p6 := filepath.Join(outputDir, "post_step6_hdr.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p6), s6); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p6)
+if opts.PostHDR {
+logf("  post: HDR local contrast (amount=%g)", opts.HDRAmount)
+cur = applyHDR(cur, opts.HDRAmount)
+p = filepath.Join(outputDir, "post_step_hdr.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+}
 
-	logf("  post step 7: star reduction (pinpoint stars)")
-	s7 := reduceStars(s6, opts.StarReduce)
-	p7 := filepath.Join(outputDir, "post_step7_star_reduced.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p7), s7); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p7)
+// Star reduction (ALWAYS, harder by default)
+logf("  post: star reduction (amount=%g)", opts.StarReduce)
+cur = reduceStars(cur, opts.StarReduce)
+p = filepath.Join(outputDir, "post_step2_star_reduced.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
 
-	logf("  post step 8a: gentle stretch")
-	s8a := stretchContrast(s7, 1)
-	p8a := filepath.Join(outputDir, "post_step8a_gentle_stretch.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p8a), s8a); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p8a)
+if opts.PostStretch {
+logf("  post: stretch gentle")
+s := stretchContrast(cur, 1)
+p = filepath.Join(outputDir, "post_step_stretch_gentle.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), s); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+logf("  post: stretch moderate")
+s = stretchContrast(cur, 2)
+p = filepath.Join(outputDir, "post_step_stretch_moderate.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), s); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+logf("  post: stretch full")
+s = stretchContrast(cur, 3)
+p = filepath.Join(outputDir, "post_step_stretch_full.jpg")
+if err := writePostPreview(outputDir, filepath.Base(p), s); err != nil { logf("  WARNING: %v", err) }
+outputs = append(outputs, p)
+}
 
-	logf("  post step 8b: moderate stretch")
-	s8b := stretchContrast(s7, 2)
-	p8b := filepath.Join(outputDir, "post_step8b_moderate_stretch.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p8b), s8b); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p8b)
-
-	logf("  post step 8c: full stretch")
-	s8c := stretchContrast(s7, 3)
-	p8c := filepath.Join(outputDir, "post_step8c_full_stretch.jpg")
-	if err := writePostPreview(outputDir, filepath.Base(p8c), s8c); err != nil { logf("  WARNING: %v", err) }
-	outputs = append(outputs, p8c)
-
-	// Save the moderate stretch as the default processed TIFF
-	tiffPath := filepath.Join(outputDir, "TIFF", "stacked_processed.tiff")
-	if err := writeFileAtomic(tiffPath, func(w io.Writer) error {
-		return writeFloat32RGB(w, s8b.Width, s8b.Height, s8b.Pix)
-	}); err != nil {
-		return outputs, fmt.Errorf("post-process: write final tiff: %w", err)
-	}
-	outputs = append(outputs, tiffPath)
-
-	return outputs, nil
+return outputs, nil
 }
 
 // =========================================================================
@@ -4332,31 +4379,38 @@ func main() {
 		return
 	}
 	err = runPipeline(context.Background(), runOptions{
-		InputDir:      opts.InputDir,
-		OutputDir:     opts.OutputDir,
-		Workers:       opts.Workers,
-		Recursive:     opts.Recursive,
-		Overwrite:     opts.Overwrite,
-		Register:      opts.Register,
-		DarkFile:      opts.DarkFile,
-		FlatFile:      opts.FlatFile,
-		BiasFile:      opts.BiasFile,
-		Method:        opts.Method,
-		MaskBG:        opts.MaskBG,
-		PostProcess:   opts.PostProcess,
-		StackOnly:     opts.StackOnly,
-		PostOnly:      opts.PostOnly,
-		NoColorCalib:  opts.NoColorCalib,
-		NoSharpen:     opts.NoSharpen,
-		BGDegree:      opts.BGDegree,
-		StretchFactor: opts.StretchFactor,
-		SharpenAmount: opts.SharpenAmount,
-		SharpenRadius: opts.SharpenRadius,
-		HDRAmount:     opts.HDRAmount,
-		StarReduce:    opts.StarReduce,
-		Scale:         opts.Scale,
-		Force:         opts.Force,
-	})
+InputDir:      opts.InputDir,
+OutputDir:     opts.OutputDir,
+Workers:       opts.Workers,
+Recursive:     opts.Recursive,
+Overwrite:     opts.Overwrite,
+Register:      opts.Register,
+DarkFile:      opts.DarkFile,
+FlatFile:      opts.FlatFile,
+BiasFile:      opts.BiasFile,
+Method:        opts.Method,
+MaskBG:        opts.MaskBG,
+PostProcess:   opts.PostProcess,
+StackOnly:     opts.StackOnly,
+PostOnly:      opts.PostOnly,
+NoColorCalib:  opts.NoColorCalib,
+NoSharpen:     opts.NoSharpen,
+BGDegree:      opts.BGDegree,
+StretchFactor: opts.StretchFactor,
+SharpenAmount: opts.SharpenAmount,
+SharpenRadius: opts.SharpenRadius,
+HDRAmount:     opts.HDRAmount,
+StarReduce:    opts.StarReduce,
+Scale:         opts.Scale,
+Force:         opts.Force,
+CreateTIFF:    opts.CreateTIFF,
+PostCA:        opts.PostCA,
+PostColor:     opts.PostColor,
+PostFlatten:   opts.PostFlatten,
+PostSharpen:   opts.PostSharpen,
+PostHDR:       opts.PostHDR,
+PostStretch:   opts.PostStretch,
+})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
 		os.Exit(1)
