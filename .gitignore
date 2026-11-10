@@ -1,22 +1,72 @@
+# -----------------------------------------------------------------------------
+# SkyStacker - Git ignore rules
+# -----------------------------------------------------------------------------
+
+# Local/private AI prompts and working notes
+/prompts-ia.txt
+/prompts-ia-*.txt
+
 # Build artifacts
 /skystacker
 /skystacker.exe
+/skystacker-race
 *.test
+*.out
 
-# Run outputs
+# Go coverage and profiling outputs
+coverage.out
+coverage.html
+*.prof
+*.pprof
+
+# SkyStacker processing outputs and working data
 skystacker_results/
-*.tmp
+**/skystacker_results/
+_work/
+*.f32raw
 
-# Backups and intermediate files
+# Temporary files and backups
+*.tmp
+*.temp
 *.bak
-*.go.txt
+*.backup
+*~
 patch_*.py
 
-# Editors and OS
+# Local datasets and large imaging-session data
+/datasets/
+/data/
+/sessions/
+# Uncomment if you keep astrophotography source frames inside this repository:
+# *.CR2
+# *.CR3
+# *.FIT
+# *.FITS
+# *.fit
+# *.fits
+
+# Environment variables, credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+credentials.*
+
+# Python tooling used for local development/scripts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Editors and operating systems
 .DS_Store
+Thumbs.db
 *.swp
 *.swo
 .idea/
 .vscode/
 *.code-workspace
-/skystacker-race

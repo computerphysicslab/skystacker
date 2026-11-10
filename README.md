@@ -1,160 +1,373 @@
 # SkyStacker
 
-**Fast, lightweight, local-first Go CLI for astrophotography image stacking.**
+**SkyStacker is a local-first command-line tool for stacking astrophotography images.** It takes a folder of night-sky exposures, detects stars, aligns the frames, combines them into useful image stacks and can apply an automated post-processing workflow.
 
-> Drop a folder of JPG/RAW exposures. Get registered, high-dynamic-range TIFFs, max/min stacks, plus a fully post-processed preview and a detailed report.
+<p align="center">
+  <img src="assets/infograph-staking-skystacker.jpg" alt="SkyStacker infographic showing the astrophotography image-stacking workflow" width="100%">
+</p>
+
+<p align="center">
+  <em>From a folder of individual exposures to aligned stacks and processed astrophotography images.</em>
+</p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/Go-1.20+-00ADD8?logo=go)](https://go.dev/)
-[![Status](https://img.shields.io/badge/status-active%20development-orange)]()
+[![Go](https://img.shields.io/badge/Go-1.20+-00ADD8?logo=go)](https://go.dev/)
+[![Development status](https://img.shields.io/badge/status-active%20development-orange)]()
 
-SkyStacker is an open-source command-line tool written in Go that discovers, aligns, and stacks astronomical images. It emphasizes numerical precision, bounded memory use, reproducibility, and a minimal user experience. It features a robust star-registration engine and a 6-stage post-processing pipeline.
+---
 
-**Current status:** v0.5.0 Monolith. Implementation is in `main.go` at the repo root.
+## What does SkyStacker do?
 
-## Why SkyStacker?
+Astrophotography sessions usually produce many individual exposures of the same region of the sky. Even when the camera or mount moves slightly between exposures, the stars should occupy the same positions in the final combined image.
 
-- **Lightweight & pure Go**: Single static binary, no heavy dependencies.
-- **Memory & Time Conscious**: Estimates memory and runtime *before* starting, and warns if RAM is insufficient.
-- **Precision-focused**: Float32 accumulation (Sum, Mean, Median, Sigma-Clipping).
-- **Max/Min Stacks**: Automatically generates a "brightest pixel" stack (to reveal satellite trails) and a "darkest pixel" stack (to isolate sky glow gradients).
-- **Advanced Processing**: Luminance-based Generalized Hyperbolic Stretch (GHS) preserves star color while lifting faint dust.
-- **Transparent**: Clear terminal output showing per-frame registration and a complete `report.txt`.
+SkyStacker automates the core workflow:
 
-## Quick Start
+1. **Discovers input frames** in a session directory.
+2. **Decodes the images** and prepares their pixel data.
+3. **Optionally calibrates** light frames using dark, flat and bias frames.
+4. **Detects stars** and selects a reference frame.
+5. **Registers the frames** by matching star patterns and estimating geometric transformations.
+6. **Resamples and aligns** the exposures before combining them.
+7. **Creates image stacks** using the selected statistical method, plus maximum- and minimum-pixel combinations.
+8. **Optionally post-processes** the resulting image to improve its background, colour, contrast and detail.
+9. **Writes outputs and a processing report** to a results directory.
 
-### Prerequisites
-- Go 1.20 or later
-- ImageMagick (for RAW/FITS decoding: `sudo apt install imagemagick`)
-- A directory of compatible frames (JPG/JPEG, CR2, CR3, FITS)
+The aim is to provide a transparent, reproducible and resource-conscious workflow that runs locally, without requiring a cloud service.
 
-### Build
+## Main capabilities
+
+### Frame registration
+
+- Automatic star detection with sub-pixel centroid estimation.
+- Reference-frame selection based on detected star count.
+- Triangle-based star-pattern matching.
+- Similarity-transform estimation and robust inlier filtering (RANSAC-style matching).
+- Sub-pixel image resampling.
+- Safe cropping to the region valid across registered frames.
+- Frames that cannot be registered are reported and excluded from the registered stack; they can still contribute to the unregistered mean.
+
+### Calibration
+
+Calibration frames can be supplied explicitly:
+
+- **Dark frames** help correct sensor dark signal and hot pixels.
+- **Flat frames** help correct illumination variation and vignetting.
+- **Bias frames** can be used with flat calibration.
+
+You can pass individual calibration paths or use `--calib-root` to let SkyStacker look for calibration folders under a common directory.
+
+### Stacking methods
+
+| Method | Purpose |
+| --- | --- |
+| `mean` | Arithmetic average of registered frames. |
+| `median` | Median combination, useful for rejecting transient features. |
+| `sigma` | Sigma-clipping combination, intended to reject outliers such as hot pixels and transient signals. |
+
+The default method is `sigma`.
+
+SkyStacker also calculates maximum- and minimum-pixel combinations. These can be useful for inspecting transient features and background behaviour, although they are diagnostic combinations rather than substitutes for a normal integration.
+
+### Post-processing
+
+The post-processing workflow includes background removal and optional processing stages controlled by command-line flags:
+
+- Background-gradient modelling and removal.
+- Optional masking of bright objects during background extraction.
+- Chromatic-aberration reduction.
+- Colour calibration.
+- Vignette/background flattening.
+- Unsharp-mask sharpening.
+- HDR local-contrast enhancement.
+- Contrast stretching at gentle, moderate and full levels.
+- Star removal and black-point adjustment in the current processing workflow.
+
+The processing stages and their settings are evolving during development. Consult `skystacker --help` for the exact options available in the version you have built.
+
+## Supported input formats
+
+SkyStacker currently discovers these extensions:
+
+- `.jpg` and `.jpeg`
+- `.cr2` and `.cr3`
+- `.fit` and `.fits`
+
+JPEG decoding is handled by Go's image packages. RAW and FITS decoding uses external command-line tools, so support depends on the relevant decoder being installed and available in `PATH`.
+
+### External tools
+
+On Debian/Ubuntu, install ImageMagick:
+
 ```bash
+sudo apt update
+sudo apt install imagemagick
+```
+
+For Canon RAW files, SkyStacker can use `dcraw` or `dcraw_emu` when available. Install a compatible RAW decoder if your system does not already provide one.
+
+> **Note:** The exact RAW/FITS decoding capabilities depend on the ImageMagick delegates and RAW decoder installed on your system. A file extension alone does not guarantee that a particular camera file can be decoded.
+
+## Requirements
+
+- Go 1.20 or later.
+- ImageMagick for the external RAW/FITS decoding paths.
+- `dcraw` or `dcraw_emu` for the preferred Canon RAW decoding path, where required.
+- A directory containing compatible astrophotography exposures.
+- Enough RAM and disk space for the image dimensions and number of frames in the session.
+
+SkyStacker includes memory-safety checks intended to warn about potentially excessive memory requirements. Avoid bypassing those checks unless you understand the resource implications.
+
+## Build
+
+Clone the repository and build the executable:
+
+```bash
+git clone https://github.com/computerphysicslab/skystacker.git
+cd skystacker
+
 go build -o skystacker main.go
 ```
 
-### Run
+Run the internal self-tests:
+
 ```bash
-# Default: Sigma-Clipping stack + full post-processing
-./skystacker ./night-session
-
-# Just stack, skip post-processing
-./skystacker ./night-session --stack-only
-
-# Apply post-processing to an existing stack
-./skystacker ./night-session --post-only
+./skystacker --selftest
 ```
 
-## Outputs
+Print the version or command-line help:
 
-SkyStacker creates a `skystacker_results/` directory with the following structure:
+```bash
+./skystacker --version
+./skystacker --help
+```
 
-**JPG Previews (Root Directory):**
-- `stacked_max.jpg` — brightest pixels across all frames (shows satellite trails/trails)
-- `stacked_min.jpg` — darkest pixels across all frames (shows pure sky gradient/vignette)
-- `post_step1_background_removed.jpg`
-- `post_step2_chromatic_aberration_reduced.jpg`
-- `post_step2b_color_calibrated.jpg` (pre-stretch neutralization)
-- `post_step3a_gentle_stretch.jpg` / `3b_moderate` / `3c_full`
-- `post_step4_vignette_removed.jpg`
-- `post_step6_sharpened.jpg` — final fully processed image
-- `report.txt` — full processing report
+## Quick start
 
-**TIFF Scientific Outputs (`TIFF/` Subdirectory):**
-- `stacked_sum.tiff` — raw float32 sum
-- `stacked_mean.tiff` — float32 arithmetic mean of registered frames
-- `stacked_no_correction_mean.tiff` — mean without registration
-- `stacked_max.tiff` / `stacked_min.tiff`
-- `stacked_processed.tiff` — final post-processed float32 output
+Put the light frames from one imaging session in a directory, for example:
 
-## 🚀 Usage & Command Line Interface (CLI)
+```text
+M31-session/
+├── light_001.jpg
+├── light_002.jpg
+├── light_003.jpg
+└── ...
+```
 
-### Basic Syntax
+Run the default workflow:
+
+```bash
+./skystacker ./M31-session
+```
+
+By default, the results are written to:
+
+```text
+M31-session/skystacker_results/
+```
+
+Choose a different stacking method:
+
+```bash
+./skystacker --method mean ./M31-session
+./skystacker --method median ./M31-session
+./skystacker --method sigma ./M31-session
+```
+
+Use a separate output directory:
+
+```bash
+./skystacker --output ./results/M31 ./M31-session
+```
+
+Search subdirectories recursively:
+
+```bash
+./skystacker --recursive ./M31-session
+```
+
+Run stacking without post-processing:
+
+```bash
+./skystacker --stack-only ./M31-session
+```
+
+Run post-processing against existing intermediate data:
+
+```bash
+./skystacker --post-only ./M31-session
+```
+
+Allow replacement of existing output files:
+
+```bash
+./skystacker --overwrite ./M31-session
+```
+
+## Calibration example
+
+A session may keep its light frames and calibration frames in separate directories:
+
+```text
+M31-session/
+├── lights/
+│   ├── light_001.cr2
+│   ├── light_002.cr2
+│   └── ...
+└── calibration/
+    ├── darks/
+    ├── flats/
+    └── bias/
+```
+
+Supply calibration files or directories explicitly:
+
+```bash
+./skystacker \
+  --dark ./M31-session/calibration/darks/master-dark.fit \
+  --flat ./M31-session/calibration/flats/master-flat.fit \
+  --bias ./M31-session/calibration/bias/master-bias.fit \
+  ./M31-session/lights
+```
+
+Or ask SkyStacker to search a calibration root:
+
+```bash
+./skystacker \
+  --calib-root ./M31-session/calibration \
+  ./M31-session/lights
+```
+
+Use calibration frames with matching camera, sensor settings, exposure/gain and relevant acquisition conditions. Calibration is only as reliable as the calibration data supplied.
+
+## Command-line options
+
+The command syntax is:
+
 ```bash
 skystacker [flags] [input-directory]
 ```
-*(The `input-directory` defaults to the current directory `.`)*
 
-### Available CLI Flags
+The input directory defaults to the current directory (`.`). Flags can be supplied before or after the positional input directory.
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--output string` | Path to the output directory | `<input>/skystacker_results` |
-| `--method string` | Stacking method: `mean`, `median`, `sigma` | `sigma` |
-| `--workers int` | Maximum concurrent workers | `NumCPU` |
-| `--recursive` | Search subdirectories for input files | `false` |
+| `--output string` | Output directory | `<input>/skystacker_results` |
+| `--method string` | Stacking method: `mean`, `median` or `sigma` | `sigma` |
+| `--workers int` | Maximum number of concurrent workers | Number of CPUs |
+| `--recursive` | Search input subdirectories recursively | `false` |
 | `--overwrite` | Permit replacing files in the output directory | `false` |
 | `--no-register` | Disable star-based registration | `false` |
-| `--stack-only` | Run stacking only, skip post-processing | `false` |
-| `--post-only` | Run post-processing only using existing TIFFs | `false` |
-| `--dark string` | Path to dark frame for calibration | |
-| `--flat string` | Path to flat frame for calibration | |
-| `--bias string` | Path to bias frame for calibration | |
+| `--dark string` | Dark frame or calibration path | — |
+| `--flat string` | Flat frame or calibration path | — |
+| `--bias string` | Bias frame or calibration path | — |
+| `--calib-root string` | Root directory containing Bias/Darks/Flats folders | — |
+| `--stack-only` | Stack frames and skip post-processing | `false` |
+| `--no-postprocess` | Alias for `--stack-only` | `false` |
+| `--post-only` | Run post-processing using existing intermediate data | `false` |
 | `--mask-bg` | Mask bright objects during background extraction | `false` |
-| `--bg-degree int` | Background polynomial degree (1-3) | `2` |
-| `--sharpen-amount float`| Unsharp mask amount | `0.8` |
-| `--sharpen-radius float`| Unsharp mask radius in pixels | `1.5` |
-| `--no-color-calib` | Skip color calibration step | `false` |
-| `--no-sharpen` | Skip sharpening step | `false` |
-| `--selftest` | Run internal self-tests and exit | `false` |
-| `--version` | Print version and exit | `false` |
+| `--bg-degree int` | Background polynomial degree (1–3) | `2` |
+| `--stretch float` | Asinh stretch factor | `10` |
+| `--sharpen-amount float` | Unsharp-mask amount | `0.8` |
+| `--sharpen-radius float` | Unsharp-mask radius in pixels | `1.5` |
+| `--hdr-amount float` | HDR local-contrast amount | `0.5` |
+| `--star-radius int` | Star-removal radius in pixels; `0` selects automatic sizing | `0` |
+| `--star-sigma float` | Star-detection threshold in sigma units | `4` |
+| `--bg-percentile float` | Luminance percentile used for black-point adjustment; `0` disables it | `10` |
+| `--scale int` | Downscaling factor; `2` halves each dimension, `4` quarters it | `1` |
+| `--force` | Skip the out-of-memory safety check (not recommended) | `false` |
+| `--tiff` | Write the optional TIFF sum output | `false` |
+| `--post-ca` | Enable chromatic-aberration reduction | `false` |
+| `--post-color` | Enable colour calibration | `false` |
+| `--post-flatten` | Enable vignette/background flattening | `false` |
+| `--post-sharpen` | Enable unsharp-mask sharpening | `false` |
+| `--post-hdr` | Enable HDR local contrast | `false` |
+| `--post-stretch` | Enable the three-level contrast stretch | `false` |
+| `--no-color-calib` | Skip colour calibration | `false` |
+| `--no-sharpen` | Skip sharpening | `false` |
+| `--selftest` | Run internal self-tests and exit | — |
+| `--version` | Print version and exit | — |
+| `--help` | Print command-line help | — |
 
-## Features
+For the authoritative list and defaults in your checked-out build, run:
 
-### Implemented
-- **Input Formats**: Native JPG/JPEG. CR2, CR3, FITS (via ImageMagick).
-- **Calibration**: Dark, Flat, and Bias frame subtraction.
-- **Stacking Methods**:
-  - `mean`: Standard average.
-  - `median`: Robust against satellite trails.
-  - `sigma`: Sigma-clipping (default) for rejecting cosmic rays and hot pixels.
-- **Star Registration**: Triangle-invariant star matching with RANSAC similarity estimation.
-- **Post-Processing Pipeline**:
-  1. Linear background gradient removal (optional `--mask-bg`).
-  2. Chromatic aberration reduction (violet/magenta halo suppression).
-  3. Color calibration (pre-stretch mid-tone neutralization).
-  4. Progressive Luminance GHS stretching (Gentle, Moderate, Full) — preserves star color.
-  5. Post-stretch vignette flattening.
-  6. Unsharp masking (sharpening).
-
-### 🎯 Planned & Next Improvements
-- [ ] Autodetection of input data routing (distinct pipelines for RAW vs JPG).
-- [ ] Weighted stacking based on star count or FWHM.
-- [ ] Deconvolution.
-
-## ⚙️ Architecture & Processing Pipeline
-
-```text
-[ Image Set (JPG/RAW/FITS) ]
-           │
-           ▼
-  ┌──────────────────┐
-  │   Calibration    │ ──> Dark/Flat/Bias subtraction
-  └──────────────────┘
-           │
-           ▼
-  ┌──────────────────┐
-  │   Registration   │ ──> Triangle matching + RANSAC transform
-  └──────────────────┘
-           │
-           ▼
-  ┌──────────────────┐
-  │   Accumulation   │ ──> Sum/Mean/Median/Sigma + Max/Min stacks
-  └──────────────────┘
-           │
-           ▼ (Outputs high-dynamic-range TIFF)
-  ┌────────────────────────────────────────────────────────┐
-  │              Post-Processing Pipeline                  │
-  │  ┌──────────────────────────────────────────────────┐  │
-  │  │ 1. Background Gradient Removal                   │  │
-  │  │ 2. Chromatic Aberration Reduction                │  │
-  │  │ 3. Color Calibration (Pre-Stretch)               │  │
-  │  │ 4. Luminance GHS Stretching (3 Stages)           │  │
-  │  │ 5. Vignette Flattening                           │  │
-  │  │ 6. Unsharp Masking                               │  │
-  │  └──────────────────────────────────────────────────┘  │
-  └────────────────────────────────────────────────────────┘
+```bash
+./skystacker --help
 ```
 
+## Output
+
+SkyStacker creates a `skystacker_results/` directory by default (or the directory selected with `--output`).
+
+Depending on the selected workflow and enabled options, it can contain:
+
+- Registered and unregistered stack products.
+- Maximum- and minimum-pixel diagnostic stacks.
+- TIFF data products when requested.
+- JPEG previews from post-processing stages.
+- Intermediate working data used by the post-processing pass.
+- `report.txt`, containing processing information and per-frame outcomes.
+
+The precise set of files depends on the version, flags and input data. The report is the best place to check which frames were loaded, registered, skipped or processed.
+
+## Processing pipeline at a glance
+
+```text
+Astrophotography session
+        │
+        ▼
+ Discover JPG / JPEG / CR2 / CR3 / FIT / FITS
+        │
+        ▼
+ Decode frames and estimate resource requirements
+        │
+        ▼
+ Optional dark / flat / bias calibration
+        │
+        ▼
+ Detect stars and choose a reference frame
+        │
+        ▼
+ Match star patterns and register frames
+        │
+        ▼
+ Resample, align and crop valid image area
+        │
+        ▼
+ Mean / Median / Sigma stacking
+        │
+        ├── Maximum-pixel stack
+        ├── Minimum-pixel stack
+        └── Optional TIFF output
+        │
+        ▼
+ Background and optional image processing
+        │
+        ▼
+ JPEG previews + image products + report
+```
+
+## Development status
+
+SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.4.1**.
+
+The feature set, output names and command-line interface may change between development revisions. Treat the source code and `--help` output from the checked-out commit as authoritative.
+
+Potential future improvements include:
+
+- Better automatic routing of different input formats through format-specific pipelines.
+- Weighted stacking based on image quality metrics such as star count or FWHM.
+- Deconvolution.
+- Further calibration and registration improvements.
+- A more modular architecture and expanded automated test coverage.
+
+## Project goals
+
+- **Local-first:** process astrophotography data on the user's own machine.
+- **Transparent:** make processing steps and per-frame outcomes inspectable.
+- **Resource-conscious:** estimate memory needs and provide safeguards.
+- **Numerically careful:** use floating-point image data for accumulation and processing.
+- **Practical:** provide a straightforward CLI and useful intermediate outputs.
+
 ## License
-MIT License. See [LICENSE](LICENSE).
+
+SkyStacker is distributed under the [MIT License](LICENSE).
