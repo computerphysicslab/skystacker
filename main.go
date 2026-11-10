@@ -86,6 +86,7 @@ type cliOptions struct {
 	STFLinked       bool
 	NoHDRBlend      bool
 	HDRBlendFactor  float64
+	NoHDRMix        bool
 	NoDenoise       bool
 	DenoiseStrength float64
 	DenoiseRadius   int
@@ -141,8 +142,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.STFLinked, "stf-linked", false, "use linked channels for STF (default unlinked for auto color balance)")
 	fs.BoolVar(&o.NoHDRBlend, "no-hdr-blend", false, "skip the final HDR blend step (post_step5_hdr.jpg)")
 	fs.Float64Var(&o.HDRBlendFactor, "hdr-blend-factor", 1.0, "HDR blend amount: post_step4 + factor*post_step1 (default 1.0)")
+	fs.BoolVar(&o.NoHDRMix, "no-hdr-mix", false, "skip the step-7 weighted mix outputs (post_step7_1..4.jpg)")
 	fs.BoolVar(&o.NoDenoise, "no-denoise", false, "skip the final denoise step")
-	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 1.0, "denoise iterations (0=skip, 1=one pass, N=N passes)")
+	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 4.0, "denoise iterations (0=skip, 1=one pass, N=N passes)")
 	fs.IntVar(&o.DenoiseRadius, "denoise-radius", 3, "guided-filter denoise radius")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
@@ -260,6 +262,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --stf-linked       use linked channels for STF (default: unlinked)")
 	fmt.Fprintln(w, "  --no-hdr-blend    skip the final HDR blend (post_step5_hdr.jpg)")
 	fmt.Fprintln(w, "  --hdr-blend-factor F  HDR blend amount: post_step4 + F*post_step1 (default 1.0)")
+	fmt.Fprintln(w, "  --no-hdr-mix     skip the step-7 weighted mix (post_step7_1..4.jpg)")
 	fmt.Fprintln(w, "  --no-denoise      skip the final denoise step (post_step5_denoised.jpg)")
 	fmt.Fprintln(w, "  --denoise-strength F  denoise iterations (0=skip, 1=one pass, N=N passes, max 10)")
 	fmt.Fprintln(w, "  --denoise-radius N    guided-filter denoise radius in px (1-20, default 3)")
@@ -2103,6 +2106,7 @@ type runOptions struct {
 	STFLinked       bool
 	NoHDRBlend      bool
 	HDRBlendFactor  float64
+	NoHDRMix        bool
 	NoDenoise       bool
 	DenoiseStrength float64
 	DenoiseRadius   int
@@ -2957,6 +2961,7 @@ func runSelfTests() int {
 		{"guided filter gray", testGuidedFilterGray},
 		{"denoise frame", testDenoiseFrame},
 		{"denoise iterations", testDenoiseFrameIterations},
+		{"blend weighted", testBlendWeighted},
 		{"HDR blend", testHDRBlend},
 		{"report contains", testReportContains},
 	}
@@ -3822,6 +3827,10 @@ func testPipelinePostOnly() error {
 		"post_step4_auto_stretched.jpg",
 		"post_step5_denoised.jpg",
 		"post_step6_hdr.jpg",
+		"post_step7_1.jpg",
+		"post_step7_2.jpg",
+		"post_step7_3.jpg",
+		"post_step7_4.jpg",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			return fmt.Errorf("missing post output %s: %w", name, err)
@@ -4535,6 +4544,51 @@ func testDenoiseFrameIterations() error {
 		if pass.Pix[i] != f.Pix[i] {
 			return fmt.Errorf("strength 0 altered pixel %d", i)
 		}
+	}
+	return nil
+}
+
+func testBlendWeighted() error {
+	const w, h = 8, 8
+	a := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	b := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range a.Pix {
+		a.Pix[i] = 0.2
+		b.Pix[i] = 0.8
+	}
+	out := blendWeighted(a, b, 1.0)
+	for i := range out.Pix {
+		if math.Abs(float64(out.Pix[i])-0.2) > 1e-6 {
+			return fmt.Errorf("wa=1 pixel %d = %v, want 0.2", i, out.Pix[i])
+		}
+	}
+	out = blendWeighted(a, b, 0.0)
+	for i := range out.Pix {
+		if math.Abs(float64(out.Pix[i])-0.8) > 1e-6 {
+			return fmt.Errorf("wa=0 pixel %d = %v, want 0.8", i, out.Pix[i])
+		}
+	}
+	out = blendWeighted(a, b, 0.5)
+	for i := range out.Pix {
+		if math.Abs(float64(out.Pix[i])-0.5) > 1e-6 {
+			return fmt.Errorf("wa=0.5 pixel %d = %v, want 0.5", i, out.Pix[i])
+		}
+	}
+	out = blendWeighted(a, b, 0.25)
+	for i := range out.Pix {
+		if math.Abs(float64(out.Pix[i])-0.65) > 1e-6 {
+			return fmt.Errorf("wa=0.25 pixel %d = %v, want 0.65", i, out.Pix[i])
+		}
+	}
+	a.Pix[0], b.Pix[0] = 0.9, 0.9
+	out = blendWeighted(a, b, 0.5)
+	if math.Abs(float64(out.Pix[0])-0.9) > 1e-6 {
+		return fmt.Errorf("clamping failed: %v", out.Pix[0])
+	}
+	bad := &frame{Width: w + 1, Height: h, Pix: make([]float32, (w+1)*h*3)}
+	out = blendWeighted(a, bad, 0.5)
+	if out != a {
+		return errors.New("mismatched dims should return first frame")
 	}
 	return nil
 }
@@ -5634,6 +5688,35 @@ func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
 	return cur
 }
 
+// blendWeighted produces a pixel-wise weighted lerp between a and b:
+// out = wa*a + (1-wa)*b, clamped to [0, 1]. wa=1 returns a; wa=0 returns b.
+// Used by the final step-7 outputs which present a spectrum from
+// "mostly step 1 (background removed)" to "mostly step 6 (HDR)".
+func blendWeighted(a, b *frame, wa float64) *frame {
+	if a.Width != b.Width || a.Height != b.Height {
+		return a
+	}
+	if wa <= 0 {
+		return b
+	}
+	if wa >= 1 {
+		return a
+	}
+	result := &frame{Width: a.Width, Height: a.Height, Pix: make([]float32, len(a.Pix))}
+	waf := float32(wa)
+	wbf := float32(1 - wa)
+	for i := range a.Pix {
+		v := waf*a.Pix[i] + wbf*b.Pix[i]
+		if v < 0 {
+			v = 0
+		} else if v > 1 {
+			v = 1
+		}
+		result.Pix[i] = v
+	}
+	return result
+}
+
 func floatToByte(v float32) uint8 {
 	if v <= 0 {
 		return 0
@@ -5707,7 +5790,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 
 	var outputs []string
 	cur := src
-	var step1Frame, step4Frame *frame
+	var step1Frame, step4Frame, step6Frame *frame
 
 	// Step 1: background removal (ALWAYS)
 	logf("  post: background removal (degree %d)", opts.BGDegree)
@@ -5839,6 +5922,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if step1Frame != nil && hdrBase != nil && !opts.NoHDRBlend && opts.HDRBlendFactor > 0 {
 		logf("  post: HDR blend (step4 + %g*step1)", opts.HDRBlendFactor)
 		blended := blendHDR(hdrBase, step1Frame, opts.HDRBlendFactor)
+		step6Frame = blended
 		p = filepath.Join(outputDir, "post_step6_hdr.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), blended); err != nil {
 			logf("  WARNING: %v", err)
@@ -5848,6 +5932,28 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  post: HDR blend skipped (auto-stretch disabled)")
 	} else if opts.NoHDRBlend {
 		logf("  post: HDR blend skipped (--no-hdr-blend)")
+	}
+
+	// Step 7: weighted mix of step 1 (background removed) and step 6 (HDR).
+	// Produces four variants spanning from "mostly step 1" to "mostly
+	// step 6", so the user can pick whichever balance of linear detail
+	// and HDR-processed tone looks best on their image.
+	if step1Frame != nil && step6Frame != nil && !opts.NoHDRMix {
+		weights := []float64{0.90, 0.65, 0.35, 0.10}
+		logf("  post: HDR mix (%d weighted variants: step7_1..step7_%d)", len(weights), len(weights))
+		for i, w1 := range weights {
+			mixed := blendWeighted(step1Frame, step6Frame, w1)
+			p = filepath.Join(outputDir, fmt.Sprintf("post_step7_%d.jpg", i+1))
+			if err := writePostPreview(outputDir, filepath.Base(p), mixed); err != nil {
+				logf("  WARNING: %v", err)
+			}
+			outputs = append(outputs, p)
+			logf("  post: step7_%d (%.2f*step1 + %.2f*step6)", i+1, w1, 1-w1)
+		}
+	} else if opts.NoHDRMix {
+		logf("  post: HDR mix skipped (--no-hdr-mix)")
+	} else if step6Frame == nil {
+		logf("  post: HDR mix skipped (step 6 not produced)")
 	}
 
 	if opts.PostStretch {
@@ -6158,6 +6264,7 @@ func main() {
 		STFLinked:       opts.STFLinked,
 		NoHDRBlend:      opts.NoHDRBlend,
 		HDRBlendFactor:  opts.HDRBlendFactor,
+		NoHDRMix:        opts.NoHDRMix,
 		NoDenoise:       opts.NoDenoise,
 		DenoiseStrength: opts.DenoiseStrength,
 		DenoiseRadius:   opts.DenoiseRadius,
