@@ -77,6 +77,7 @@ type cliOptions struct {
 	HDRAmount     float64
 	StarReduce    float64
 	Scale         int
+	Force         bool
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -112,6 +113,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.HDRAmount, "hdr-amount", 0.5, "HDR local contrast amount")
 	fs.Float64Var(&o.StarReduce, "star-reduce", 0.5, "Star reduction amount")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
+	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (not recommended)")
 
 	// Pre-process: move any non-flag arguments to the end so flags can appear anywhere
 // e.g., "skystacker Luminance --method mean" -> "skystacker --method mean Luminance"
@@ -1762,6 +1764,7 @@ type runOptions struct {
 	HDRAmount     float64
 	StarReduce    float64
 	Scale         int
+	Force         bool
 }
 
 
@@ -1944,11 +1947,35 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		storedMem = float64(len(candidates)) * frameMB
 	}
 	estMemMB := int(baseMem + storedMem)
-	availMemMB := getAvailableMemoryMB()
-	logf("Memory: estimated %d MB needed, %d MB available", estMemMB, availMemMB)
-	if availMemMB > 0 && estMemMB > availMemMB-1000 {
-		return fmt.Errorf("OUT OF MEMORY PREVENTED: Estimated %d MB needed, but only %d MB available.\nPlease use --scale 2 (reduces memory by 4x) or --method mean (streaming) to avoid crashing your system.", estMemMB, availMemMB)
-	}
+availMemMB := getAvailableMemoryMB()
+
+// Real peak is ~1.5x the naive estimate: Go's garbage collector only
+// triggers when the heap doubles (GOGC=100), so during Pass 1 several
+// decoded frames accumulate before any collection runs.
+realPeak := int(float64(estMemMB) * 1.5)
+requiredMB := realPeak + 2000
+
+logf("Memory: naive estimate %d MB, real peak (GC-adjusted) %d MB, available %d MB",
+estMemMB, realPeak, availMemMB)
+
+if availMemMB > 0 && requiredMB > availMemMB && !opts.Force {
+hint := "--method mean (streaming, ~200 MB)"
+if opts.Method == "mean" {
+hint = "--scale 2 (halve dimensions, 4x less memory)"
+}
+return fmt.Errorf("OUT OF MEMORY PREVENTED\n"+
+"  Naive estimate:       %d MB\n"+
+"  Real peak (GC lag):   %d MB\n"+
+"  Safety margin:        2000 MB\n"+
+"  Total required:       %d MB\n"+
+"  Currently available:  %d MB\n\n"+
+"Use one of these options:\n"+
+"    %s\n"+
+"    --scale 2       Halve image dimensions (4x less memory)\n"+
+"    --force         Skip this safety check (NOT recommended)\n\n"+
+"Or close memory-hungry apps (Chrome, Firefox, Slack) and retry.",
+estMemMB, realPeak, requiredMB, availMemMB, hint)
+}
 	if opts.Register {
 		logf("Registration: ON (use --no-register to disable)")
 	} else {
@@ -4328,6 +4355,7 @@ func main() {
 		HDRAmount:     opts.HDRAmount,
 		StarReduce:    opts.StarReduce,
 		Scale:         opts.Scale,
+		Force:         opts.Force,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
