@@ -116,6 +116,7 @@ type cliOptions struct {
 	NoDenoise          bool
 	DenoiseStrength    float64
 	DenoiseRadius      int
+	DenoiseChroma      float64
 	SigmaClipThreshold float64
 	SigmaClipIters     int
 	TileSize           int
@@ -175,6 +176,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.NoDenoise, "no-denoise", false, "skip the final denoise step")
 	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 4.0, "denoise iterations (0=skip, 1=one pass, N=N passes)")
 	fs.IntVar(&o.DenoiseRadius, "denoise-radius", 3, "guided-filter denoise radius")
+	fs.Float64Var(&o.DenoiseChroma, "denoise-chroma", 1.0, "multiplier on chroma denoise weights (0 disables)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -201,7 +203,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
 				skipNext = true
 			}
 		} else {
@@ -244,6 +246,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DenoiseRadius < 1 || o.DenoiseRadius > 20 {
 		return nil, fmt.Errorf("--denoise-radius must be in [1, 20], got %d", o.DenoiseRadius)
+	}
+	if o.DenoiseChroma < 0 || o.DenoiseChroma > 3 {
+		return nil, fmt.Errorf("--denoise-chroma must be in [0, 3], got %g", o.DenoiseChroma)
 	}
 	if o.SigmaClipThreshold < 0 || o.SigmaClipThreshold > 10 {
 		return nil, fmt.Errorf("--sigma-clip must be in [0, 10], got %g", o.SigmaClipThreshold)
@@ -307,6 +312,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --no-denoise      skip the final denoise step (post_step5_denoised.jpg)")
 	fmt.Fprintln(w, "  --denoise-strength F  denoise iterations (0=skip, 1=one pass, N=N passes, max 10)")
 	fmt.Fprintln(w, "  --denoise-radius N    guided-filter denoise radius in px (1-20, default 3)")
+	fmt.Fprintln(w, "  --denoise-chroma F    multiplier on chroma denoise weights (0 disables, default 1.0)")
 	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
 	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
@@ -2196,6 +2202,7 @@ type runOptions struct {
 	NoDenoise          bool
 	DenoiseStrength    float64
 	DenoiseRadius      int
+	DenoiseChroma      float64
 	SigmaClipThreshold float64
 	SigmaClipIters     int
 	TileSize           int
@@ -3791,6 +3798,7 @@ func runSelfTests() int {
 		{"read tile from raw", testReadTileFromRaw},
 		{"reduce tiles stack", testReduceTilesStack},
 		{"chroma denoise", testChromaDenoiseGB},
+		{"chroma denoise multi-scale", testChromaDenoiseMultiScale},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -5688,6 +5696,80 @@ func testChromaDenoiseGB() error {
 	return nil
 }
 
+func testChromaDenoiseMultiScale() error {
+	const w, h = 128, 128
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	// Uniform luminance Y=0.5, with sinusoidal chroma at 20 px and
+	// 60 px scales. This is the synthetic analogue of the low-freq
+	// red/green blotchiness that survives the small-radius passes.
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := (y*w + x) * 3
+			cb := 0.06*math.Sin(float64(x+y)/20*2*math.Pi) + 0.06*math.Sin(float64(x-y)/60*2*math.Pi)
+			cr := 0.06*math.Sin(float64(x-y)/20*2*math.Pi) + 0.06*math.Sin(float64(x+y)/60*2*math.Pi)
+			yb := 0.5
+			r := yb + cr
+			b := yb + cb
+			g := yb - 0.5094*cr - 0.1942*cb
+			f.Pix[i] = float32(clampFloat(r, 0, 1))
+			f.Pix[i+1] = float32(clampFloat(g, 0, 1))
+			f.Pix[i+2] = float32(clampFloat(b, 0, 1))
+		}
+	}
+	stddev := func(v []float64) float64 {
+		var sum, sq float64
+		for _, x := range v {
+			sum += x
+			sq += x * x
+		}
+		n := float64(len(v))
+		m := sum / n
+		return math.Sqrt(sq/n - m*m)
+	}
+	beforeCb := make([]float64, 0, w*h)
+	beforeY := make([]float64, 0, w*h)
+	for i := 0; i < w*h; i++ {
+		r := float64(f.Pix[i*3])
+		g := float64(f.Pix[i*3+1])
+		b := float64(f.Pix[i*3+2])
+		yv := 0.299*r + 0.587*g + 0.114*b
+		beforeY = append(beforeY, yv)
+		beforeCb = append(beforeCb, b-yv)
+	}
+	out := chromaDenoiseMultiScale(f, 1.0)
+	afterCb := make([]float64, 0, w*h)
+	afterY := make([]float64, 0, w*h)
+	for i := 0; i < w*h; i++ {
+		r := float64(out.Pix[i*3])
+		g := float64(out.Pix[i*3+1])
+		b := float64(out.Pix[i*3+2])
+		yv := 0.299*r + 0.587*g + 0.114*b
+		afterY = append(afterY, yv)
+		afterCb = append(afterCb, b-yv)
+	}
+	beforeCbSD := stddev(beforeCb)
+	afterCbSD := stddev(afterCb)
+	beforeYSD := stddev(beforeY)
+	afterYSD := stddev(afterY)
+	if beforeCbSD < 0.03 {
+		return fmt.Errorf("fixture: chroma stddev %.4f too small", beforeCbSD)
+	}
+	if afterCbSD >= 0.6*beforeCbSD {
+		return fmt.Errorf("chroma noise reduced only from %.4f to %.4f", beforeCbSD, afterCbSD)
+	}
+	if beforeYSD > 0.02 {
+		return fmt.Errorf("fixture: luminance stddev %.4f too large", beforeYSD)
+	}
+	if afterYSD > 0.03 {
+		return fmt.Errorf("luminance stddev grew to %.4f", afterYSD)
+	}
+	pass := chromaDenoiseMultiScale(f, 0)
+	if pass != f {
+		return fmt.Errorf("strength 0 should return f unchanged")
+	}
+	return nil
+}
+
 func testReportContains() error {
 	dir, err := os.MkdirTemp("", "skystacker-report-")
 	if err != nil {
@@ -6752,7 +6834,7 @@ func guidedFilterFrameOnce(f *frame, radius int, eps float64) *frame {
 // fraction. Each additional full pass compounds the smoothing power of the
 // filter, so strength=4.0 is meaningfully smoother than strength=1.0 without
 // raising radius. Pass counts are capped at 10 by parseArgs.
-func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
+func denoiseFrame(f *frame, radius int, eps, strength float64, chromaMul ...float64) *frame {
 	if strength <= 0 {
 		return f
 	}
@@ -6789,15 +6871,14 @@ func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
 	// --denoise-strength 1 does not silently gain a large
 	// chroma blur.
 	if strength >= 1.5 {
-		coarseRadius := radius * 8
-		if coarseRadius < 20 {
-			coarseRadius = 20
+		cm := 1.0
+		if len(chromaMul) > 0 {
+			cm = chromaMul[0]
 		}
-		if coarseRadius > 64 {
-			coarseRadius = 64
+		if cm > 0 {
+			logf("  denoise: chroma multi-scale pass (strength=%g)", cm)
+			cur = chromaDenoiseMultiScale(cur, cm)
 		}
-		logf("  denoise: chroma coarse pass (radius=%d, chroma=0.7, lum=0.25)", coarseRadius)
-		cur = chromaDenoiseGB(cur, coarseRadius, eps*2.0, 0.7, 0.25)
 	}
 
 	return cur
@@ -6828,6 +6909,119 @@ func blendWeighted(a, b *frame, wa float64) *frame {
 			v = 1
 		}
 		result.Pix[i] = v
+	}
+	return result
+}
+
+// chromaDenoiseMultiScale applies a two-scale chroma-only denoise that
+// targets low-frequency "color blotch" noise without washing out real
+// colour. It is the successor to chromaDenoiseGB for actual denoise use:
+//
+//   - It runs at TWO radii (24 px and 96 px, capped to min(W,H)/6 on
+//     small images) so that blotches across the 20-150 px size range are
+//     all smoothed. A single radius can only reach one octave.
+//
+//   - The chroma eps is 0.005, not 0.02. High eps makes the guided
+//     filter average every neighbourhood toward its local mean, which is
+//     exactly what caused the earlier greenish/cyan wash-out: real
+//     colour edges got blurred into mud. Low eps preserves real colour
+//     and only removes noise.
+//
+//   - Only chroma (Cb, Cr) is filtered. Luminance is left completely
+//     untouched, so nebula structure stays sharp. A previous version
+//     applied a mild lum pass; that contributed to the "washed out"
+//     look and is removed here.
+//
+//   - strength is a straight multiplier on the two blend weights.
+//     strength=1.0 uses (0.85, 0.45); strength=0 returns f unchanged.
+//
+// The two filtered chroma channels are recombined with the untouched
+// luminance. No saturation boost is applied: the point of lowering eps
+// is that real colour survives, so there is nothing to compensate for.
+func chromaDenoiseMultiScale(f *frame, strength float64) *frame {
+	if strength <= 0 {
+		return f
+	}
+	nPix := f.Width * f.Height
+	Y := make([]float32, nPix)
+	Cb := make([]float32, nPix)
+	Cr := make([]float32, nPix)
+	for i := 0; i < nPix; i++ {
+		r := float64(f.Pix[i*3])
+		g := float64(f.Pix[i*3+1])
+		b := float64(f.Pix[i*3+2])
+		y := 0.299*r + 0.587*g + 0.114*b
+		Y[i] = float32(y)
+		Cb[i] = float32(b - y)
+		Cr[i] = float32(r - y)
+	}
+
+	// Radius cap: never exceed min(W,H)/6, so the filter does not
+	// average over the whole image on small crops.
+	maxR := f.Width
+	if f.Height < maxR {
+		maxR = f.Height
+	}
+	maxR /= 6
+	if maxR < 16 {
+		maxR = 16
+	}
+	scales := []struct {
+		radius int
+		weight float64
+	}{
+		{24, 0.85},
+		{96, 0.45},
+	}
+	for _, s := range scales {
+		r := s.radius
+		if r > maxR {
+			r = maxR
+		}
+		w := float32(s.weight * strength)
+		if w <= 0 {
+			continue
+		}
+		if w > 1 {
+			w = 1
+		}
+		Cbd := guidedFilterGray(Cb, f.Width, f.Height, r, 0.005)
+		Crd := guidedFilterGray(Cr, f.Width, f.Height, r, 0.005)
+		for i := 0; i < nPix; i++ {
+			Cb[i] = Cb[i] + w*(Cbd[i]-Cb[i])
+			Cr[i] = Cr[i] + w*(Crd[i]-Cr[i])
+		}
+	}
+
+	// Recombine. Luminance is preserved exactly (no Y filter pass).
+	const cCrToG = 0.299 / 0.587
+	const cCbToG = 0.114 / 0.587
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for i := 0; i < nPix; i++ {
+		y := Y[i]
+		cr := Cr[i]
+		cb := Cb[i]
+		r := y + cr
+		b := y + cb
+		g := y - float32(cCrToG)*cr - float32(cCbToG)*cb
+		if r < 0 {
+			r = 0
+		} else if r > 1 {
+			r = 1
+		}
+		if g < 0 {
+			g = 0
+		} else if g > 1 {
+			g = 1
+		}
+		if b < 0 {
+			b = 0
+		} else if b > 1 {
+			b = 1
+		}
+		result.Pix[i*3] = r
+		result.Pix[i*3+1] = g
+		result.Pix[i*3+2] = b
 	}
 	return result
 }
@@ -7108,7 +7302,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if step4Frame != nil && !opts.NoDenoise && opts.DenoiseStrength > 0 {
 		logf("  post: denoise (guided filter, radius=%d, strength=%g)",
 			opts.DenoiseRadius, opts.DenoiseStrength)
-		denoised := denoiseFrame(step4Frame, opts.DenoiseRadius, 0.01, opts.DenoiseStrength)
+		denoised := denoiseFrame(step4Frame, opts.DenoiseRadius, 0.01, opts.DenoiseStrength, opts.DenoiseChroma)
 		hdrBase = denoised
 		p = filepath.Join(outputDir, "post_step5_denoised.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), denoised); err != nil {
@@ -7476,6 +7670,7 @@ func main() {
 		NoDenoise:          opts.NoDenoise,
 		DenoiseStrength:    opts.DenoiseStrength,
 		DenoiseRadius:      opts.DenoiseRadius,
+		DenoiseChroma:      opts.DenoiseChroma,
 		SigmaClipThreshold: opts.SigmaClipThreshold,
 		SigmaClipIters:     opts.SigmaClipIters,
 		TileSize:           opts.TileSize,
