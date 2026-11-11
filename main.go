@@ -1,18 +1,44 @@
-// SkyStacker v0.3.0 — single-file build with star registration.
+// SkyStacker v0.5.0 — single-file astrophotography stacker.
 //
 // Build:  go build -o skystacker main.go
 // Test:   ./skystacker --selftest
 // Run:    ./skystacker [flags] [input-directory]
 //
-// v0.3.0 adds the 0.2 milestone (registration):
-//   - Star detection with sub-pixel centroiding
-//   - Reference-frame selection by star count
-//   - Triangle-invariant star matching with RANSAC similarity estimation
-//   - Bilinear sub-pixel resampling
-//   - Safe crop to the largest fully-valid axis-aligned rectangle
+// Stacking pipeline:
+//   - Discovery and decode of JPG, RAW (CR2/CR3 via dcraw +
+//     ImageMagick) and FITS (via ImageMagick). Optional calibration with
+//     dark, flat and bias frames; --calib-root auto-detects subfolders.
+//   - High-pass star detection with sub-pixel centroiding: stars are
+//     found even on bright nebula backgrounds.
+//   - Reference-frame selection by star count; triangle-invariant star
+//     matching; RANSAC similarity estimation (rotation + uniform scale
+//     + translation); bilinear sub-pixel resampling; safe crop to the
+//     largest fully-valid region.
+//   - Stacking methods: mean (streaming), median and sigma (tiled,
+//     out-of-core, MAD-based rejection, per-pixel weight and rejection
+//     maps). Median/sigma frames are spilled to disk so peak memory
+//     stays bounded regardless of session size.
 //
-// Frames that fail registration are reported and excluded from the
-// registered stack (they remain in the no-correction mean).
+// Post-processing pipeline (each output is independently inspectable):
+//   step 1  background removal  (polynomial degree 1-3)
+//   step 2  star removal        (high-pass + median annulus replacement)
+//   step 3  black-point shift   (intermediate; not written to disk)
+//   step 4  PixInsight-style STF/MTF auto-stretch
+//   step 5  guided-filter denoise (iterative, 1-10 passes)
+//   step 6  HDR blend (step 5 + linear background-removed frame)
+//   step 7  weighted mix (4 mild variants of step 6 + step 1)
+//
+// Diagnostics:
+//   - Per-frame stars / inliers / scale / rotation / offset /
+//     quality / bounding box, plus a crop explanation naming the frames
+//     that constrain the crop.
+//   - Post-processing outputs are saved as JPEGs plus a machine-readable
+//     report.txt.
+//
+// The binary is a single file so it can be copied, audited and compiled
+// without a dependency tree. Only the Go standard library is used at
+// build time; external tools (dcraw, ImageMagick) are only needed at
+// run time for RAW and FITS decoding.
 
 package main
 
@@ -45,53 +71,56 @@ import (
 	"time"
 )
 
-const version = "0.4.1"
+const version = "0.5.0"
 
 // =========================================================================
 // CLI
 // =========================================================================
 
 type cliOptions struct {
-	InputDir        string
-	OutputDir       string
-	Workers         int
-	Recursive       bool
-	Overwrite       bool
-	Version         bool
-	Help            bool
-	SelfTest        bool
-	Register        bool
-	Method          string
-	MaskBG          bool
-	DarkFile        string
-	FlatFile        string
-	BiasFile        string
-	CalibRoot       string
-	PostProcess     bool
-	StackOnly       bool
-	PostOnly        bool
-	NoColorCalib    bool
-	NoSharpen       bool
-	BGDegree        int
-	StretchFactor   float64
-	SharpenAmount   float64
-	SharpenRadius   float64
-	HDRAmount       float64
-	StarRadius      int
-	StarSigma       float64
-	BgPercentile    float64
-	NoAutoStretch   bool
-	STFShadowsClip  float64
-	STFTargetBG     float64
-	STFLinked       bool
-	NoHDRBlend      bool
-	HDRBlendFactor  float64
-	NoHDRMix        bool
-	NoDenoise       bool
-	DenoiseStrength float64
-	DenoiseRadius   int
-	Scale           int
-	Force           bool
+	InputDir           string
+	OutputDir          string
+	Workers            int
+	Recursive          bool
+	Overwrite          bool
+	Version            bool
+	Help               bool
+	SelfTest           bool
+	Register           bool
+	Method             string
+	MaskBG             bool
+	DarkFile           string
+	FlatFile           string
+	BiasFile           string
+	CalibRoot          string
+	PostProcess        bool
+	StackOnly          bool
+	PostOnly           bool
+	NoColorCalib       bool
+	NoSharpen          bool
+	BGDegree           int
+	StretchFactor      float64
+	SharpenAmount      float64
+	SharpenRadius      float64
+	HDRAmount          float64
+	StarRadius         int
+	StarSigma          float64
+	BgPercentile       float64
+	NoAutoStretch      bool
+	STFShadowsClip     float64
+	STFTargetBG        float64
+	STFLinked          bool
+	NoHDRBlend         bool
+	HDRBlendFactor     float64
+	NoHDRMix           bool
+	NoDenoise          bool
+	DenoiseStrength    float64
+	DenoiseRadius      int
+	SigmaClipThreshold float64
+	SigmaClipIters     int
+	TileSize           int
+	Scale              int
+	Force              bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -146,6 +175,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.NoDenoise, "no-denoise", false, "skip the final denoise step")
 	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 4.0, "denoise iterations (0=skip, 1=one pass, N=N passes)")
 	fs.IntVar(&o.DenoiseRadius, "denoise-radius", 3, "guided-filter denoise radius")
+	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
+	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
+	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
@@ -169,7 +201,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--scale" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
 				skipNext = true
 			}
 		} else {
@@ -212,6 +244,15 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DenoiseRadius < 1 || o.DenoiseRadius > 20 {
 		return nil, fmt.Errorf("--denoise-radius must be in [1, 20], got %d", o.DenoiseRadius)
+	}
+	if o.SigmaClipThreshold < 0 || o.SigmaClipThreshold > 10 {
+		return nil, fmt.Errorf("--sigma-clip must be in [0, 10], got %g", o.SigmaClipThreshold)
+	}
+	if o.SigmaClipIters < 1 || o.SigmaClipIters > 10 {
+		return nil, fmt.Errorf("--sigma-clip-iters must be in [1, 10], got %d", o.SigmaClipIters)
+	}
+	if o.TileSize < 0 || o.TileSize > 4096 {
+		return nil, fmt.Errorf("--tile-size must be in [0, 4096], got %d", o.TileSize)
 	}
 	rest := fs.Args()
 	if len(rest) > 1 {
@@ -266,6 +307,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --no-denoise      skip the final denoise step (post_step5_denoised.jpg)")
 	fmt.Fprintln(w, "  --denoise-strength F  denoise iterations (0=skip, 1=one pass, N=N passes, max 10)")
 	fmt.Fprintln(w, "  --denoise-radius N    guided-filter denoise radius in px (1-20, default 3)")
+	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
+	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
+	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -2117,43 +2161,46 @@ func writeFileAtomic(path string, fn func(io.Writer) error) error {
 // =========================================================================
 
 type runOptions struct {
-	InputDir        string
-	OutputDir       string
-	Workers         int
-	Recursive       bool
-	Overwrite       bool
-	Register        bool
-	DarkFile        string
-	FlatFile        string
-	BiasFile        string
-	CalibRoot       string
-	Method          string
-	MaskBG          bool
-	PostProcess     bool
-	StackOnly       bool
-	PostOnly        bool
-	NoColorCalib    bool
-	NoSharpen       bool
-	BGDegree        int
-	StretchFactor   float64
-	SharpenAmount   float64
-	SharpenRadius   float64
-	HDRAmount       float64
-	StarRadius      int
-	StarSigma       float64
-	BgPercentile    float64
-	NoAutoStretch   bool
-	STFShadowsClip  float64
-	STFTargetBG     float64
-	STFLinked       bool
-	NoHDRBlend      bool
-	HDRBlendFactor  float64
-	NoHDRMix        bool
-	NoDenoise       bool
-	DenoiseStrength float64
-	DenoiseRadius   int
-	Scale           int
-	Force           bool
+	InputDir           string
+	OutputDir          string
+	Workers            int
+	Recursive          bool
+	Overwrite          bool
+	Register           bool
+	DarkFile           string
+	FlatFile           string
+	BiasFile           string
+	CalibRoot          string
+	Method             string
+	MaskBG             bool
+	PostProcess        bool
+	StackOnly          bool
+	PostOnly           bool
+	NoColorCalib       bool
+	NoSharpen          bool
+	BGDegree           int
+	StretchFactor      float64
+	SharpenAmount      float64
+	SharpenRadius      float64
+	HDRAmount          float64
+	StarRadius         int
+	StarSigma          float64
+	BgPercentile       float64
+	NoAutoStretch      bool
+	STFShadowsClip     float64
+	STFTargetBG        float64
+	STFLinked          bool
+	NoHDRBlend         bool
+	HDRBlendFactor     float64
+	NoHDRMix           bool
+	NoDenoise          bool
+	DenoiseStrength    float64
+	DenoiseRadius      int
+	SigmaClipThreshold float64
+	SigmaClipIters     int
+	TileSize           int
+	Scale              int
+	Force              bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -2308,6 +2355,415 @@ func frameBoxInReference(fw, fh int, sim similarity) (minX, minY, maxX, maxY int
 		}
 	}
 	return minX, minY, maxX, maxY
+}
+
+// medianInPlace sorts vals ascending in place and returns the median
+// (average of the two central values for even lengths). Safe for n=0.
+func medianInPlace(vals []float32) float32 {
+	n := len(vals)
+	if n == 0 {
+		return 0
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+	if n%2 == 0 {
+		return 0.5 * (vals[n/2-1] + vals[n/2])
+	}
+	return vals[n/2]
+}
+
+// madOf returns the median absolute deviation of vals given the
+// precomputed median. It does not modify vals.
+func madOf(vals []float32, median float32) float32 {
+	dev := make([]float32, len(vals))
+	for i, v := range vals {
+		d := v - median
+		if d < 0 {
+			d = -d
+		}
+		dev[i] = d
+	}
+	return medianInPlace(dev)
+}
+
+// sigmaClipReduce returns the MAD-based sigma-clipped mean of vals. The
+// first iteration computes median and MAD, derives sigma = 1.4826*MAD,
+// and rejects values further than threshold*sigma from the median. Each
+// subsequent iteration recomputes from the surviving values. If fewer
+// than 3 values survive, the mean of those is returned unchanged.
+func sigmaClipReduce(vals []float32, threshold float64, iters int) (mean, sigma float32, accepted, rejected int) {
+	n := len(vals)
+	if n == 0 {
+		return 0, 0, 0, 0
+	}
+	if threshold <= 0 {
+		threshold = 3.0
+	}
+	if iters < 1 {
+		iters = 1
+	}
+	active := make([]bool, n)
+	for i := range active {
+		active[i] = true
+	}
+	var lastMedian float32
+	for it := 0; it < iters; it++ {
+		var activeVals []float32
+		for i, a := range active {
+			if a {
+				activeVals = append(activeVals, vals[i])
+			}
+		}
+		if len(activeVals) < 3 {
+			var s float64
+			for _, v := range activeVals {
+				s += float64(v)
+			}
+			if len(activeVals) == 0 {
+				return 0, 0, 0, n
+			}
+			return float32(s / float64(len(activeVals))), 0, len(activeVals), n - len(activeVals)
+		}
+		med := medianInPlace(activeVals)
+		lastMedian = med
+		mad := madOf(activeVals, med)
+		sig := 1.4826 * mad
+		if sig < 1e-9 {
+			sig = 1e-9
+		}
+		sigma = sig
+		k := float32(threshold * float64(sig))
+		anyActive := false
+		for i, a := range active {
+			if !a {
+				continue
+			}
+			d := vals[i] - med
+			if d < 0 {
+				d = -d
+			}
+			if d > k {
+				active[i] = false
+			} else {
+				anyActive = true
+			}
+		}
+		if !anyActive {
+			return lastMedian, sig, 1, n - 1
+		}
+	}
+	var s float64
+	for i, a := range active {
+		if a {
+			s += float64(vals[i])
+			accepted++
+		} else {
+			rejected++
+		}
+	}
+	if accepted == 0 {
+		return lastMedian, sigma, 1, n - 1
+	}
+	return float32(s / float64(accepted)), sigma, accepted, rejected
+}
+
+// writeSpillFrame writes a frame's interleaved RGB float32 buffer to disk
+// as a raw file with an 8-byte header (uint32 width, uint32 height). The
+// format matches readRawFloat32RGB so the existing reader works.
+func writeSpillFrame(path string, f *frame) error {
+	return writeFileAtomic(path, func(w io.Writer) error {
+		return writeRawFloat32RGB(w, f.Width, f.Height, f.Pix)
+	})
+}
+
+// readSpillFrame reads a full raw float32 frame into a fresh *frame.
+func readSpillFrame(path string, w, h int) (*frame, error) {
+	gw, gh, pix, err := readRawFloat32RGB(path)
+	if err != nil {
+		return nil, err
+	}
+	if gw != w || gh != h {
+		return nil, fmt.Errorf("spill frame dims %dx%d != %dx%d", gw, gh, w, h)
+	}
+	return &frame{Width: w, Height: h, Pix: pix}, nil
+}
+
+// readTileFromRaw reads a rectangular tile from a raw float32 RGB file
+// into dst. dst must be at least (x1-x0)*(y1-y0)*3 float32s. The tile is
+// written to dst in row-major interleaved RGB order (same layout as a
+// decoded frame's Pix).
+func readTileFromRaw(path string, fullW, fullH, x0, y0, x1, y1 int, dst []float32) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	hdr := make([]byte, 8)
+	if _, err := io.ReadFull(f, hdr); err != nil {
+		return err
+	}
+	gw := int(binary.LittleEndian.Uint32(hdr[0:]))
+	gh := int(binary.LittleEndian.Uint32(hdr[4:]))
+	if gw != fullW || gh != fullH {
+		return fmt.Errorf("raw dims %dx%d != %dx%d", gw, gh, fullW, fullH)
+	}
+	tileW := x1 - x0
+	tileH := y1 - y0
+	if len(dst) < tileW*tileH*3 {
+		return fmt.Errorf("dst too small: %d < %d", len(dst), tileW*tileH*3)
+	}
+	rowBytes := int64(fullW) * 3 * 4
+	const chunk = 4096
+	buf := make([]byte, chunk*4)
+	for py := 0; py < tileH; py++ {
+		off := int64(8) + int64(y0+py)*rowBytes + int64(x0)*3*4
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return err
+		}
+		nFloats := tileW * 3
+		done := 0
+		for done < nFloats {
+			c := nFloats - done
+			if c > chunk {
+				c = chunk
+			}
+			if _, err := io.ReadFull(f, buf[:c*4]); err != nil {
+				return err
+			}
+			base := py*tileW*3 + done
+			for j := 0; j < c; j++ {
+				dst[base+j] = math.Float32frombits(binary.LittleEndian.Uint32(buf[j*4:]))
+			}
+			done += c
+		}
+	}
+	return nil
+}
+
+// updateValidCount increments validCount[p] for every pixel in f whose
+// red channel is >= 0. The same rule as accumulator.addFrameMasked.
+func updateValidCount(f *frame, validCount []int32) {
+	nPix := len(validCount)
+	for p := 0; p < nPix; p++ {
+		if f.Pix[p*3] >= 0 {
+			validCount[p]++
+		}
+	}
+}
+
+// reduceTilesStack performs the tiled median / sigma-clipped-mean reduction
+// over a set of spilled raw float32 frames. Each spill file must have
+// dimensions fullW x fullH. crop selects the output region (in full-frame
+// coordinates). Returns:
+//   - sumPix:  per-pixel sum of valid values, output-sized (outW*outH*3)
+//   - meanPix: reduction result (median or clipped mean), output-sized
+//   - rejPix:  per-pixel rejected count, averaged across RGB (outW*outH)
+//   - wgtPix:  per-pixel accepted count, averaged across RGB (outW*outH)
+func reduceTilesStack(
+	spillPaths []string,
+	fullW, fullH int,
+	crop image.Rectangle,
+	method string,
+	sigmaThreshold float64,
+	sigmaIters int,
+	tileSize int,
+	workers int,
+) (sumPix, meanPix, rejPix, wgtPix []float32, err error) {
+	outW := crop.Dx()
+	outH := crop.Dy()
+	nFrames := len(spillPaths)
+	if nFrames == 0 {
+		return nil, nil, nil, nil, errors.New("no spill frames")
+	}
+	nPix := outW * outH
+	sumPix = make([]float32, nPix*3)
+	meanPix = make([]float32, nPix*3)
+	rejPix = make([]float32, nPix)
+	wgtPix = make([]float32, nPix)
+
+	ts := tileSize
+	if ts < 64 {
+		ts = 256
+	}
+	// Cap tile buffer to ~256 MB.
+	const maxTileBuf = 256 * 1024 * 1024
+	maxSide := int(math.Sqrt(float64(maxTileBuf / (nFrames * 3 * 4))))
+	if maxSide < 64 {
+		maxSide = 64
+	}
+	if ts > maxSide {
+		ts = maxSide
+	}
+
+	type tile struct {
+		x0, y0, x1, y1 int
+	}
+	var tiles []tile
+	for y := 0; y < outH; y += ts {
+		for x := 0; x < outW; x += ts {
+			x1 := x + ts
+			if x1 > outW {
+				x1 = outW
+			}
+			y1 := y + ts
+			if y1 > outH {
+				y1 = outH
+			}
+			tiles = append(tiles, tile{x, y, x1, y1})
+		}
+	}
+
+	jobs := make(chan tile, len(tiles))
+	for _, t := range tiles {
+		jobs <- t
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(tiles) {
+		workers = len(tiles)
+	}
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for t := range jobs {
+				if e := reduceTile(spillPaths, fullW, fullH, crop, t.x0, t.y0, t.x1, t.y1,
+					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix); e != nil {
+					errOnce.Do(func() { firstErr = e })
+					for range jobs {
+					}
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, nil, nil, nil, firstErr
+	}
+	return
+}
+
+func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
+	x0, y0, x1, y1 int, method string,
+	sigmaThreshold float64, sigmaIters int,
+	outW int, sumPix, meanPix, rejPix, wgtPix []float32) error {
+	tileW := x1 - x0
+	tileH := y1 - y0
+	nFrames := len(spillPaths)
+	nPix := tileW * tileH
+
+	// buf[pix*3*nFrames + c*nFrames + fi] so per-pixel per-channel gather
+	// is contiguous.
+	buf := make([]float32, nPix*3*nFrames)
+	frameTile := make([]float32, nPix*3)
+
+	fullX0 := crop.Min.X + x0
+	fullY0 := crop.Min.Y + y0
+
+	for fi, path := range spillPaths {
+		if err := readTileFromRaw(path, fullW, fullH, fullX0, fullY0, fullX0+tileW, fullY0+tileH, frameTile); err != nil {
+			return fmt.Errorf("read tile from %s: %w", path, err)
+		}
+		for py := 0; py < tileH; py++ {
+			for px := 0; px < tileW; px++ {
+				pix := py*tileW + px
+				src := pix * 3
+				base := pix*3*nFrames + fi
+				for c := 0; c < 3; c++ {
+					buf[base+c*nFrames] = frameTile[src+c]
+				}
+			}
+		}
+	}
+
+	validVals := make([]float32, 0, nFrames)
+	workVals := make([]float32, 0, nFrames)
+
+	for py := 0; py < tileH; py++ {
+		for px := 0; px < tileW; px++ {
+			pix := py*tileW + px
+			outPix := (y0+py)*outW + (x0 + px)
+			var rejSum, wgtSum float32
+			for c := 0; c < 3; c++ {
+				off := pix*3*nFrames + c*nFrames
+				vals := buf[off : off+nFrames]
+				validVals = validVals[:0]
+				for _, v := range vals {
+					if v >= 0 {
+						validVals = append(validVals, v)
+					}
+				}
+				if len(validVals) == 0 {
+					sumPix[outPix*3+c] = 0
+					meanPix[outPix*3+c] = 0
+					continue
+				}
+				var s float64
+				for _, v := range validVals {
+					s += float64(v)
+				}
+				sumPix[outPix*3+c] = float32(s)
+				switch method {
+				case "median":
+					workVals = workVals[:0]
+					workVals = append(workVals, validVals...)
+					meanPix[outPix*3+c] = medianInPlace(workVals)
+					wgtSum += float32(len(validVals))
+				case "sigma":
+					m, _, acc, rej := sigmaClipReduce(validVals, sigmaThreshold, sigmaIters)
+					meanPix[outPix*3+c] = m
+					wgtSum += float32(acc)
+					rejSum += float32(rej)
+				}
+			}
+			rejPix[outPix] = rejSum / 3.0
+			wgtPix[outPix] = wgtSum / 3.0
+		}
+	}
+	return nil
+}
+
+// writeGrayscaleMaps writes the rejection and weight maps as single-channel
+// JPEGs next to the stacked outputs. Best effort: failures are logged but
+// not fatal.
+func writeGrayscaleMaps(outputDir string, w, h int, rej, wgt []float32) {
+	if rej == nil && wgt == nil {
+		return
+	}
+	rgb := make([]float32, w*h*3)
+	if rej != nil {
+		for i, v := range rej {
+			rgb[i*3] = v
+			rgb[i*3+1] = v
+			rgb[i*3+2] = v
+		}
+		p := filepath.Join(outputDir, "stacked_rejection_map.jpg")
+		if err := writeFileAtomic(p, func(wr io.Writer) error {
+			return writeAutoNormalizedLinearPreviewJPEG(wr, w, h, rgb)
+		}); err != nil {
+			logf("  WARNING: rejection map: %v", err)
+		}
+	}
+	if wgt != nil {
+		for i, v := range wgt {
+			rgb[i*3] = v
+			rgb[i*3+1] = v
+			rgb[i*3+2] = v
+		}
+		p := filepath.Join(outputDir, "stacked_weight_map.jpg")
+		if err := writeFileAtomic(p, func(wr io.Writer) error {
+			return writeAutoNormalizedLinearPreviewJPEG(wr, w, h, rgb)
+		}); err != nil {
+			logf("  WARNING: weight map: %v", err)
+		}
+	}
 }
 
 func runPipeline(ctx context.Context, opts runOptions) error {
@@ -2498,19 +2954,35 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	logf("Estimated processing time: ~%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second))
 
-	// Memory estimation
+	// Memory estimation.
+	//
+	// Mean method (streaming): only one accumulator plus 2 max/min buffers,
+	// plus one decoded frame at a time. Peak is ~5 x frameMB.
+	//
+	// Median/sigma method (out-of-core): frames are spilled to disk, so
+	// the only large live buffers are 2 x max/min + validCount +
+	// sumPix + meanPix + rejPix/wgtPix + one tile buffer. The tile buffer
+	// is capped at 256 MB inside reduceTilesStack.
 	frameMB := float64(refW*refH*3*4) / (1024 * 1024)
-	baseMem := frameMB * 5 // unregAcc, max, min, tmp1, tmp2
-	var storedMem float64
+	var estMemMB int
+	var diskMB float64
 	if opts.Method == "median" || opts.Method == "sigma" {
-		storedMem = float64(len(candidates)) * frameMB
+		// Pass 1+2 live: max/min (2x), validCount (1x), 1 decoded frame.
+		// Reduction live: sumPix + meanPix (2x), rej+wgt (0.67x),
+		// tile buffer (capped).
+		baseMem := frameMB * 4
+		tileBufMB := 256.0
+		estMemMB = int(baseMem + tileBufMB)
+		// Each frame is spilled twice (pass 1 raw, pass 2 resampled).
+		diskMB = float64(len(candidates)) * frameMB * 2.0
+		logf("Median/sigma: spilling %d frame(s) to disk (~%.0f MB peak)", len(candidates), diskMB)
+	} else {
+		estMemMB = int(frameMB * 5)
 	}
-	estMemMB := int(baseMem + storedMem)
 	availMemMB := getAvailableMemoryMB()
 
-	// Real peak is ~1.5x the naive estimate: Go's garbage collector only
-	// triggers when the heap doubles (GOGC=100), so during Pass 1 several
-	// decoded frames accumulate before any collection runs.
+	// Real peak is ~1.5x the naive estimate because Go's GC only triggers
+	// when the heap doubles (GOGC=100). We also keep the 2 GB safety margin.
 	realPeak := int(float64(estMemMB) * 1.5)
 	requiredMB := realPeak + 2000
 
@@ -2571,8 +3043,23 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	// ============== Pass 1: decode, detect stars, accumulate unregistered
 	unregAcc := newAccumulator(refW, refH)
-	var storedFrames []*frame
 	var maxPix, minPix []float32
+	var spillPaths1 []string
+	var spillDir1, spillDir2 string
+	defer func() {
+		if spillDir1 != "" {
+			os.RemoveAll(spillDir1)
+		}
+		if spillDir2 != "" {
+			os.RemoveAll(spillDir2)
+		}
+	}()
+	if opts.Method == "median" || opts.Method == "sigma" {
+		spillDir1 = filepath.Join(outputDir, "_work", "_spill1")
+		if err := os.MkdirAll(spillDir1, 0o755); err != nil {
+			return fmt.Errorf("create spill dir 1: %w", err)
+		}
+	}
 	starLists := make([][]star, len(candidates))
 	var accepted []candidate
 	for i, c := range candidates {
@@ -2609,7 +3096,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			starLists[len(accepted)] = detectStars(f, 100)
 		}
 		if opts.Method == "median" || opts.Method == "sigma" {
-			storedFrames = append(storedFrames, f)
+			sp := filepath.Join(spillDir1, fmt.Sprintf("frame_%04d.f32raw", len(spillPaths1)))
+			if err := writeSpillFrame(sp, f); err != nil {
+				return fmt.Errorf("spill %s: %w", c.path, err)
+			}
+			spillPaths1 = append(spillPaths1, sp)
+			f.Pix = nil // release decoded pixels
 		} else {
 			if err := unregAcc.addFrame(f, workers); err != nil {
 				return fmt.Errorf("accumulate %s: %w", c.path, err)
@@ -2617,59 +3109,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		accepted = append(accepted, c)
 	}
-	if opts.Method == "median" && len(storedFrames) > 0 {
-		unregAcc.Pix = make([]float32, len(storedFrames[0].Pix))
-		for i := range unregAcc.Pix {
-			var vals []float32
-			for _, f := range storedFrames {
-				vals = append(vals, f.Pix[i])
-			}
-			sort.Slice(vals, func(a, b int) bool { return vals[a] < vals[b] })
-			unregAcc.Pix[i] = vals[len(vals)/2]
-		}
-		unregAcc.Count = len(storedFrames)
-	} else if opts.Method == "sigma" && len(storedFrames) > 0 {
-		unregAcc.Pix = make([]float32, len(storedFrames[0].Pix))
-		for i := range unregAcc.Pix {
-			var vals []float32
-			for _, f := range storedFrames {
-				vals = append(vals, f.Pix[i])
-			}
-			sort.Slice(vals, func(a, b int) bool { return vals[a] < vals[b] })
-			median := vals[len(vals)/2]
-			var variance float64
-			for _, v := range vals {
-				variance += float64((v - median) * (v - median))
-			}
-			sigma := math.Sqrt(variance / float64(len(vals)))
-			var sum float32
-			var count int
-			for _, v := range vals {
-				if math.Abs(float64(v-median)) < 2.5*sigma {
-					sum += v
-					count++
-				}
-			}
-			if count > 0 {
-				unregAcc.Pix[i] = sum / float32(count)
-			} else {
-				unregAcc.Pix[i] = median
-			}
-		}
-		unregAcc.Count = len(storedFrames)
-	}
-	if unregAcc.Count == 0 && len(storedFrames) == 0 {
+	if unregAcc.Count == 0 && len(spillPaths1) == 0 {
 		return fmt.Errorf("no frames accumulated")
 	}
-	// The stacked result now lives in unregAcc.Pix.  Free the raw stored
-	// frames and force a collection: on a sigma/median stack they account
-	// for N x frameSize of live heap (3.8 GB on 86 x 2400x1600 RGB), and
-	// keeping them alive through pass 2 doubles the peak footprint.
-	if n := len(storedFrames); n > 0 {
-		storedFrames = nil
+	if len(spillPaths1) > 0 {
 		runtime.GC()
-		logf("Freed %d stored frame(s) (%.0f MB) before pass 2",
-			n, float64(n)*float64(refW*refH*3*4)/(1024*1024))
+		logf("Spilled %d frame(s) to disk for %s reduction (memory freed)",
+			len(spillPaths1), opts.Method)
 	}
 	starLists = starLists[:len(accepted)]
 
@@ -2749,10 +3195,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	var cropRect image.Rectangle
 	var frameDiags []frameDiag
 	cropExplanation := ""
+	var regSumPix, regMeanPix, regRejPix, regWgtPix []float32
+	var spillPaths2 []string
 	if registrationOn {
 		logf("Resampling %d registered frame(s)", registeredCount)
 		regAcc = newAccumulator(refW, refH)
 		validCount = make([]int32, refW*refH)
+		if opts.Method == "median" || opts.Method == "sigma" {
+			spillDir2 = filepath.Join(outputDir, "_work", "_spill2")
+			if err := os.MkdirAll(spillDir2, 0o755); err != nil {
+				return fmt.Errorf("create spill dir 2: %w", err)
+			}
+		}
 		for i, c := range accepted {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -2761,15 +3215,34 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				continue
 			}
 			logf("  [pass2 %d/%d] %s", i+1, len(accepted), filepath.Base(c.path))
-			f, err := decodeImageFile(c.path, refW, refH)
-			if err != nil {
-				// Unlikely (already decoded) but be safe.
-				return fmt.Errorf("re-decode %s: %w", c.path, err)
+			var f *frame
+			if len(spillPaths1) == len(accepted) {
+				// Fast path: reuse the spilled frame, no re-decode.
+				f, err = readSpillFrame(spillPaths1[i], refW, refH)
+				if err != nil {
+					return fmt.Errorf("reload spill1 %s: %w", c.path, err)
+				}
+			} else {
+				f, err = decodeImageFile(c.path, refW, refH)
+				if err != nil {
+					return fmt.Errorf("re-decode %s: %w", c.path, err)
+				}
 			}
 			calibrate(f, darkFrame, flatFrame, biasFrame)
 			resampled := resampleToReference(f, transforms[i].sim, refW, refH, workers)
-			if err := regAcc.addFrameMasked(resampled, workers, validCount); err != nil {
-				return fmt.Errorf("accumulate %s: %w", c.path, err)
+			f.Pix = nil
+			if opts.Method == "mean" {
+				if err := regAcc.addFrameMasked(resampled, workers, validCount); err != nil {
+					return fmt.Errorf("accumulate %s: %w", c.path, err)
+				}
+			} else {
+				updateValidCount(resampled, validCount)
+				sp := filepath.Join(spillDir2, fmt.Sprintf("frame_%04d.f32raw", len(spillPaths2)))
+				if err := writeSpillFrame(sp, resampled); err != nil {
+					return fmt.Errorf("spill resampled %s: %w", c.path, err)
+				}
+				spillPaths2 = append(spillPaths2, sp)
+				resampled.Pix = nil
 			}
 		}
 		runtime.GC()
@@ -2851,6 +3324,53 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 
+	// ============== Tiled median/sigma reduction (spill-based)
+	var unregSumPix []float32
+	if opts.Method == "median" || opts.Method == "sigma" {
+		// Unregistered stack: full frame, all accepted frames.
+		tr := opts.SigmaClipThreshold
+		if tr <= 0 {
+			tr = 3.0
+		}
+		it := opts.SigmaClipIters
+		if it < 1 {
+			it = 1
+		}
+		logf("Reducing unregistered stack (%s, %d frames, full frame)...",
+			opts.Method, len(spillPaths1))
+		sum1, mean1, rej1, wgt1, rerr := reduceTilesStack(
+			spillPaths1, refW, refH, image.Rect(0, 0, refW, refH),
+			opts.Method, tr, it, opts.TileSize, workers)
+		if rerr != nil {
+			return fmt.Errorf("reduce unregistered: %w", rerr)
+		}
+		unregSumPix = sum1
+		unregAcc.Pix = mean1
+		unregAcc.Count = 0 // prevent later divide()
+		if len(spillPaths2) == 0 {
+			// No registration: report reduction and write maps directly.
+			writeGrayscaleMaps(outputDir, refW, refH, rej1, wgt1)
+		}
+
+		// Registered stack (only if registration ran and produced spills).
+		if registrationOn && len(spillPaths2) > 0 {
+			logf("Reducing registered stack (%s, %d frames, crop %dx%d)...",
+				opts.Method, len(spillPaths2), cropRect.Dx(), cropRect.Dy())
+			sum2, mean2, rej2, wgt2, rerr := reduceTilesStack(
+				spillPaths2, refW, refH, cropRect,
+				opts.Method, tr, it, opts.TileSize, workers)
+			if rerr != nil {
+				return fmt.Errorf("reduce registered: %w", rerr)
+			}
+			regSumPix = sum2
+			regMeanPix = mean2
+			regRejPix = rej2
+			regWgtPix = wgt2
+			runtime.GC()
+			logf("Reduction complete")
+		}
+	}
+
 	// ============== Write outputs
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
@@ -2879,13 +3399,35 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	var outW, outH int
 
 	if registrationOn {
-		croppedSum := cropAccumulator(regAcc, cropRect)
-		croppedCounts := cropCounts(validCount, refW, cropRect)
 		outW, outH = cropRect.Dx(), cropRect.Dy()
-
-		sumMax = croppedSum.maxValue()
-		if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
-			sumMax = 1.0
+		var sumPix, meanPix []float32
+		if regSumPix != nil {
+			// Tiled median/sigma reduction path.
+			sumPix = regSumPix
+			meanPix = regMeanPix
+			sumMax = 0
+			for _, v := range sumPix {
+				if v > sumMax {
+					sumMax = v
+				}
+			}
+			if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+				sumMax = 1.0
+			}
+			if sumMax <= 0 {
+				sumMax = 1.0
+			}
+		} else {
+			// Streaming mean path.
+			croppedSum := cropAccumulator(regAcc, cropRect)
+			croppedCounts := cropCounts(validCount, refW, cropRect)
+			sumMax = croppedSum.maxValue()
+			if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+				sumMax = 1.0
+			}
+			sumPix = croppedSum.Pix
+			croppedSum.divideByCount(croppedCounts)
+			meanPix = croppedSum.Pix
 		}
 		sumDivisor := float32(1.0)
 		if sumMax > 1.0 {
@@ -2896,36 +3438,56 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateTIFF {
 			logf("Writing registered sum TIFF")
 			if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
-				return writeFloat32RGBScaled(w, outW, outH, croppedSum.Pix, sumDivisor)
+				return writeFloat32RGBScaled(w, outW, outH, sumPix, sumDivisor)
 			}); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
 			}
 		}
 		logf("Writing registered sum preview")
 		if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
-			return writeAutoNormalizedPreviewJPEG(w, outW, outH, croppedSum.Pix)
+			return writeAutoNormalizedPreviewJPEG(w, outW, outH, sumPix)
 		}); err != nil {
 			return fmt.Errorf("write sum jpg: %w", err)
 		}
 
-		croppedSum.divideByCount(croppedCounts)
-		logf("Writing work file (mean, float32 raw)")
+		logf("Writing work file (stacked result, float32 raw)")
 		if err := writeFileAtomic(meanWorkPath, func(w io.Writer) error {
-			return writeRawFloat32RGB(w, outW, outH, croppedSum.Pix)
+			return writeRawFloat32RGB(w, outW, outH, meanPix)
 		}); err != nil {
 			return fmt.Errorf("write mean work file: %w", err)
 		}
 		logf("Writing registered mean preview")
 		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
-			return writePreviewJPEG(w, outW, outH, croppedSum.Pix)
+			return writePreviewJPEG(w, outW, outH, meanPix)
 		}); err != nil {
 			return fmt.Errorf("write mean jpg: %w", err)
 		}
+		if regRejPix != nil || regWgtPix != nil {
+			writeGrayscaleMaps(outputDir, outW, outH, regRejPix, regWgtPix)
+		}
 	} else {
 		outW, outH = refW, refH
-		sumMax = unregAcc.maxValue()
-		if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
-			sumMax = 1.0
+		var sumPix, meanPix []float32
+		if unregSumPix != nil {
+			sumPix = unregSumPix
+			meanPix = unregAcc.Pix
+			sumMax = 0
+			for _, v := range sumPix {
+				if v > sumMax {
+					sumMax = v
+				}
+			}
+			if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) || sumMax <= 0 {
+				sumMax = 1.0
+			}
+		} else {
+			sumMax = unregAcc.maxValue()
+			if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+				sumMax = 1.0
+			}
+			sumPix = unregAcc.Pix
+			unregAcc.divide()
+			meanPix = unregAcc.Pix
 		}
 		sumDivisor := float32(1.0)
 		if sumMax > 1.0 {
@@ -2936,28 +3498,27 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateTIFF {
 			logf("Writing sum TIFF")
 			if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
-				return writeFloat32RGBScaled(w, outW, outH, unregAcc.Pix, sumDivisor)
+				return writeFloat32RGBScaled(w, outW, outH, sumPix, sumDivisor)
 			}); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
 			}
 		}
 		logf("Writing sum preview")
 		if err := writeFileAtomic(sumJPG, func(w io.Writer) error {
-			return writeAutoNormalizedPreviewJPEG(w, outW, outH, unregAcc.Pix)
+			return writeAutoNormalizedPreviewJPEG(w, outW, outH, sumPix)
 		}); err != nil {
 			return fmt.Errorf("write sum jpg: %w", err)
 		}
 
-		unregAcc.divide()
-		logf("Writing work file (mean, float32 raw)")
+		logf("Writing work file (stacked result, float32 raw)")
 		if err := writeFileAtomic(meanWorkPath, func(w io.Writer) error {
-			return writeRawFloat32RGB(w, outW, outH, unregAcc.Pix)
+			return writeRawFloat32RGB(w, outW, outH, meanPix)
 		}); err != nil {
 			return fmt.Errorf("write mean work file: %w", err)
 		}
 		logf("Writing mean preview")
 		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
-			return writePreviewJPEG(w, outW, outH, unregAcc.Pix)
+			return writePreviewJPEG(w, outW, outH, meanPix)
 		}); err != nil {
 			return fmt.Errorf("write mean jpg: %w", err)
 		}
@@ -3176,6 +3737,12 @@ func runSelfTests() int {
 		{"compute frame quality", testComputeFrameQuality},
 		{"frame box in reference", testFrameBoxInReference},
 		{"match rejects few inliers", testMatchStarsRejectsFewInliers},
+		{"median in place", testMedianInPlace},
+		{"mad of", testMadOf},
+		{"sigma clip reduce", testSigmaClipReduce},
+		{"sigma clip all same", testSigmaClipAllSame},
+		{"read tile from raw", testReadTileFromRaw},
+		{"reduce tiles stack", testReduceTilesStack},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -4857,6 +5424,154 @@ func testMatchStarsRejectsFewInliers() error {
 	return nil
 }
 
+func testMedianInPlace() error {
+	vals := []float32{3, 1, 4, 1, 5, 9, 2, 6}
+	med := medianInPlace(vals)
+	// sorted: [1, 1, 2, 3, 4, 5, 6, 9] -> median = (3+4)/2 = 3.5
+	if math.Abs(float64(med)-3.5) > 1e-6 {
+		return fmt.Errorf("even median = %v, want 3.5", med)
+	}
+	vals = []float32{5, 1, 3}
+	med = medianInPlace(vals)
+	if med != 3 {
+		return fmt.Errorf("odd median = %v, want 3", med)
+	}
+	if medianInPlace(nil) != 0 {
+		return errors.New("empty median should be 0")
+	}
+	return nil
+}
+
+func testMadOf() error {
+	vals := []float32{1, 2, 3, 4, 5}
+	mad := madOf(vals, 3)
+	if math.Abs(float64(mad)-1.0) > 1e-6 {
+		return fmt.Errorf("mad = %v, want 1", mad)
+	}
+	return nil
+}
+
+func testSigmaClipReduce() error {
+	vals := []float32{5, 5.1, 4.9, 5.05, 4.95, 5.02, 4.98, 5.01, 4.99, 5.03, 100, -50}
+	mean, _, acc, rej := sigmaClipReduce(vals, 3.0, 2)
+	if math.Abs(float64(mean)-5.0) > 0.5 {
+		return fmt.Errorf("clipped mean = %v, want ~5", mean)
+	}
+	if rej < 2 {
+		return fmt.Errorf("rejected = %d, want >= 2", rej)
+	}
+	if acc+rej != len(vals) {
+		return fmt.Errorf("acc+rej = %d, want %d", acc+rej, len(vals))
+	}
+	return nil
+}
+
+func testSigmaClipAllSame() error {
+	vals := []float32{0.5, 0.5, 0.5, 0.5}
+	mean, _, acc, rej := sigmaClipReduce(vals, 3.0, 2)
+	if math.Abs(float64(mean)-0.5) > 1e-6 {
+		return fmt.Errorf("mean = %v, want 0.5", mean)
+	}
+	if acc != 4 || rej != 0 {
+		return fmt.Errorf("acc=%d rej=%d, want 4, 0", acc, rej)
+	}
+	return nil
+}
+
+func testReadTileFromRaw() error {
+	dir, err := os.MkdirTemp("", "skystacker-tile-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 16, 16
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := (y*w + x) * 3
+			f.Pix[i] = float32(y*w+x) / float32(w*h)
+			f.Pix[i+1] = f.Pix[i] * 2
+			f.Pix[i+2] = f.Pix[i] * 3
+		}
+	}
+	path := filepath.Join(dir, "t.f32raw")
+	if err := writeSpillFrame(path, f); err != nil {
+		return err
+	}
+	tileW, tileH := 4, 4
+	dst := make([]float32, tileW*tileH*3)
+	if err := readTileFromRaw(path, w, h, 4, 4, 8, 8, dst); err != nil {
+		return err
+	}
+	for py := 0; py < tileH; py++ {
+		for px := 0; px < tileW; px++ {
+			origI := ((4+py)*w + (4 + px)) * 3
+			dstI := (py*tileW + px) * 3
+			if math.Abs(float64(dst[dstI]-f.Pix[origI])) > 1e-9 {
+				return fmt.Errorf("tile mismatch at (%d,%d)", px, py)
+			}
+		}
+	}
+	return nil
+}
+
+func testReduceTilesStack() error {
+	dir, err := os.MkdirTemp("", "skystacker-reduce-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 32, 32
+	var spillPaths []string
+	for i := 0; i < 5; i++ {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for j := range f.Pix {
+			f.Pix[j] = 0.5
+		}
+		if i == 3 {
+			for j := range f.Pix {
+				f.Pix[j] = 0.55
+			}
+		}
+		if i == 4 {
+			f.Pix[(5*w+5)*3] = 1.0
+			f.Pix[(10*w+10)*3] = 0.0
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%d.f32raw", i))
+		if err := writeSpillFrame(path, f); err != nil {
+			return err
+		}
+		spillPaths = append(spillPaths, path)
+	}
+	sumPix, meanPix, rejPix, wgtPix, err := reduceTilesStack(
+		spillPaths, w, h, image.Rect(0, 0, w, h),
+		"sigma", 3.0, 2, 16, 1)
+	if err != nil {
+		return err
+	}
+	if math.Abs(float64(meanPix[0])-0.51) > 0.02 {
+		return fmt.Errorf("mean at (0,0) = %v, want ~0.51", meanPix[0])
+	}
+	if math.Abs(float64(meanPix[(5*w+5)*3])-0.51) > 0.02 {
+		return fmt.Errorf("mean at (5,5) = %v, want ~0.51 (outlier rejected)", meanPix[(5*w+5)*3])
+	}
+	if rejPix[5*w+5] < 1 {
+		return fmt.Errorf("rejection at (5,5) = %v, want >= 1", rejPix[5*w+5])
+	}
+	// Frame 3 is uniformly 0.55 in this fixture, so at (0,0)
+	// it is correctly rejected by sigma clipping: MAD=0 (four of
+	// five values agree exactly), sigma is floored to 1e-9, the
+	// threshold is 3e-9, and 0.05 >> 3e-9. That leaves 4 accepted
+	// frames, so weight = 4, not 5.
+	if wgtPix[0] < 3.5 {
+		return fmt.Errorf("weight at (0,0) = %v, want >= 4", wgtPix[0])
+	}
+	if sumPix == nil || meanPix == nil || rejPix == nil || wgtPix == nil {
+		return errors.New("nil output slice")
+	}
+	return nil
+}
+
 func testReportContains() error {
 	dir, err := os.MkdirTemp("", "skystacker-report-")
 	if err != nil {
@@ -6498,49 +7213,52 @@ func main() {
 		return
 	}
 	err = runPipeline(context.Background(), runOptions{
-		InputDir:        opts.InputDir,
-		OutputDir:       opts.OutputDir,
-		Workers:         opts.Workers,
-		Recursive:       opts.Recursive,
-		Overwrite:       opts.Overwrite,
-		Register:        opts.Register,
-		DarkFile:        opts.DarkFile,
-		FlatFile:        opts.FlatFile,
-		BiasFile:        opts.BiasFile,
-		Method:          opts.Method,
-		MaskBG:          opts.MaskBG,
-		PostProcess:     opts.PostProcess,
-		StackOnly:       opts.StackOnly,
-		PostOnly:        opts.PostOnly,
-		NoColorCalib:    opts.NoColorCalib,
-		NoSharpen:       opts.NoSharpen,
-		BGDegree:        opts.BGDegree,
-		StretchFactor:   opts.StretchFactor,
-		SharpenAmount:   opts.SharpenAmount,
-		SharpenRadius:   opts.SharpenRadius,
-		HDRAmount:       opts.HDRAmount,
-		StarRadius:      opts.StarRadius,
-		StarSigma:       opts.StarSigma,
-		BgPercentile:    opts.BgPercentile,
-		NoAutoStretch:   opts.NoAutoStretch,
-		STFShadowsClip:  opts.STFShadowsClip,
-		STFTargetBG:     opts.STFTargetBG,
-		STFLinked:       opts.STFLinked,
-		NoHDRBlend:      opts.NoHDRBlend,
-		HDRBlendFactor:  opts.HDRBlendFactor,
-		NoHDRMix:        opts.NoHDRMix,
-		NoDenoise:       opts.NoDenoise,
-		DenoiseStrength: opts.DenoiseStrength,
-		DenoiseRadius:   opts.DenoiseRadius,
-		Scale:           opts.Scale,
-		Force:           opts.Force,
-		CreateTIFF:      opts.CreateTIFF,
-		PostCA:          opts.PostCA,
-		PostColor:       opts.PostColor,
-		PostFlatten:     opts.PostFlatten,
-		PostSharpen:     opts.PostSharpen,
-		PostHDR:         opts.PostHDR,
-		PostStretch:     opts.PostStretch,
+		InputDir:           opts.InputDir,
+		OutputDir:          opts.OutputDir,
+		Workers:            opts.Workers,
+		Recursive:          opts.Recursive,
+		Overwrite:          opts.Overwrite,
+		Register:           opts.Register,
+		DarkFile:           opts.DarkFile,
+		FlatFile:           opts.FlatFile,
+		BiasFile:           opts.BiasFile,
+		Method:             opts.Method,
+		MaskBG:             opts.MaskBG,
+		PostProcess:        opts.PostProcess,
+		StackOnly:          opts.StackOnly,
+		PostOnly:           opts.PostOnly,
+		NoColorCalib:       opts.NoColorCalib,
+		NoSharpen:          opts.NoSharpen,
+		BGDegree:           opts.BGDegree,
+		StretchFactor:      opts.StretchFactor,
+		SharpenAmount:      opts.SharpenAmount,
+		SharpenRadius:      opts.SharpenRadius,
+		HDRAmount:          opts.HDRAmount,
+		StarRadius:         opts.StarRadius,
+		StarSigma:          opts.StarSigma,
+		BgPercentile:       opts.BgPercentile,
+		NoAutoStretch:      opts.NoAutoStretch,
+		STFShadowsClip:     opts.STFShadowsClip,
+		STFTargetBG:        opts.STFTargetBG,
+		STFLinked:          opts.STFLinked,
+		NoHDRBlend:         opts.NoHDRBlend,
+		HDRBlendFactor:     opts.HDRBlendFactor,
+		NoHDRMix:           opts.NoHDRMix,
+		NoDenoise:          opts.NoDenoise,
+		DenoiseStrength:    opts.DenoiseStrength,
+		DenoiseRadius:      opts.DenoiseRadius,
+		SigmaClipThreshold: opts.SigmaClipThreshold,
+		SigmaClipIters:     opts.SigmaClipIters,
+		TileSize:           opts.TileSize,
+		Scale:              opts.Scale,
+		Force:              opts.Force,
+		CreateTIFF:         opts.CreateTIFF,
+		PostCA:             opts.PostCA,
+		PostColor:          opts.PostColor,
+		PostFlatten:        opts.PostFlatten,
+		PostSharpen:        opts.PostSharpen,
+		PostHDR:            opts.PostHDR,
+		PostStretch:        opts.PostStretch,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
