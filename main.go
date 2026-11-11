@@ -25,8 +25,9 @@
 //   step 3  black-point shift   (intermediate; not written to disk)
 //   step 4  PixInsight-style STF/MTF auto-stretch
 //   step 5  guided-filter denoise (iterative, 1-10 passes)
-//   step 6  HDR blend (step 5 + linear background-removed frame)
-//   step 7  weighted mix (4 mild variants of step 6 + step 1)
+//   step 6  background-darkening curves (crush shadows, keep highlights)
+//   step 7  HDR blend (step 6 + linear background-removed frame)
+//   step 8  weighted mix (4 mild variants of step 7 + step 1)
 //
 // Diagnostics:
 //   - Per-frame stars / inliers / scale / rotation / offset /
@@ -117,6 +118,9 @@ type cliOptions struct {
 	DenoiseStrength    float64
 	DenoiseRadius      int
 	DenoiseChroma      float64
+	NoCurves           bool
+	CurvesBlack        float64
+	CurvesGamma        float64
 	SigmaClipThreshold float64
 	SigmaClipIters     int
 	TileSize           int
@@ -177,6 +181,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 4.0, "denoise iterations (0=skip, 1=one pass, N=N passes)")
 	fs.IntVar(&o.DenoiseRadius, "denoise-radius", 3, "guided-filter denoise radius")
 	fs.Float64Var(&o.DenoiseChroma, "denoise-chroma", 1.0, "chroma denoise power: 1=one pass, N=N passes (0 disables, max 10)")
+	fs.BoolVar(&o.NoCurves, "no-curves", false, "skip the background-darkening curves step (post_step6_curves.jpg)")
+	fs.Float64Var(&o.CurvesBlack, "curves-black", 0.03, "curves: shadow crush point (0-0.5, 0 disables crush)")
+	fs.Float64Var(&o.CurvesGamma, "curves-gamma", 1.20, "curves: midtone gamma (>1 darkens, <1 brightens, 1 neutral)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -203,7 +210,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
 				skipNext = true
 			}
 		} else {
@@ -249,6 +256,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DenoiseChroma < 0 || o.DenoiseChroma > 10 {
 		return nil, fmt.Errorf("--denoise-chroma must be in [0, 10], got %g", o.DenoiseChroma)
+	}
+	if o.CurvesBlack < 0 || o.CurvesBlack >= 0.5 {
+		return nil, fmt.Errorf("--curves-black must be in [0, 0.5), got %g", o.CurvesBlack)
+	}
+	if o.CurvesGamma < 0.1 || o.CurvesGamma > 4.0 {
+		return nil, fmt.Errorf("--curves-gamma must be in [0.1, 4.0], got %g", o.CurvesGamma)
 	}
 	if o.SigmaClipThreshold < 0 || o.SigmaClipThreshold > 10 {
 		return nil, fmt.Errorf("--sigma-clip must be in [0, 10], got %g", o.SigmaClipThreshold)
@@ -313,6 +326,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --denoise-strength F  denoise iterations (0=skip, 1=one pass, N=N passes, max 10)")
 	fmt.Fprintln(w, "  --denoise-radius N    guided-filter denoise radius in px (1-20, default 3)")
 	fmt.Fprintln(w, "  --denoise-chroma F    chroma denoise power: 1=one pass, N=N passes (0 disables, max 10, default 1.0)")
+	fmt.Fprintln(w, "  --no-curves           skip the background-darkening curves step (post_step6_curves.jpg)")
+	fmt.Fprintln(w, "  --curves-black F      curves: shadow crush point (0-0.5, default 0.03)")
+	fmt.Fprintln(w, "  --curves-gamma F      curves: midtone gamma (>1 darkens, <1 brightens, default 1.20)")
 	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
 	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
@@ -2203,6 +2219,9 @@ type runOptions struct {
 	DenoiseStrength    float64
 	DenoiseRadius      int
 	DenoiseChroma      float64
+	NoCurves           bool
+	CurvesBlack        float64
+	CurvesGamma        float64
 	SigmaClipThreshold float64
 	SigmaClipIters     int
 	TileSize           int
@@ -3799,6 +3818,7 @@ func runSelfTests() int {
 		{"reduce tiles stack", testReduceTilesStack},
 		{"chroma denoise", testChromaDenoiseGB},
 		{"chroma denoise multi-scale", testChromaDenoiseMultiScale},
+		{"apply curves", testApplyCurves},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -4661,11 +4681,12 @@ func testPipelinePostOnly() error {
 		"post_step2_star_removed.jpg",
 		"post_step4_auto_stretched.jpg",
 		"post_step5_denoised.jpg",
-		"post_step6_hdr.jpg",
-		"post_step7_1.jpg",
-		"post_step7_2.jpg",
-		"post_step7_3.jpg",
-		"post_step7_4.jpg",
+		"post_step6_curves.jpg",
+		"post_step7_hdr.jpg",
+		"post_step8_1.jpg",
+		"post_step8_2.jpg",
+		"post_step8_3.jpg",
+		"post_step8_4.jpg",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			return fmt.Errorf("missing post output %s: %w", name, err)
@@ -5782,6 +5803,58 @@ func testChromaDenoiseMultiScale() error {
 	if afterCb2SD >= afterCbSD {
 		return fmt.Errorf("strength=2 chroma stddev %.4f not below strength=1 %.4f",
 			afterCb2SD, afterCbSD)
+	}
+	return nil
+}
+
+func testApplyCurves() error {
+	const w, h = 32, 1
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := 0; i < w; i++ {
+		v := float32(i) / float32(w-1)
+		f.Pix[i*3] = v
+		f.Pix[i*3+1] = v
+		f.Pix[i*3+2] = v
+	}
+	out := applyCurves(f, 0.03, 1.20)
+	// 0.0 -> 0 (crushed to black by `black=0.03`)
+	if out.Pix[0] != 0 {
+		return fmt.Errorf("black=0 input should map to 0, got %v", out.Pix[0])
+	}
+	// 1.0 -> 1 (highlight preserved)
+	last := out.Pix[(w-1)*3]
+	if math.Abs(float64(last)-1.0) > 1e-6 {
+		return fmt.Errorf("white should stay 1, got %v", last)
+	}
+	// 0.5 -> ((0.5-0.03)/0.97)^1.20 ~= 0.412
+	mid := (w - 1) / 2
+	gotMid := out.Pix[mid*3]
+	wantMid := float32(math.Pow((0.5-0.03)/0.97, 1.20))
+	if math.Abs(float64(gotMid-wantMid)) > 1e-4 {
+		return fmt.Errorf("midtone = %v, want %v", gotMid, wantMid)
+	}
+	if gotMid >= 0.5 {
+		return fmt.Errorf("midtone %v not darkened below 0.5", gotMid)
+	}
+	// Neutral params return f unchanged
+	same := applyCurves(f, 0, 1.0)
+	for i := range f.Pix {
+		if same.Pix[i] != f.Pix[i] {
+			return fmt.Errorf("neutral params altered pixel %d", i)
+		}
+	}
+	// Out-of-range values are clamped
+	f.Pix[0] = -0.5
+	f.Pix[1] = -0.5
+	f.Pix[2] = -0.5
+	f.Pix[3] = 1.5
+	f.Pix[4] = 1.5
+	f.Pix[5] = 1.5
+	out = applyCurves(f, 0.03, 1.20)
+	for i := 0; i < 6; i++ {
+		if out.Pix[i] < 0 || out.Pix[i] > 1 {
+			return fmt.Errorf("output %d out of range: %v", i, out.Pix[i])
+		}
 	}
 	return nil
 }
@@ -7169,6 +7242,55 @@ func chromaDenoiseGB(f *frame, radius int, eps, chromaStrength, lumStrength floa
 	return result
 }
 
+// applyCurves applies a background-darkening curve to f. It crushes the
+// deepest shadows (values below `black` become 0) and darkens the midtones
+// (each channel value is raised to `gamma`). Highlights are preserved: a
+// pixel at 1.0 stays at 1.0. Applied identically to each channel so hue is
+// preserved.
+//
+// gamma > 1 darkens, gamma < 1 brightens. black > 0 crushes the dark tail
+// to pure black. black = 0 and gamma = 1 returns f unchanged.
+//
+// The effect matches a GIMP Curves adjustment with a smooth curve that
+// pulls the lower-mid part of the histogram down and leaves the top end
+// alone: a deeper black floor and richer shadow contrast without losing
+// bright stars or nebula highlights.
+func applyCurves(f *frame, black, gamma float64) *frame {
+	if black <= 0 && math.Abs(gamma-1.0) < 1e-6 {
+		return f
+	}
+	if black < 0 {
+		black = 0
+	}
+	if black >= 0.99 {
+		black = 0.99
+	}
+	if gamma <= 0 {
+		gamma = 1.0
+	}
+	b := float32(black)
+	inv := float32(1.0 / (1.0 - black))
+	g := gamma
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for i := range f.Pix {
+		x := (f.Pix[i] - b) * inv
+		if x <= 0 {
+			result.Pix[i] = 0
+			continue
+		}
+		if x >= 1 {
+			result.Pix[i] = 1
+			continue
+		}
+		if g == 1.0 {
+			result.Pix[i] = x
+		} else {
+			result.Pix[i] = float32(math.Pow(float64(x), g))
+		}
+	}
+	return result
+}
+
 func floatToByte(v float32) uint8 {
 	if v <= 0 {
 		return 0
@@ -7242,7 +7364,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 
 	var outputs []string
 	cur := src
-	var step1Frame, step4Frame, step6Frame *frame
+	var step1Frame, step4Frame, step5Frame, step6Frame, step7Frame *frame
 
 	// Step 1: background removal (ALWAYS)
 	logf("  post: background removal (degree %d)", opts.BGDegree)
@@ -7345,15 +7467,12 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	// Step 5: denoise the auto-stretched frame. The guided filter
 	// smooths flat regions while preserving edges and stars. Skippable
 	// with --no-denoise, tunable with --denoise-strength / --denoise-radius.
-	var hdrBase *frame
-	if step4Frame != nil {
-		hdrBase = step4Frame
-	}
+	step5Frame = step4Frame
 	if step4Frame != nil && !opts.NoDenoise && opts.DenoiseStrength > 0 {
 		logf("  post: denoise (guided filter, radius=%d, strength=%g)",
 			opts.DenoiseRadius, opts.DenoiseStrength)
 		denoised := denoiseFrame(step4Frame, opts.DenoiseRadius, 0.01, opts.DenoiseStrength, opts.DenoiseChroma)
-		hdrBase = denoised
+		step5Frame = denoised
 		p = filepath.Join(outputDir, "post_step5_denoised.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), denoised); err != nil {
 			logf("  WARNING: %v", err)
@@ -7363,19 +7482,37 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  post: denoise skipped")
 	}
 
-	// Step 6 (HDR): add the display base (step 5 if denoised, else
-	// step 4) to the background-removed frame (step 1). The stretched base
-	// gives the overall tone; the linear detail recovers bright-core and
-	// high-contrast regions that the auto-stretch compressed.
+	// Step 6 (NEW): curves. Darken the background by crushing the
+	// deepest shadows and pushing midtones down slightly, while
+	// preserving highlights. This is the equivalent of a GIMP Curves
+	// adjustment with an S-shaped curve; the effect is a deeper black
+	// floor and richer shadow contrast. Both parameters are applied
+	// identically to each channel so hue is preserved.
+	step6Frame = step5Frame
+	if step5Frame != nil && !opts.NoCurves &&
+		(opts.CurvesBlack > 0 || math.Abs(opts.CurvesGamma-1.0) > 1e-6) {
+		logf("  post: curves (black=%g gamma=%g)", opts.CurvesBlack, opts.CurvesGamma)
+		curved := applyCurves(step5Frame, opts.CurvesBlack, opts.CurvesGamma)
+		step6Frame = curved
+		p = filepath.Join(outputDir, "post_step6_curves.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), curved); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	} else {
+		logf("  post: curves skipped")
+	}
 
-	// background-removed frame (step 1). The stretched base gives the
-	// overall tone; adding the linear detail recovers bright-core and
-	// high-contrast regions that the auto-stretch compressed.
-	if step1Frame != nil && hdrBase != nil && !opts.NoHDRBlend && opts.HDRBlendFactor > 0 {
-		logf("  post: HDR blend (step4 + %g*step1)", opts.HDRBlendFactor)
-		blended := blendHDR(hdrBase, step1Frame, opts.HDRBlendFactor)
-		step6Frame = blended
-		p = filepath.Join(outputDir, "post_step6_hdr.jpg")
+	// Step 7 (HDR): add the display base (curves output from step 6,
+	// or step 4 if curves is disabled) to the background-removed frame
+	// (step 1). The display base gives the overall tone; the linear
+	// detail recovers bright-core and high-contrast regions that the
+	// auto-stretch compressed.
+	if step1Frame != nil && step6Frame != nil && !opts.NoHDRBlend && opts.HDRBlendFactor > 0 {
+		logf("  post: HDR blend (base + %g*step1)", opts.HDRBlendFactor)
+		blended := blendHDR(step6Frame, step1Frame, opts.HDRBlendFactor)
+		step7Frame = blended
+		p = filepath.Join(outputDir, "post_step7_hdr.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), blended); err != nil {
 			logf("  WARNING: %v", err)
 		}
@@ -7386,26 +7523,26 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  post: HDR blend skipped (--no-hdr-blend)")
 	}
 
-	// Step 7: weighted mix of step 1 (background removed) and step 6 (HDR).
+	// Step 8: weighted mix of step 1 (background removed) and step 7 (HDR).
 	// Produces four variants spanning from "mostly step 1" to "mostly
-	// step 6", so the user can pick whichever balance of linear detail
+	// step 7", so the user can pick whichever balance of linear detail
 	// and HDR-processed tone looks best on their image.
-	if step1Frame != nil && step6Frame != nil && !opts.NoHDRMix {
+	if step1Frame != nil && step7Frame != nil && !opts.NoHDRMix {
 		weights := []float64{0.90, 0.80, 0.70, 0.60}
-		logf("  post: HDR mix (%d weighted variants: step7_1..step7_%d)", len(weights), len(weights))
+		logf("  post: HDR mix (%d weighted variants: step8_1..step8_%d)", len(weights), len(weights))
 		for i, w1 := range weights {
-			mixed := blendWeighted(step1Frame, step6Frame, w1)
-			p = filepath.Join(outputDir, fmt.Sprintf("post_step7_%d.jpg", i+1))
+			mixed := blendWeighted(step1Frame, step7Frame, w1)
+			p = filepath.Join(outputDir, fmt.Sprintf("post_step8_%d.jpg", i+1))
 			if err := writePostPreview(outputDir, filepath.Base(p), mixed); err != nil {
 				logf("  WARNING: %v", err)
 			}
 			outputs = append(outputs, p)
-			logf("  post: step7_%d (%.2f*step1 + %.2f*step6)", i+1, w1, 1-w1)
+			logf("  post: step8_%d (%.2f*step1 + %.2f*step7)", i+1, w1, 1-w1)
 		}
 	} else if opts.NoHDRMix {
 		logf("  post: HDR mix skipped (--no-hdr-mix)")
-	} else if step6Frame == nil {
-		logf("  post: HDR mix skipped (step 6 not produced)")
+	} else if step7Frame == nil {
+		logf("  post: HDR mix skipped (step 7 not produced)")
 	}
 
 	if opts.PostStretch {
@@ -7721,6 +7858,9 @@ func main() {
 		DenoiseStrength:    opts.DenoiseStrength,
 		DenoiseRadius:      opts.DenoiseRadius,
 		DenoiseChroma:      opts.DenoiseChroma,
+		NoCurves:           opts.NoCurves,
+		CurvesBlack:        opts.CurvesBlack,
+		CurvesGamma:        opts.CurvesGamma,
 		SigmaClipThreshold: opts.SigmaClipThreshold,
 		SigmaClipIters:     opts.SigmaClipIters,
 		TileSize:           opts.TileSize,
