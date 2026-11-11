@@ -176,7 +176,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.NoDenoise, "no-denoise", false, "skip the final denoise step")
 	fs.Float64Var(&o.DenoiseStrength, "denoise-strength", 4.0, "denoise iterations (0=skip, 1=one pass, N=N passes)")
 	fs.IntVar(&o.DenoiseRadius, "denoise-radius", 3, "guided-filter denoise radius")
-	fs.Float64Var(&o.DenoiseChroma, "denoise-chroma", 1.0, "multiplier on chroma denoise weights (0 disables)")
+	fs.Float64Var(&o.DenoiseChroma, "denoise-chroma", 1.0, "chroma denoise power: 1=one pass, N=N passes (0 disables, max 10)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -247,8 +247,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.DenoiseRadius < 1 || o.DenoiseRadius > 20 {
 		return nil, fmt.Errorf("--denoise-radius must be in [1, 20], got %d", o.DenoiseRadius)
 	}
-	if o.DenoiseChroma < 0 || o.DenoiseChroma > 3 {
-		return nil, fmt.Errorf("--denoise-chroma must be in [0, 3], got %g", o.DenoiseChroma)
+	if o.DenoiseChroma < 0 || o.DenoiseChroma > 10 {
+		return nil, fmt.Errorf("--denoise-chroma must be in [0, 10], got %g", o.DenoiseChroma)
 	}
 	if o.SigmaClipThreshold < 0 || o.SigmaClipThreshold > 10 {
 		return nil, fmt.Errorf("--sigma-clip must be in [0, 10], got %g", o.SigmaClipThreshold)
@@ -312,7 +312,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --no-denoise      skip the final denoise step (post_step5_denoised.jpg)")
 	fmt.Fprintln(w, "  --denoise-strength F  denoise iterations (0=skip, 1=one pass, N=N passes, max 10)")
 	fmt.Fprintln(w, "  --denoise-radius N    guided-filter denoise radius in px (1-20, default 3)")
-	fmt.Fprintln(w, "  --denoise-chroma F    multiplier on chroma denoise weights (0 disables, default 1.0)")
+	fmt.Fprintln(w, "  --denoise-chroma F    chroma denoise power: 1=one pass, N=N passes (0 disables, max 10, default 1.0)")
 	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
 	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
@@ -5767,6 +5767,22 @@ func testChromaDenoiseMultiScale() error {
 	if pass != f {
 		return fmt.Errorf("strength 0 should return f unchanged")
 	}
+	// Iteration must be strictly more aggressive: strength=2 should leave
+	// less chroma residual than strength=1.
+	out2 := chromaDenoiseMultiScale(f, 2.0)
+	afterCb2 := make([]float64, 0, w*h)
+	for i := 0; i < w*h; i++ {
+		r := float64(out2.Pix[i*3])
+		g := float64(out2.Pix[i*3+1])
+		b := float64(out2.Pix[i*3+2])
+		yv := 0.299*r + 0.587*g + 0.114*b
+		afterCb2 = append(afterCb2, b-yv)
+	}
+	afterCb2SD := stddev(afterCb2)
+	if afterCb2SD >= afterCbSD {
+		return fmt.Errorf("strength=2 chroma stddev %.4f not below strength=1 %.4f",
+			afterCb2SD, afterCbSD)
+	}
 	return nil
 }
 
@@ -6876,7 +6892,7 @@ func denoiseFrame(f *frame, radius int, eps, strength float64, chromaMul ...floa
 			cm = chromaMul[0]
 		}
 		if cm > 0 {
-			logf("  denoise: chroma multi-scale pass (strength=%g)", cm)
+			logf("  denoise: chroma multi-scale pass (%.2f full iterations, strength=%g)", cm, cm)
 			cur = chromaDenoiseMultiScale(cur, cm)
 		}
 	}
@@ -6938,9 +6954,17 @@ func blendWeighted(a, b *frame, wa float64) *frame {
 // The two filtered chroma channels are recombined with the untouched
 // luminance. No saturation boost is applied: the point of lowering eps
 // is that real colour survives, so there is nothing to compensate for.
-func chromaDenoiseMultiScale(f *frame, strength float64) *frame {
-	if strength <= 0 {
+// chromaDenoiseMultiScaleOnce performs one full pass of the two-scale
+// chroma filter: radius 24 (weight 0.85) and radius 96 (weight 0.55).
+// blend is a straight multiplier on both weights and must be in (0, 1].
+// Callers who want more power should iterate the whole pass with
+// chromaDenoiseMultiScale.
+func chromaDenoiseMultiScaleOnce(f *frame, blend float64) *frame {
+	if blend <= 0 {
 		return f
+	}
+	if blend > 1 {
+		blend = 1
 	}
 	nPix := f.Width * f.Height
 	Y := make([]float32, nPix)
@@ -6955,9 +6979,6 @@ func chromaDenoiseMultiScale(f *frame, strength float64) *frame {
 		Cb[i] = float32(b - y)
 		Cr[i] = float32(r - y)
 	}
-
-	// Radius cap: never exceed min(W,H)/6, so the filter does not
-	// average over the whole image on small crops.
 	maxR := f.Width
 	if f.Height < maxR {
 		maxR = f.Height
@@ -6971,19 +6992,16 @@ func chromaDenoiseMultiScale(f *frame, strength float64) *frame {
 		weight float64
 	}{
 		{24, 0.85},
-		{96, 0.45},
+		{96, 0.55},
 	}
 	for _, s := range scales {
 		r := s.radius
 		if r > maxR {
 			r = maxR
 		}
-		w := float32(s.weight * strength)
+		w := float32(s.weight * blend)
 		if w <= 0 {
 			continue
-		}
-		if w > 1 {
-			w = 1
 		}
 		Cbd := guidedFilterGray(Cb, f.Width, f.Height, r, 0.005)
 		Crd := guidedFilterGray(Cr, f.Width, f.Height, r, 0.005)
@@ -6992,8 +7010,6 @@ func chromaDenoiseMultiScale(f *frame, strength float64) *frame {
 			Cr[i] = Cr[i] + w*(Crd[i]-Cr[i])
 		}
 	}
-
-	// Recombine. Luminance is preserved exactly (no Y filter pass).
 	const cCrToG = 0.299 / 0.587
 	const cCbToG = 0.114 / 0.587
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
@@ -7024,6 +7040,40 @@ func chromaDenoiseMultiScale(f *frame, strength float64) *frame {
 		result.Pix[i*3+2] = b
 	}
 	return result
+}
+
+// chromaDenoiseMultiScale is the strength-aware wrapper around
+// chromaDenoiseMultiScaleOnce. Fractional strengths below 1 do a single
+// blended pass; integer strengths above 1 iterate the whole pass that
+// many times. Each iteration re-runs both guided-filter scales on the
+// previous iteration's output, so the smoothing power compounds instead
+// of saturating at weight=1.0.
+//
+// strength=0.5 : one blended pass at 50%
+// strength=1.0 : one full pass (radius 24 + radius 96)
+// strength=2.0 : two full passes
+// strength=4.0 : four full passes
+// strength=10  : ten full passes (effectively flattens chroma)
+//
+// Capped at 10 iterations to keep runtime bounded (each full pass is
+// roughly 10 s on a 2400x1600 image, so 10 passes ~ 100 s).
+func chromaDenoiseMultiScale(f *frame, strength float64) *frame {
+	if strength <= 0 {
+		return f
+	}
+	nFull := int(math.Floor(strength))
+	frac := strength - float64(nFull)
+	if nFull > 10 {
+		nFull = 10
+	}
+	cur := f
+	for i := 0; i < nFull; i++ {
+		cur = chromaDenoiseMultiScaleOnce(cur, 1.0)
+	}
+	if frac > 1e-6 {
+		cur = chromaDenoiseMultiScaleOnce(cur, frac)
+	}
+	return cur
 }
 
 // chromaDenoiseGB is a chroma-selective denoise pass. It splits the
