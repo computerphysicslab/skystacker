@@ -3,36 +3,237 @@
 ## Version
 v0.5.0 (single-file Go program, `main.go`)
 
-## Current pipeline steps (post-processing)
-1. Background removal (poly 1–3)
-2. Star removal
-3. Black-point shift (intermediate, not written)
-4. STF/MTF auto-stretch
-5. Guided-filter denoise
-6. **Curves (new)** — `x' = clamp((x−black)/(1−black),0,1)`, `out = x'^gamma`
-7. HDR blend (step 6 + step 1)
-8. Weighted mix (4 variants of step 1 + step 7)
+## Build, test, install
+```
+gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
+go install .
+```
 
-## Current flags relevant to recent work
-- `--curves-black` (default 0.03)
-- `--curves-gamma` (default 1.20)
-- `--no-curves`
+**Self-test count: 81 passing.** Update this number after any test change.
+
+## Post-processing pipeline (8 steps)
+
+1. Background removal (polynomial degree 1-3)
+2. Star removal (high-pass + median annulus replacement)
+3. Black-point shift (intermediate; not written to disk)
+4. STF/MTF auto-stretch (PixInsight-style)
+5. Guided-filter denoise (iterative, 1-10 passes, chroma-selective)
+6. **Curves** — `x' = clamp((x-black)/(1-black), 0, 1)`, `out = x'^gamma`
+7. HDR blend (step 6 base + linear step 1 detail)
+8. Weighted mix — 4 variants of `w*step1 + (1-w)*step7`, `w in {0.90, 0.80, 0.70, 0.60}`
+   Optional diffraction-spike overlay (ON by default)
+
+Outputs: `post_step1_background_removed.jpg` … `post_step8_4.jpg`.
+`post_step3` intentionally not written (visually identical to step 2).
+
+## Registration / stacking pipeline
+
+- Discovery + decode (JPG, CR2/CR3 via dcraw+ImageMagick, FITS via ImageMagick)
+- Optional calibration: `--dark`, `--flat`, `--bias`, or `--calib-root` auto-detect
+- Reference frame = frame with the most detected stars
+- **Adaptive high-pass radius**: `clamp(min(W,H)/200, 8, 24)`. Was fixed 12;
+  scales with image size so the same threshold works on 500 px previews and
+  6000 px full-frame stacks.
+- **Multi-sigma retry**: 5σ first; if < 20 stars detected, retry at 4.0, 3.5,
+  3.0 sigma and take the best result.
+- Triangle-invariant star matching using top **40** brightest stars (was 30;
+  40^3/30^3 ≈ 2.4x more triangle descriptors; RANSAC downstream unaffected).
+- RANSAC similarity estimation (rotation + uniform scale + translation).
+- **Optional full 6-DOF affine refinement** — kept only when residual drops
+  ≥ 10%; requires ≥ 15 inliers. Handles field rotation, anisotropic scale,
+  and shear that similarity cannot represent. Frame table in `report.txt`
+  shows `[affine]` for refined frames.
+- Bilinear sub-pixel resampling; safe crop to the largest fully-valid region.
+- Stacking methods: mean (streaming), median, sigma (tiled, MAD rejection,
+  out-of-core via disk spill). `--scale N` downsamples by N.
+
+## CLI flags relevant to current work
+
+### Registration (implicit, no new flags)
+Automatic. Disable with `--no-register`.
+
+### Curves (step 6)
+- `--curves-black F` (default 0.03) — shadow crush point, [0, 0.5)
+- `--curves-gamma F` (default 1.20) — midtone darkening, [0.1, 4.0]
+- `--no-curves` — skip step entirely
+
+### Diffraction spikes (step 8 overlay, ON by default)
+- `--spikes` (default **true**)
+- `--no-spikes` — explicit opt-out
+- `--spikes-percent F` (default **0.2**)
+- `--spikes-length F` (default 100) — brightest star's arm half-length in px
+- `--spikes-intensity F` (default 0.7) — brightest star's peak additive brightness
+- `--spikes-arms N` (default **6**; 4=cross, 6=hexagonal)
+- `--spikes-softness F` (default **0.5**) — intensity falloff exponent
+- `--spikes-min-ratio F` (default **0.2**) — intensity floor for faintest spiked star
+- `--spikes-length-softness F` (default **1.0**) — length falloff exponent
+- `--spikes-length-min-ratio F` (default **0.03**) — length floor for faintest spiked star
+
+Two independent power laws:
+
+```
+intensityWeight = (flux/maxFlux)^intensitySoftness, floored at intensityMinRatio
+lengthWeight    = (flux/maxFlux)^lengthSoftness,    floored at lengthMinRatio
+```
+
+`lengthSoftness=1.0` is strictly proportional. `intensitySoftness=0.5` compresses
+the intensity range so faint spikes remain visible rather than cutting off hard.
+
+At defaults (baseLength=100, baseIntensity=0.7):
+
+| relFlux | length  | intensity |
+|---------|---------|-----------|
+| 100%    | 100 px  | 0.70      |
+| 50%     |  50 px  | 0.49      |
+| 25%     |  25 px  | 0.35      |
+| 10%     |  10 px  | 0.22      |
+| 1%      |   3 px  | 0.14      |
+
+(The 1% intensity is 0.14, not 0.20: `intensityWeight` is floored at 0.2,
+then multiplied by `baseIntensity=0.7`, so 0.7 × 0.2 = 0.14.)
+
+Base angle: one random angle per image (seeded from `time.Now().UnixNano()`),
+same for all stars. Arms at `baseAngle + k*2*pi/numArms`.
+
+Additive only (never darkens); Gaussian cross-section σ=1.5 px along arms.
+Stars detected **once** on `step7Frame`, reused for all 4 variants, so
+`post_step8_1..4` spike the same stars at the same angles. `post_step1` …
+`post_step7` are untouched.
 
 ## Known constraints
+
 - Registration requires ≥ 8 inliers and ratio ≥ 0.20.
-- Crop is the largest fully-valid rectangle.
-- Self-tests: 77 passing (as of last patch).
+- Crop is the largest fully-valid rectangle (every pixel valid in ≥ N frames).
+- Affine refinement requires ≥ 15 inliers (won't fire on sparse fields).
+- **Field distortion (radial/tangential) is NOT corrected.** Affine handles
+  translation, rotation, uniform + anisotropic scale, shear — but not true
+  optical distortion. SIP / plate-solving is future work.
+- Multi-σ retry may run up to 4× detection cost on frames that never reach
+  20 stars at 5σ; typical frames pay 1×.
 
 ## Recent decisions / caveats
-- Curves are applied identically per channel to preserve hue.
-- Step 7 uses the curves output as its display base.
-- Backups: `main.go.before_curves_step.bak` kept locally.
-## Last validated run (2026-11-11)
-- Dataset: 2019-01-25-SanJuan/Orion-135mm, 70 × JPG, 2400×1600
+
+- Curves applied identically per channel to preserve hue.
+- Step 7 uses the curves output (step 6) as its display base.
+- Affine refinement per-frame optional: similarity first, affine only when
+  residual drops ≥ 10%. `[affine]` tag in `report.txt` for refined frames.
+- Adaptive HP radius helps star detection across image scales without
+  regression on either small previews or full-frame stacks.
+- Triangle pool 30 → 40 costs ~2.4× more triangle descriptors in pass 1;
+  RANSAC downstream unaffected.
+- **Spikes ON by default** since v0.5.x. `--no-spikes` to disable.
+- Length/intensity falloffs are **decoupled**: a single softness compressed
+  both, making lengths look fixed. Now intensity uses soft falloff (0.5)
+  and length uses proportional (1.0). This is what makes the visual
+  hierarchy of the frame read correctly.
+- Backups: check with `ls main.go.before_*.bak` (created by each patch).
+  Expect to see files like `main.go.before_curves_step.bak`,
+  `main.go.before_affine_step.bak`, `main.go.before_spikes_step.bak`,
+  `main.go.before_spike_length.bak`, etc. — depending on which patches
+  were actually applied.
+
+## Real-world validation
+
+### Run 1 (2026-11-11): Orion-135mm, 70 × JPG, 2400×1600
+
 - Registration: 70/70 matched, 72–94 inliers, scale ~1.001, rot ≤ 0.07°
-- Affine refinement: 0 frames (similarity was already sufficient; no `[affine]` markers)
-- Crop: 2397×1355 (99.87% W, 84.7% H) — loss is real Y drift (~245 px), not registration error
+- Affine refinement: **0 frames** (similarity was already sufficient)
+- Crop: 2397×1355 (99.87% W, 84.7% H) — loss is real Y drift (~245 px),
+  not registration error
 - Auto-stretch: aggressive (m ≈ 0.015–0.021, c0 = 0); unlinked per-channel
-- Runtime: 9 m 58 s, peak memory 646 MB, 6.1 GB disk spill (sigma method)
-- Post-processing: all 8 steps produced outputs (post_step1 … post_step8_4)
-- No warnings, no failures
+- Runtime: **9 m 58 s**, peak memory 646 MB, 6.1 GB disk spill (sigma)
+- ETA printed at start: 4 m 52 s → **2.05× low** (see Pending below)
+- Post-processing: all 8 steps produced outputs
+- Spikes: n/a (spikes not enabled at time of run)
+
+### Run 2 (2026-11-11): M42, 152 × JPG, 2400×1600
+
+- Registration: 152/152 matched, 45–72 inliers, rot drift 0.00 → 0.56°
+- Affine refinement: **13 frames** used it (10.4–17.8% residual improvement).
+  First real-data validation of the affine feature.
+- Crop: 1723×1375 (62% of full frame) — **suspicious**. Rotation ≤ 0.56° can
+  only explain ~14 px of corner displacement; the 677 px left-side loss is
+  pure translation drift. `report.txt` frame table identifies the culprit
+  via the `LOW BOX%` row. Two paths: remove the offending frame and re-run,
+  or accept `--no-register` (full 2400×1600, slight edge smear).
+- Auto-stretch: very aggressive (m ≈ 0.005–0.011, c0 = 0) — M42 is bright
+- Runtime: **25 m 22 s**, peak memory 646 MB, 13.4 GB disk spill
+- ETA printed at start: 10 m 23 s → **2.44× low**
+- **Spikes: 1 star selected** at `--spikes-percent 0.2`. Math: 626 stars
+  detected × 0.002 = 1.25 → 1. This motivated `--spikes-min-count` (Pending).
+
+## Pending patches
+
+Designed and validated but **not yet applied to the repo** as of the last
+commit. A future session should either apply them or document why abandoned.
+
+### `--spikes-min-count` (fixes sparse-field collapse)
+
+**Problem**: `--spikes-percent 0.2` selects 0 or 1 stars on fields with few
+detected stars. M42 got 1 star (626 × 0.002 = 1.25 → 1). Sparse fields
+end up with almost no spiked output.
+
+**Fix**: `--spikes-min-count N` (default 5), a hard floor on stars selected.
+Floors only when `int(percent × detected) < N`; dense fields unaffected.
+
+Patch is written and self-tested but **failed to apply** on
+`\tSpikesLengthMinRatio  float64` — anchor has two spaces, but the actual
+file has one (gofmt collapsed it in an earlier run). To apply: re-anchor on
+`\tSpikesLengthMinRatio float64` (single space) or add the field manually.
+
+### Time-estimate calibration (ETA is 2.0–2.4× low)
+
+**Problem**: the printed ETA at run start is linear in frame count, but the
+median/sigma reduction is O(N log N) per pixel, so cost grows super-linearly.
+Fit `T = k·N^α·MP` to the two real runs:
+
+```
+70 frames  →  598 s  (9 m 58 s),  k·70^α·3.84
+152 frames → 1522 s (25 m 22 s),  k·152^α·3.84
+```
+
+Solves to **α ≈ 1.20**, **k ≈ 1.03** for sigma.
+
+**Fix** (proposed, not applied):
+
+```
+sigma:  1.03 * N^1.20 * MP   + CR2/CR3 overhead + post
+median: 0.88 * N^1.18 * MP   + CR2/CR3 overhead + post
+mean:   0.55 * N^1.00 * MP   + CR2/CR3 overhead + post
+post = 15 s base + 5 s * denoise-strength + 3 s if --spikes
+```
+
+Verified in-simulation against both real runs: within 2.5% of actual.
+
+### Crop diagnostic for pure-translation drift
+
+**Problem**: `LOW BOX%` fires only when BoxPct < 50%. A frame with 30%
+translation but a mostly-full bounding box passes and goes unnamed, even
+when it's dragging the crop (M42 case).
+
+**Fix** (future work): add `LARGE OFFSET` flag when `|Offset| > 10% of
+frame dimension`, independent of BoxPct.
+
+## Future work (not implemented)
+
+- **Field distortion correction** (SIP model or plate-solve fallback).
+  Affine cannot correct radial or tangential distortion.
+- **`--print-estimate-only` flag** that prints the ETA without running
+  any pipeline stages; useful for validating estimate formulas.
+- **Higher-order transformations** (polynomial, thin-plate spline) as
+  alternatives to affine for extreme wide-field.
+- **Spatial stratification** of the star-selection pool (brightest per
+  grid cell) to prevent bright nebulosity from monopolising top-N.
+- **Per-method calibrated coefficients** from a real benchmark, not
+  real user runs (which mix in disk speed, thermal throttling, noise).
+
+## Recovery / one-shot context
+
+- Repo: https://github.com/computerphysicslab/skystacker
+- Build: `gofmt -w main.go && go build -o skystacker main.go`
+- Test: `./skystacker --selftest` (expect: **all 81 self-tests passed**)
+- Post-only re-run: `skystacker --post-only --overwrite <dir>`
+- Full re-run: `skystacker --overwrite <dir>`
+- Sample data layouts (from validated runs):
+  - `/media/jips/Elements/big/fotosAstro/2019-01-25-SanJuan/Orion-135mm`
+  - `/media/jips/Elements/big/fotosAstro/2023-04-01-riofrio/m42/JPG`
