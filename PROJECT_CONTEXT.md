@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 81 passing.** Update this number after any test change.
+**Self-test count: 84 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -46,6 +46,28 @@ Outputs: `post_step1_background_removed.jpg` … `post_step8_4.jpg`.
 - Bilinear sub-pixel resampling; safe crop to the largest fully-valid region.
 - Stacking methods: mean (streaming), median, sigma (tiled, MAD rejection,
   out-of-core via disk spill). `--scale N` downsamples by N.
+
+- **Progress heartbeat**: `startProgress(label, interval)` spawns a
+  goroutine logging `[label] still running, Ns elapsed` every 15 s.
+  Wraps the tiled reduction. **Per-tile progress**: `reduceTilesStack`
+  logs `reduce: N/M tiles (P%, Ss elapsed)` every `max(M/20, 5)` tiles.
+  Together these eliminate the "is it stuck?" question on long sigmas.
+
+- **Frame quality metrics** (computed once per frame in pass 1):
+  - `medianBlob` — median `Size` of detected stars; proxy for FWHM.
+  - `bgNoise` — MAD background sigma of the luminance channel.
+  - `intrinsicQ` — 0-100 score: star count (0-40) + blob size (0-30)
+    + background noise (0-30). Independent of registration, so it also
+    scores frames that failed to register.
+
+- **Weighted sigma-clipped mean** (`sigmaClipReduceWeighted`):
+  - Registered stack: `weight = computeFrameQuality × intrinsicQ / 100`.
+  - Unregistered stack: `weight = intrinsicQ / 100`.
+  - `--no-register` and `--method median` still use equal weights
+    (median is not yet weighted — see Pending).
+  - Zero-weight survivors → fallback to unweighted mean (avoids divide-by-zero).
+  - `report.txt` frame-diagnostics table shows `IntrQ` (0-100) and
+    `Weight` (0-1) columns.
 
 ## CLI flags relevant to current work
 
@@ -141,6 +163,10 @@ simply omits the exposure summary.
 - Registration requires ≥ 8 inliers and ratio ≥ 0.20.
 - Crop is the largest fully-valid rectangle (every pixel valid in ≥ N frames).
 - Affine refinement requires ≥ 15 inliers (won't fire on sparse fields).
+- Weighted sigma needs >= 3 surviving values per pixel per channel; if
+  every surviving weight is zero it falls back to the unweighted mean of
+  the survivors.
+- Median method ignores the per-frame weights (see Pending: Weighted median).
 - **Field distortion (radial/tangential) is NOT corrected.** Affine handles
   translation, rotation, uniform + anisotropic scale, shear — but not true
   optical distortion. SIP / plate-solving is future work.
@@ -162,6 +188,15 @@ simply omits the exposure summary.
 - Triangle pool 30 → 40 costs ~2.4× more triangle descriptors in pass 1;
   RANSAC downstream unaffected.
 - **Spikes ON by default** since v0.5.x. `--no-spikes` to disable.
+- **Progress heartbeat APPLIED**: `startProgress` helper + per-tile
+  progress logging inside `reduceTilesStack`. Long sigmas no longer
+  look hung.
+- **Weighted quality stacking APPLIED**: registered frames weighted by
+  `computeFrameQuality × computeIntrinsicQuality / 100`, unregistered
+  by `computeIntrinsicQuality`. `report.txt` surfaces `IntrQ` and
+  `Weight`. Unweighted path still reachable via `--no-register` or
+  `--method median`. Frame weights are 0..1, so a perfect frame from
+  a perfect fit contributes 1.0 and a bad frame contributes ~0.
 - Length/intensity falloffs are **decoupled**: a single softness compressed
   both, making lengths look fixed. Now intensity uses soft falloff (0.5)
   and length uses proportional (1.0). This is what makes the visual
@@ -207,6 +242,17 @@ simply omits the exposure summary.
 Designed and validated but **not yet applied to the repo** as of the last
 commit. A future session should either apply them or document why abandoned.
 
+### Weighted median (future work)
+
+**Problem**: `--method median` still produces a plain (unweighted) median.
+That is a documented limitation of the weighting patch, not a bug — weighted
+medians need a different algorithm (sort by value, walk CDF until cumulative
+weight >= 0.5) and different rejection criteria, and are not yet worth the
+complexity.
+
+**Fix** (future work): implement a weighted median and wire it into the
+`case "median":` branch of `reduceTile`.
+
 ### `--spikes-min-count` (fixes sparse-field collapse)
 
 **Problem**: `--spikes-percent 0.2` selects 0 or 1 stars on fields with few
@@ -247,7 +293,7 @@ frame dimension`, independent of BoxPct.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker main.go`
-- Test: `./skystacker --selftest` (expect: **all 81 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 84 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):

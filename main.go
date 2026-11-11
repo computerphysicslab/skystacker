@@ -72,6 +72,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -2579,8 +2580,8 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		sort.Slice(sorted, func(i, j int) bool {
 			return sorted[i].Quality > sorted[j].Quality
 		})
-		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %22s %7s %s\n",
-			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "Box(x,y,w,h)", "Box%", "Note")
+		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %7s %7s %22s %7s %s\n",
+			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "IntrQ", "Weight", "Box(x,y,w,h)", "Box%", "Note")
 		for i, d := range sorted {
 			ratioStr := "-"
 			if d.Stars > 0 {
@@ -2590,11 +2591,11 @@ func (r *processingReport) writeTo(w io.Writer) error {
 			if d.Stars == 0 {
 				boxStr = "-"
 			}
-			ew.printf("  %-3d %-22s %5d %4d %6s %8.4f %8.2f %16s %7.1f %22s %6.1f%% %s\n",
+			ew.printf("  %-3d %-22s %5d %4d %6s %8.4f %8.2f %16s %7.1f %7.1f %7.2f %22s %6.1f%% %s\n",
 				i+1, filepath.Base(d.Path), d.Stars, d.Inliers, ratioStr,
 				d.Scale, d.RotationDeg,
 				fmt.Sprintf("(%.1f,%.1f)", d.OffsetX, d.OffsetY),
-				d.Quality, boxStr, d.BoxPct, d.Note)
+				d.Quality, d.IntrinsicQ, d.Weight, boxStr, d.BoxPct, d.Note)
 		}
 		ew.printf("\n")
 	}
@@ -2783,6 +2784,36 @@ func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
 
+// startProgress spawns a background goroutine that logs a "still running"
+// message every interval until the returned stop function is called.
+// Intended for stages (tiled reduction, long guided-filter passes) that
+// can run for minutes with no other output, so users do not think the
+// process is stuck.
+//
+// Call pattern:
+//
+//	stop := startProgress("reduce", 15*time.Second)
+//	defer stop()
+//	...long work...
+func startProgress(label string, interval time.Duration) (stop func()) {
+	done := make(chan struct{})
+	start := time.Now()
+	var once sync.Once
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				logf("  [%s] still running, %.0fs elapsed", label, time.Since(start).Seconds())
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
 type frameTransform struct {
 	sim similarity
 	aff *affine // optional full-affine refinement; when non-nil,
@@ -2815,6 +2846,10 @@ type frameDiag struct {
 	BoxMaxX     int
 	BoxMaxY     int
 	BoxPct      float64 // 100 * box area / reference area
+	BgNoise     float64
+	MedianBlob  float64
+	IntrinsicQ  float64
+	Weight      float64
 	Note        string
 }
 
@@ -2842,6 +2877,161 @@ func computeFrameQuality(inliers, stars, refStars int, scale, rotDeg float64) fl
 		q *= 0.5
 	}
 	return q
+}
+
+// computeIntrinsicQuality returns a 0-100 score based only on the frame's
+// own metrics: star count, median connected-component size (a proxy for
+// FWHM / focus quality), and background noise sigma. Independent of
+// registration, so it can score frames even when the reference-frame
+// registration pass cannot use them.
+//
+// Components (0-100 total):
+//
+//	starScore   0-40: 0 at 0 stars, 40 at 100+ stars
+//	blobScore   0-30: 30 at median Size <= 3 px (sharp), 0 at >= 10 px
+//	noiseScore  0-30: 30 at bg noise <= 0.01, 0 at >= 0.15
+func computeIntrinsicQuality(starCount int, medianBlob, bgNoise float64) float64 {
+	starScore := math.Min(float64(starCount)/100.0, 1.0) * 40.0
+	blobScore := 30.0
+	if medianBlob > 3.0 {
+		blobScore = math.Max(0, 30.0*(1.0-(medianBlob-3.0)/7.0))
+	}
+	noiseScore := 30.0
+	if bgNoise > 0.01 {
+		noiseScore = math.Max(0, 30.0*(1.0-(bgNoise-0.01)/0.14))
+	}
+	return starScore + blobScore + noiseScore
+}
+
+// medianBlobSize returns the median of the Size field across all stars.
+// A larger median Size correlates with blurrier stars. Returns 0 if no
+// stars were detected.
+func medianBlobSize(stars []star) float64 {
+	if len(stars) == 0 {
+		return 0
+	}
+	sizes := make([]float64, len(stars))
+	for i, s := range stars {
+		sizes[i] = float64(s.Size)
+	}
+	sort.Float64s(sizes)
+	return sizes[len(sizes)/2]
+}
+
+// estimateFrameBgNoise returns the MAD-based background noise sigma of the
+// luminance channel, using the same high-pass radius as detectStarsSigma.
+// Cheap O(N) pass; intended to be run once per frame in pass 1.
+func estimateFrameBgNoise(f *frame) float64 {
+	gray := grayscale(f)
+	hpRadius := estimateHighPassRadius(f.Width, f.Height)
+	blurred := boxBlurLuminance(gray, f.Width, f.Height, hpRadius)
+	residual := make([]float32, len(gray))
+	for i := range gray {
+		residual[i] = gray[i] - blurred[i]
+	}
+	return estimateResidualNoise(residual)
+}
+
+// sigmaClipReduceWeighted is the weighted variant of sigmaClipReduce.
+// The MAD-based active-mask computation is identical; the weighted mean
+// of the surviving values is returned. If all surviving weights are 0,
+// the unweighted mean is returned as a safe fallback so pixels are not
+// zeroed by a division-by-zero.
+func sigmaClipReduceWeighted(vals, weights []float32, threshold float64, iters int) (mean, sigma float32, accepted, rejected int) {
+	n := len(vals)
+	if n != len(weights) || n == 0 {
+		return 0, 0, 0, 0
+	}
+	if threshold <= 0 {
+		threshold = 3.0
+	}
+	if iters < 1 {
+		iters = 1
+	}
+	active := make([]bool, n)
+	for i := range active {
+		active[i] = true
+	}
+	var lastMedian float32
+	for it := 0; it < iters; it++ {
+		var activeVals []float32
+		for i, a := range active {
+			if a {
+				activeVals = append(activeVals, vals[i])
+			}
+		}
+		if len(activeVals) < 3 {
+			var s, ws float64
+			for i, a := range active {
+				if a {
+					s += float64(vals[i]) * float64(weights[i])
+					ws += float64(weights[i])
+				}
+			}
+			if ws <= 1e-12 {
+				for i, a := range active {
+					if a {
+						s += float64(vals[i])
+						ws += 1.0
+					}
+				}
+			}
+			if ws <= 1e-12 {
+				return 0, 0, 0, n
+			}
+			return float32(s / ws), 0, len(activeVals), n - len(activeVals)
+		}
+		med := medianInPlace(activeVals)
+		lastMedian = med
+		mad := madOf(activeVals, med)
+		sig := 1.4826 * mad
+		if sig < 1e-9 {
+			sig = 1e-9
+		}
+		sigma = sig
+		k := float32(threshold * float64(sig))
+		anyActive := false
+		for i, a := range active {
+			if !a {
+				continue
+			}
+			d := vals[i] - med
+			if d < 0 {
+				d = -d
+			}
+			if d > k {
+				active[i] = false
+			} else {
+				anyActive = true
+			}
+		}
+		if !anyActive {
+			return lastMedian, sig, 1, n - 1
+		}
+	}
+	var s, ws float64
+	for i, a := range active {
+		if a {
+			s += float64(vals[i]) * float64(weights[i])
+			ws += float64(weights[i])
+			accepted++
+		} else {
+			rejected++
+		}
+	}
+	if ws <= 1e-12 {
+		var us float64
+		for i, a := range active {
+			if a {
+				us += float64(vals[i])
+			}
+		}
+		if accepted == 0 {
+			return lastMedian, sigma, 1, n - 1
+		}
+		return float32(us / float64(accepted)), sigma, accepted, rejected
+	}
+	return float32(s / ws), sigma, accepted, rejected
 }
 
 // frameBoxInReference returns the axis-aligned bounding box of a frame
@@ -3116,6 +3306,7 @@ func reduceTilesStack(
 	sigmaIters int,
 	tileSize int,
 	workers int,
+	frameWeights []float32,
 ) (sumPix, meanPix, rejPix, wgtPix []float32, err error) {
 	outW := crop.Dx()
 	outH := crop.Dy()
@@ -3177,17 +3368,30 @@ func reduceTilesStack(
 		workers = len(tiles)
 	}
 
+	var completedTiles int64
+	totalTiles := int64(len(tiles))
+	reportEvery := totalTiles / 20
+	if reportEvery < 5 {
+		reportEvery = 5
+	}
+	startRed := time.Now()
+	stopTicker := startProgress(method+" reduce", 15*time.Second)
+	defer stopTicker()
+
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for t := range jobs {
 				if e := reduceTile(spillPaths, fullW, fullH, crop, t.x0, t.y0, t.x1, t.y1,
-					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix); e != nil {
+					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix, frameWeights); e != nil {
 					errOnce.Do(func() { firstErr = e })
 					for range jobs {
 					}
 					return
+				}
+				if n := atomic.AddInt64(&completedTiles, 1); n%int64(reportEvery) == 0 || n == totalTiles {
+					logf("  reduce: %d/%d tiles (%.1f%%, %.0fs elapsed)", n, totalTiles, 100.0*float64(n)/float64(totalTiles), time.Since(startRed).Seconds())
 				}
 			}
 		}()
@@ -3202,7 +3406,7 @@ func reduceTilesStack(
 func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 	x0, y0, x1, y1 int, method string,
 	sigmaThreshold float64, sigmaIters int,
-	outW int, sumPix, meanPix, rejPix, wgtPix []float32) error {
+	outW int, sumPix, meanPix, rejPix, wgtPix []float32, frameWeights []float32) error {
 	tileW := x1 - x0
 	tileH := y1 - y0
 	nFrames := len(spillPaths)
@@ -3233,6 +3437,7 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 	}
 
 	validVals := make([]float32, 0, nFrames)
+	validWeights := make([]float32, 0, nFrames)
 	workVals := make([]float32, 0, nFrames)
 
 	for py := 0; py < tileH; py++ {
@@ -3244,9 +3449,13 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 				off := pix*3*nFrames + c*nFrames
 				vals := buf[off : off+nFrames]
 				validVals = validVals[:0]
-				for _, v := range vals {
+				validWeights = validWeights[:0]
+				for fi, v := range vals {
 					if v >= 0 {
 						validVals = append(validVals, v)
+						if frameWeights != nil {
+							validWeights = append(validWeights, frameWeights[fi])
+						}
 					}
 				}
 				if len(validVals) == 0 {
@@ -3266,7 +3475,13 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 					meanPix[outPix*3+c] = medianInPlace(workVals)
 					wgtSum += float32(len(validVals))
 				case "sigma":
-					m, _, acc, rej := sigmaClipReduce(validVals, sigmaThreshold, sigmaIters)
+					var m float32
+					var acc, rej int
+					if frameWeights != nil {
+						m, _, acc, rej = sigmaClipReduceWeighted(validVals, validWeights, sigmaThreshold, sigmaIters)
+					} else {
+						m, _, acc, rej = sigmaClipReduce(validVals, sigmaThreshold, sigmaIters)
+					}
 					meanPix[outPix*3+c] = m
 					wgtSum += float32(acc)
 					rejSum += float32(rej)
@@ -3390,8 +3605,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 
 	type candidate struct {
-		path string
-		exif exifData
+		path       string
+		exif       exifData
+		bgNoise    float64
+		medianBlob float64
 	}
 	var (
 		candidates []candidate
@@ -3681,8 +3898,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 
+		var frameStars []star
 		if opts.Register {
-			starLists[len(accepted)] = detectStars(f, 100)
+			frameStars = detectStars(f, 100)
+			starLists[len(accepted)] = frameStars
+			c.medianBlob = medianBlobSize(frameStars)
+			c.bgNoise = estimateFrameBgNoise(f)
 		}
 		if opts.Method == "median" || opts.Method == "sigma" {
 			sp := filepath.Join(spillDir1, fmt.Sprintf("frame_%04d.f32raw", len(spillPaths1)))
@@ -3816,6 +4037,38 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 
+	// Compute per-frame weights for weighted stacking.
+	// Only done when the user requested registration (opts.Register);
+	// --no-register runs use equal weights.
+	var unregWeights []float32
+	var frameWeights []float32
+	if opts.Register {
+		unregWeights = make([]float32, len(accepted))
+		for i, c := range accepted {
+			intrinsic := computeIntrinsicQuality(len(starLists[i]), c.medianBlob, c.bgNoise)
+			unregWeights[i] = float32(intrinsic / 100.0)
+		}
+		if registrationOn {
+			frameWeights = make([]float32, len(accepted))
+			for i, c := range accepted {
+				if !transforms[i].valid {
+					frameWeights[i] = 0
+					continue
+				}
+				intrinsic := computeIntrinsicQuality(len(starLists[i]), c.medianBlob, c.bgNoise)
+				tq := computeFrameQuality(transforms[i].inliers, transforms[i].starCount, len(refStars), transforms[i].sim.scale(), transforms[i].sim.rotation()*180/math.Pi)
+				combined := tq * intrinsic / 100.0
+				if combined < 0 {
+					combined = 0
+				}
+				if combined > 100 {
+					combined = 100
+				}
+				frameWeights[i] = float32(combined / 100.0)
+			}
+		}
+	}
+
 	// EXIF summary: sum exposures across accepted frames
 	var totalExposureSec float64
 	var framesWithExif int
@@ -3933,6 +4186,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			td.OffsetX = origin.X
 			td.OffsetY = origin.Y
 			td.Quality = computeFrameQuality(td.Inliers, td.Stars, len(refStars), td.Scale, td.RotationDeg)
+			td.BgNoise = accepted[i].bgNoise
+			td.MedianBlob = accepted[i].medianBlob
+			td.IntrinsicQ = computeIntrinsicQuality(td.Stars, td.MedianBlob, td.BgNoise)
+			if frameWeights != nil && i < len(frameWeights) {
+				td.Weight = float64(frameWeights[i])
+			}
 			if transforms[i].aff != nil {
 				td.Note = strings.TrimSpace(td.Note + " [affine]")
 			}
@@ -4000,6 +4259,19 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 
+	// Build validFrameWeights: filter frameWeights to only the frames
+	// whose transforms are valid (those are the frames actually present
+	// in spillPaths2, in the same order).
+	var validFrameWeights []float32
+	if registrationOn && len(spillPaths2) > 0 && len(frameWeights) > 0 {
+		validFrameWeights = make([]float32, 0, len(spillPaths2))
+		for i := range accepted {
+			if transforms[i].valid {
+				validFrameWeights = append(validFrameWeights, frameWeights[i])
+			}
+		}
+	}
+
 	// ============== Tiled median/sigma reduction (spill-based)
 	var unregSumPix, unregMeanPix []float32
 	if opts.Method == "median" || opts.Method == "sigma" {
@@ -4016,7 +4288,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			opts.Method, len(spillPaths1))
 		sum1, mean1, rej1, wgt1, rerr := reduceTilesStack(
 			spillPaths1, refW, refH, image.Rect(0, 0, refW, refH),
-			opts.Method, tr, it, opts.TileSize, workers)
+			opts.Method, tr, it, opts.TileSize, workers, unregWeights)
 		if rerr != nil {
 			return fmt.Errorf("reduce unregistered: %w", rerr)
 		}
@@ -4038,7 +4310,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				opts.Method, len(spillPaths2), cropRect.Dx(), cropRect.Dy())
 			sum2, mean2, rej2, wgt2, rerr := reduceTilesStack(
 				spillPaths2, refW, refH, cropRect,
-				opts.Method, tr, it, opts.TileSize, workers)
+				opts.Method, tr, it, opts.TileSize, workers, validFrameWeights)
 			if rerr != nil {
 				return fmt.Errorf("reduce registered: %w", rerr)
 			}
@@ -4452,7 +4724,9 @@ func runSelfTests() int {
 		{"mad of", testMadOf},
 		{"sigma clip reduce", testSigmaClipReduce},
 		{"sigma clip all same", testSigmaClipAllSame},
+		{"sigma clip reduce weighted", testSigmaClipReduceWeighted},
 		{"read tile from raw", testReadTileFromRaw},
+		{"reduce tiles stack weighted", testReduceTilesStackWeighted},
 		{"reduce tiles stack", testReduceTilesStack},
 		{"chroma denoise", testChromaDenoiseGB},
 		{"chroma denoise multi-scale", testChromaDenoiseMultiScale},
@@ -4462,6 +4736,7 @@ func runSelfTests() int {
 		{"affine inverse round trip", testAffineInverseRoundTrip},
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
 		{"report contains", testReportContains},
+		{"report shows weight columns", testReportShowsWeightColumns},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -6197,6 +6472,48 @@ func testSigmaClipAllSame() error {
 	return nil
 }
 
+func testSigmaClipReduceWeighted() error {
+	// Basic: asymmetric weights should pull the mean toward the
+	// heavily-weighted values. vals={0.4, 0.6, 0.5} with weights
+	// {0.9, 0.1, 0.9}: weighted mean is (0.36 + 0.06 + 0.45)/1.9
+	// = 0.87/1.9 ~= 0.4579, while unweighted is 0.5.
+	vals := []float32{0.4, 0.6, 0.5}
+	weights := []float32{0.9, 0.1, 0.9}
+	mean, _, acc, rej := sigmaClipReduceWeighted(vals, weights, 3.0, 1)
+	want := (0.4*0.9 + 0.6*0.1 + 0.5*0.9) / (0.9 + 0.1 + 0.9)
+	if math.Abs(float64(mean)-want) > 1e-3 {
+		return fmt.Errorf("weighted mean = %v, want %v", mean, want)
+	}
+	if acc+rej != len(vals) {
+		return fmt.Errorf("acc+rej = %d, want %d", acc+rej, len(vals))
+	}
+
+	// Uniform weights must give the same result as unweighted.
+	vals2 := []float32{5, 5.1, 4.9, 5.05, 4.95, 5.02, 4.98, 5.01, 4.99, 5.03, 100, -50}
+	w2 := make([]float32, len(vals2))
+	for i := range w2 {
+		w2[i] = 1.0
+	}
+	mUnw, _, accUnw, rejUnw := sigmaClipReduce(vals2, 3.0, 2)
+	mW, _, accW, rejW := sigmaClipReduceWeighted(vals2, w2, 3.0, 2)
+	if math.Abs(float64(mUnw-mW)) > 1e-4 {
+		return fmt.Errorf("uniform-weighted mean %v != unweighted %v", mW, mUnw)
+	}
+	if accUnw != accW || rejUnw != rejW {
+		return fmt.Errorf("uniform-weighted acc/rej = %d/%d, want %d/%d",
+			accW, rejW, accUnw, rejUnw)
+	}
+
+	// All-zero weights must fall back to the unweighted mean of
+	// the survivors, not divide by zero and return 0.
+	zW := make([]float32, len(vals2))
+	mZero, _, _, _ := sigmaClipReduceWeighted(vals2, zW, 3.0, 2)
+	if math.Abs(float64(mZero)-float64(mUnw)) > 1e-4 {
+		return fmt.Errorf("zero-weighted mean %v != unweighted %v", mZero, mUnw)
+	}
+	return nil
+}
+
 func testReadTileFromRaw() error {
 	dir, err := os.MkdirTemp("", "skystacker-tile-")
 	if err != nil {
@@ -6264,7 +6581,7 @@ func testReduceTilesStack() error {
 	}
 	sumPix, meanPix, rejPix, wgtPix, err := reduceTilesStack(
 		spillPaths, w, h, image.Rect(0, 0, w, h),
-		"sigma", 3.0, 2, 16, 1)
+		"sigma", 3.0, 2, 16, 1, nil)
 	if err != nil {
 		return err
 	}
@@ -6287,6 +6604,57 @@ func testReduceTilesStack() error {
 	}
 	if sumPix == nil || meanPix == nil || rejPix == nil || wgtPix == nil {
 		return errors.New("nil output slice")
+	}
+	return nil
+}
+
+func testReduceTilesStackWeighted() error {
+	dir, err := os.MkdirTemp("", "skystacker-reduce-w-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 16, 16
+	// Five frames spanning 0.3..0.7 with the far-right frame (0.7)
+	// down-weighted to 0.1. Unweighted mean would be 0.5; weighted
+	// mean is ~0.4568. Sigma clipping with threshold=3 must NOT reject
+	// anything (all deviations are within 3*MAD).
+	vals := []float32{0.3, 0.4, 0.5, 0.6, 0.7}
+	weights := []float32{0.9, 0.9, 0.9, 0.9, 0.1}
+	var spillPaths []string
+	for i, v := range vals {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for j := range f.Pix {
+			f.Pix[j] = v
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%d.f32raw", i))
+		if err := writeSpillFrame(path, f); err != nil {
+			return err
+		}
+		spillPaths = append(spillPaths, path)
+	}
+	_, meanW, _, _, err := reduceTilesStack(
+		spillPaths, w, h, image.Rect(0, 0, w, h),
+		"sigma", 3.0, 2, 16, 1, weights)
+	if err != nil {
+		return err
+	}
+	wantW := (0.3*0.9 + 0.4*0.9 + 0.5*0.9 + 0.6*0.9 + 0.7*0.1) / (0.9*4 + 0.1)
+	if math.Abs(float64(meanW[0])-wantW) > 0.01 {
+		return fmt.Errorf("weighted mean = %v, want ~%v", meanW[0], wantW)
+	}
+	_, meanUnw, _, _, err := reduceTilesStack(
+		spillPaths, w, h, image.Rect(0, 0, w, h),
+		"sigma", 3.0, 2, 16, 1, nil)
+	if err != nil {
+		return err
+	}
+	if math.Abs(float64(meanUnw[0])-0.5) > 0.02 {
+		return fmt.Errorf("unweighted mean = %v, want ~0.5 (fixture must not clip)", meanUnw[0])
+	}
+	if math.Abs(float64(meanW[0]-meanUnw[0])) < 0.02 {
+		return fmt.Errorf("weighted %v and unweighted %v differ by <0.02; test is not sensitive",
+			meanW[0], meanUnw[0])
 	}
 	return nil
 }
@@ -6786,6 +7154,42 @@ func testReportContains() error {
 }
 
 // =========================================================================
+// testReportShowsWeightColumns: the report's per-frame diagnostic table
+// must expose IntrQ (intrinsic quality) and Weight (combined weight used
+// by the sigma reducer). Without this column the user cannot see which
+// frames were down-weighted, violating the project's transparency goal.
+func testReportShowsWeightColumns() error {
+	rep := &processingReport{
+		Version: version, Timestamp: time.Now(),
+		InputDir: "in", OutputDir: "out",
+		Width: 10, Height: 10, Channels: 3,
+		Method: "sigma", AccumulatorType: "float32",
+		OutputFormat: "TIFF", OutputScaling: "none",
+		RegistrationOn: true,
+		FrameDiags: []frameDiag{
+			{
+				Path:  "/tmp/frame_001.jpg",
+				Stars: 100, Inliers: 80, Scale: 1.0, RotationDeg: 0.0,
+				OffsetX: 0.5, OffsetY: 0.5,
+				Quality: 80, BoxPct: 95,
+				BgNoise: 0.02, MedianBlob: 4.5,
+				IntrinsicQ: 75, Weight: 0.6,
+			},
+		},
+	}
+	var buf bytes.Buffer
+	if err := rep.writeTo(&buf); err != nil {
+		return err
+	}
+	out := buf.String()
+	for _, want := range []string{"IntrQ", "Weight", "75.0", "0.60"} {
+		if !strings.Contains(out, want) {
+			return fmt.Errorf("report missing %q", want)
+		}
+	}
+	return nil
+}
+
 // POST-PROCESSING PIPELINE (v0.4.0)
 // =========================================================================
 //
