@@ -339,3 +339,338 @@ $$\text{Performance (GFLOPS)} = \min\left( \text{Peak ALU Performance}, \text{RA
 *   **Compute-Bound Regimes:** Algorithms like FFT transformations in convolutions or subpixel interpolation have high arithmetic intensity and are limited by the CPU's vector units (AVX2/AVX-512).
 
 Through spatial tiling, SkyStacker maximizes data reuse in the L2 cache, shifting execution towards the compute-bound regime and fully leveraging the processor's capability.
+
+--
+
+Here is a comprehensive list of 100 technical keywords and key concepts:
+
+## Core System & Architecture
+
+1. SkyStacker
+
+
+2. Astrometric Stacking Program
+
+
+3. Go CLI Engine
+
+
+4. Local-First Design
+
+
+5. Static Compilation
+
+
+6. CGO_ENABLED=0
+
+
+7. Spatial Tiles
+
+
+8. IEEE 754 float32 TIFF
+
+
+9. Garbage Collector Optimization
+
+
+10. sync.Pool
+
+
+11. TileBuffer
+
+
+12. Goroutine leaks
+
+
+13. context.Context
+
+
+14. Concurrency Pipeline
+
+
+15. Hardware Abstraction Layer (HAL)
+
+
+16. GPU Compute
+
+
+17. Metal compute shaders
+
+
+18. CUDA
+
+
+19. Vulkan
+
+
+
+---
+
+## Data Structures & Performance Optimization
+
+20. Swiss Table Architecture
+
+
+21. SoA Layout (Structure of Arrays)
+
+
+22. $H_1/H_2$ Hash Splitting
+
+
+23. Control bytes
+
+
+24. SIMD vector register
+
+
+25. SWAR technique
+
+
+26. Load factor
+
+
+27. Escape analysis
+
+
+28. Fingerprint ($H_2$)
+
+
+29. Roofline Model
+
+
+30. Arithmetic Intensity
+
+
+31. Memory-Bound Regimes
+
+
+32. Compute-Bound Regimes
+
+
+33. Code Smell Detection
+
+
+34. Continuous Profiling
+
+
+35. eBPF
+
+
+
+---
+
+## Calibration & Photometric Preprocessing
+
+36. Master Bias
+
+
+37. Master Dark
+
+
+38. Master Flat
+
+
+39. Photometric calibration
+
+
+40. Vignetting correction
+
+
+41. Photometric quality metrics ($Q_i$)
+
+
+42. SubframeSelector
+
+
+43. Noise evaluation
+
+
+44. LocalNormalization
+
+
+45. FWHM (Full Width at Half Maximum)
+
+
+46. Eccentricity
+
+
+47. Signal-to-noise ratio (SNR)
+
+
+48. PSFWeight
+
+
+
+---
+
+## Detection, Registration & Astrometry
+
+49. Point Spread Function (PSF)
+
+
+50. Centroid calculation
+
+
+51. Aperture photometry
+
+
+52. Star-Pattern Matching
+
+
+53. Similarity Transformation
+
+
+54. RANSAC Filtering
+
+
+55. Blind Plate Solving
+
+
+56. World Coordinate System (WCS)
+
+
+57. SIP Distortion (Simple Imaging Polynomial)
+
+
+58. Gaia DR3
+
+
+59. Right Ascension (RA)
+
+
+60. Declination (Dec)
+
+
+61. PSF deconvolution
+
+
+
+---
+
+## Stacking & Pixel Rejection Algorithms
+
+62. Stochastic noise theory
+
+
+63. Arithmetic Mean
+
+
+64. Median Stacking
+
+
+65. Sigma Clipping
+
+
+66. Winsorized Sigma
+
+
+67. Linear Fit Clipping
+
+
+68. GESDT test (Extreme Studentized Deviate)
+
+
+69. Pixel Maximum (`Max Stack`)
+
+
+70. Pixel Minimum (`Min Stack`)
+
+
+71. Pixel rejection filters
+
+
+
+---
+
+## File Formats & Metadata Processing
+
+72. TIFF 6.0
+
+
+73. BigTIFF format
+
+
+74. Image File Directory (IFD)
+
+
+75. EXIF metadata
+
+
+76. IPTC metadata
+
+
+77. XMP metadata
+
+
+78. imagemeta package
+
+
+79. Flexible Image Transport System (FITS)
+
+
+80. Extensible Image Serialization Format (XISF)
+
+
+
+---
+
+## Non-Linear Post-Processing & AI Integration
+
+81. Asinh transformation
+
+
+82. AsinhStretch
+
+
+83. ArcsinhStretch
+
+
+84. Generalized Hyperbolic Stretch (GHS)
+
+
+85. Midtone Transfer Function (MTF)
+
+
+86. Spectrophotometric Color Calibration (SPCC)
+
+
+87. Subtractive Chromatic Noise Reduction (SCNR)
+
+
+88. Background Extraction
+
+
+89. Chromatic Aberration Correction
+
+
+90. Unsharp Mask
+
+
+91. Wavelet Processing
+
+
+92. Wavelet à Trous Transforms
+
+
+93. StarXTerminator
+
+
+94. NoiseXTerminator
+
+
+95. GraXpert
+
+
+96. Calibration algorithms
+
+
+97. IKSS estimator
+
+
+98. Directed Acyclic Graph (DAG)
+
+
+99. Non-linear post-processing
+
+
+100. Starless Workflows
