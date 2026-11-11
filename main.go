@@ -4036,7 +4036,6 @@ func testPipelinePostOnly() error {
 	for _, name := range []string{
 		"post_step1_background_removed.jpg",
 		"post_step2_star_removed.jpg",
-		"post_step3_dark_background.jpg",
 		"post_step4_auto_stretched.jpg",
 		"post_step5_denoised.jpg",
 		"post_step6_hdr.jpg",
@@ -6131,13 +6130,13 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	// are truly black. Combined with the star removal above, this gives the
 	// "near-dark background" that makes faint stars disappear into the sky.
 	if opts.BgPercentile > 0 {
-		logf("  post: black point shift (P%g)", opts.BgPercentile)
+		logf("  post: black point shift (P%g, intermediate, not written)", opts.BgPercentile)
 		cur = blackPointShift(cur, opts.BgPercentile)
-		p = filepath.Join(outputDir, "post_step3_dark_background.jpg")
-		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
-			logf("  WARNING: %v", err)
-		}
-		outputs = append(outputs, p)
+		// post_step3_dark_background.jpg is intentionally NOT written:
+		// in typical runs the black-point shift is tiny (P10 near
+		// -0.003), so the resulting JPEG is visually identical to
+		// post_step2. The transformation still runs because step 4
+		// (auto-stretch) consumes its output.
 	}
 
 	// Auto-stretch (FINAL): PixInsight-style STF/MTF.  Lifts the
@@ -6204,7 +6203,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	// step 6", so the user can pick whichever balance of linear detail
 	// and HDR-processed tone looks best on their image.
 	if step1Frame != nil && step6Frame != nil && !opts.NoHDRMix {
-		weights := []float64{0.90, 0.65, 0.35, 0.10}
+		weights := []float64{0.90, 0.80, 0.70, 0.60}
 		logf("  post: HDR mix (%d weighted variants: step7_1..step7_%d)", len(weights), len(weights))
 		for i, w1 := range weights {
 			mixed := blendWeighted(step1Frame, step6Frame, w1)
