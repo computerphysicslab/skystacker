@@ -133,6 +133,7 @@ type cliOptions struct {
 	SpikesMinRatio       float64
 	SpikesLengthSoftness float64
 	SpikesLengthMinRatio float64
+	NoExif               bool
 	SigmaClipThreshold   float64
 	SigmaClipIters       int
 	TileSize             int
@@ -200,13 +201,14 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.CurvesGamma, "curves-gamma", 1.20, "curves: midtone gamma (>1 darkens, <1 brightens, 1 neutral)")
 	fs.BoolVar(&o.AddSpikes, "spikes", true, "add diffraction spikes to bright stars (default: on; --no-spikes to disable)")
 	fs.Float64Var(&o.SpikesPercent, "spikes-percent", 0.2, "percent of detected stars to spike (0-50, default 0.2)")
-	fs.Float64Var(&o.SpikesLength, "spikes-length", 100.0, "spike arm half-length in pixels (1-5000)")
-	fs.Float64Var(&o.SpikesIntensity, "spikes-intensity", 0.7, "peak additive spike brightness (0.1-2.0)")
-	fs.IntVar(&o.SpikesArms, "spikes-arms", 6, "number of spike arms: 4=cross, 6=hexagonal (default 6)")
+	fs.Float64Var(&o.SpikesLength, "spikes-length", 10.0, "spike arm half-length in pixels (1-5000)")
+	fs.Float64Var(&o.SpikesIntensity, "spikes-intensity", 0.3, "peak additive spike brightness (0.1-2.0)")
+	fs.IntVar(&o.SpikesArms, "spikes-arms", 4, "number of spike arms: 4=cross, 6=hexagonal (default 4)")
 	fs.Float64Var(&o.SpikesSoftness, "spikes-softness", 0.5, "spike intensity falloff exponent: 0.1=flat, 0.5=sqrt, 1.0=linear")
 	fs.Float64Var(&o.SpikesMinRatio, "spikes-min-ratio", 0.2, "minimum spike size for the faintest spiked star (0-1, default 0.2)")
 	fs.Float64Var(&o.SpikesLengthSoftness, "spikes-length-softness", 1.0, "length falloff exponent: 1.0=proportional, 1.5=super-linear, 2.0=strongly differentiated")
 	fs.Float64Var(&o.SpikesLengthMinRatio, "spikes-length-min-ratio", 0.03, "minimum length fraction for the faintest spiked star (0-1, default 0.03)")
+	fs.BoolVar(&o.NoExif, "no-exif", false, "skip EXIF exposure summary in report")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -2265,6 +2267,185 @@ type rejection struct {
 	Reason string
 }
 
+type exifData struct {
+	OK               bool
+	ExposureTime     float64
+	FNumber          float64
+	ISO              int
+	DateTimeOriginal string
+	Make             string
+	Model            string
+}
+
+func readJPEGExif(path string) exifData {
+	e := exifData{}
+	f, err := os.Open(path)
+	if err != nil {
+		return e
+	}
+	defer f.Close()
+	buf := make([]byte, 128*1024)
+	n, _ := io.ReadFull(f, buf)
+	buf = buf[:n]
+	if len(buf) < 4 || buf[0] != 0xFF || buf[1] != 0xD8 {
+		return e
+	}
+	pos := 2
+	for pos+4 <= len(buf) {
+		if buf[pos] != 0xFF {
+			return e
+		}
+		marker := buf[pos+1]
+		if marker == 0xDA || marker == 0xD9 {
+			break
+		}
+		segLen := int(buf[pos+2])<<8 | int(buf[pos+3])
+		if segLen < 2 || pos+2+segLen > len(buf) {
+			break
+		}
+		if marker == 0xE1 {
+			data := buf[pos+4 : pos+2+segLen]
+			if len(data) >= 6 && string(data[:4]) == "Exif" {
+				parseExifTIFF(data[6:], &e)
+				return e
+			}
+		}
+		pos += 2 + segLen
+	}
+	return e
+}
+func parseExifTIFF(data []byte, e *exifData) {
+	if len(data) < 8 {
+		return
+	}
+	var be bool
+	switch string(data[:2]) {
+	case "II":
+		be = false
+	case "MM":
+		be = true
+	default:
+		return
+	}
+	u16 := func(off int) uint16 {
+		if off+2 > len(data) {
+			return 0
+		}
+		if be {
+			return binary.BigEndian.Uint16(data[off:])
+		}
+		return binary.LittleEndian.Uint16(data[off:])
+	}
+	u32 := func(off int) uint32 {
+		if off+4 > len(data) {
+			return 0
+		}
+		if be {
+			return binary.BigEndian.Uint32(data[off:])
+		}
+		return binary.LittleEndian.Uint32(data[off:])
+	}
+	if u16(2) != 42 {
+		return
+	}
+	ifdOff := int(u32(4))
+	if ifdOff+2 > len(data) {
+		return
+	}
+	n := int(u16(ifdOff))
+	if ifdOff+2+n*12 > len(data) {
+		return
+	}
+	readStr := func(count, off int) string {
+		if count <= 0 || count > 1024 {
+			return ""
+		}
+		var raw []byte
+		if count <= 4 {
+			raw = data[off : off+count]
+		} else {
+			o := int(u32(off))
+			if o+count > len(data) {
+				return ""
+			}
+			raw = data[o : o+count]
+		}
+		for len(raw) > 0 && (raw[len(raw)-1] == 0 || raw[len(raw)-1] == ' ') {
+			raw = raw[:len(raw)-1]
+		}
+		return string(raw)
+	}
+	readRat := func(off int) float64 {
+		o := int(u32(off))
+		if o+8 > len(data) {
+			return 0
+		}
+		var num, den uint32
+		if be {
+			num = binary.BigEndian.Uint32(data[o:])
+			den = binary.BigEndian.Uint32(data[o+4:])
+		} else {
+			num = binary.LittleEndian.Uint32(data[o:])
+			den = binary.LittleEndian.Uint32(data[o+4:])
+		}
+		if den == 0 {
+			return 0
+		}
+		return float64(num) / float64(den)
+	}
+	exifIfd := -1
+	for i := 0; i < n; i++ {
+		off := ifdOff + 2 + i*12
+		tag := u16(off)
+		typ := u16(off + 2)
+		count := int(u32(off + 4))
+		valOff := off + 8
+		switch tag {
+		case 0x010F:
+			if typ == 2 {
+				e.Make = readStr(count, valOff)
+			}
+		case 0x0110:
+			if typ == 2 {
+				e.Model = readStr(count, valOff)
+			}
+		case 0x8769:
+			exifIfd = int(u32(valOff))
+		}
+	}
+	if exifIfd > 0 && exifIfd+2 <= len(data) {
+		n2 := int(u16(exifIfd))
+		if exifIfd+2+n2*12 <= len(data) {
+			for i := 0; i < n2; i++ {
+				off := exifIfd + 2 + i*12
+				tag := u16(off)
+				typ := u16(off + 2)
+				count := int(u32(off + 4))
+				valOff := off + 8
+				switch tag {
+				case 0x829A:
+					if typ == 5 {
+						e.ExposureTime = readRat(valOff)
+					}
+				case 0x829D:
+					if typ == 5 {
+						e.FNumber = readRat(valOff)
+					}
+				case 0x8827:
+					if typ == 3 {
+						e.ISO = int(u16(valOff))
+					}
+				case 0x9003:
+					if typ == 2 {
+						e.DateTimeOriginal = readStr(count, valOff)
+					}
+				}
+			}
+		}
+	}
+	e.OK = e.ExposureTime > 0 || e.Make != "" || e.Model != ""
+}
+
 type processingReport struct {
 	Version            string
 	Timestamp          time.Time
@@ -2297,6 +2478,9 @@ type processingReport struct {
 	Notes              []string
 	FrameDiags         []frameDiag
 	CropExplanation    string
+	TotalExposureSec   float64
+	FramesWithExif     int
+	RefExif            exifData
 }
 
 type errWriter struct {
@@ -2346,6 +2530,31 @@ func (r *processingReport) writeTo(w io.Writer) error {
 	ew.printf("\n")
 
 	ew.printf("Sum TIFF normalisation: %g\n", r.SumNormalization)
+	if r.TotalExposureSec > 0 || r.RefExif.OK {
+		ew.printf("Exposure summary:\n")
+		ew.printf("  Frames with EXIF:  %d / %d\n", r.FramesWithExif, len(r.Accepted))
+		if r.TotalExposureSec > 0 {
+			ew.printf("  Total exposure:    %.3f s (%.2f min)\n", r.TotalExposureSec, r.TotalExposureSec/60)
+			if r.FramesWithExif > 0 {
+				ew.printf("  Average per frame: %.4f s\n", r.TotalExposureSec/float64(r.FramesWithExif))
+			}
+		}
+		if r.RefExif.OK {
+			if r.RefExif.Make != "" || r.RefExif.Model != "" {
+				ew.printf("  Camera:            %s %s\n", r.RefExif.Make, r.RefExif.Model)
+			}
+			if r.RefExif.FNumber > 0 {
+				ew.printf("  Aperture:          f/%.1f\n", r.RefExif.FNumber)
+			}
+			if r.RefExif.ISO > 0 {
+				ew.printf("  ISO:               %d\n", r.RefExif.ISO)
+			}
+			if r.RefExif.DateTimeOriginal != "" {
+				ew.printf("  Reference date:    %s\n", r.RefExif.DateTimeOriginal)
+			}
+		}
+		ew.printf("\n")
+	}
 	if r.PostProcessApplied {
 		ew.printf("Post-processing:    ON\n")
 		ew.printf("  Background removal: polynomial degree %d\n", r.BGDegree)
@@ -2500,6 +2709,7 @@ type runOptions struct {
 	SpikesMinRatio       float64
 	SpikesLengthSoftness float64
 	SpikesLengthMinRatio float64
+	NoExif               bool
 	SigmaClipThreshold   float64
 	SigmaClipIters       int
 	TileSize             int
@@ -3179,7 +3389,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("no JPG/JPEG images found in %s", inputDir)
 	}
 
-	type candidate struct{ path string }
+	type candidate struct {
+		path string
+		exif exifData
+	}
 	var (
 		candidates []candidate
 		rejected   []rejection
@@ -3487,6 +3700,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return fmt.Errorf("accumulate %s: %w", c.path, err)
 		}
 		f.Pix = nil
+		if !opts.NoExif {
+			c.exif = readJPEGExif(c.path)
+		}
 		accepted = append(accepted, c)
 	}
 	if unregAcc.Count == 0 && len(spillPaths1) == 0 {
@@ -3597,6 +3813,35 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		registeredCount = 0
 		for i := range transforms {
 			transforms[i] = frameTransform{sim: identitySimilarity, valid: true}
+		}
+	}
+
+	// EXIF summary: sum exposures across accepted frames
+	var totalExposureSec float64
+	var framesWithExif int
+	var refExif exifData
+	if !opts.NoExif {
+		for _, c := range accepted {
+			if c.exif.OK {
+				framesWithExif++
+				if c.exif.ExposureTime > 0 {
+					totalExposureSec += c.exif.ExposureTime
+				}
+			}
+		}
+		if registrationOn && refIdx < len(accepted) {
+			refExif = accepted[refIdx].exif
+		}
+		if !refExif.OK {
+			for _, c := range accepted {
+				if c.exif.OK {
+					refExif = c.exif
+					break
+				}
+			}
+		}
+		if totalExposureSec > 0 {
+			logf("EXIF: total exposure = %.3f s over %d/%d frames", totalExposureSec, framesWithExif, len(accepted))
 		}
 	}
 
@@ -4071,6 +4316,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		Notes:              notes,
 		FrameDiags:         frameDiags,
 		CropExplanation:    cropExplanation,
+		TotalExposureSec:   totalExposureSec,
+		FramesWithExif:     framesWithExif,
+		RefExif:            refExif,
 	}
 	if err := writeFileAtomic(reportTxt, func(w io.Writer) error {
 		return rep.writeTo(w)
@@ -8730,6 +8978,7 @@ func main() {
 		SpikesMinRatio:       opts.SpikesMinRatio,
 		SpikesLengthSoftness: opts.SpikesLengthSoftness,
 		SpikesLengthMinRatio: opts.SpikesLengthMinRatio,
+		NoExif:               opts.NoExif,
 		SigmaClipThreshold:   opts.SigmaClipThreshold,
 		SigmaClipIters:       opts.SigmaClipIters,
 		TileSize:             opts.TileSize,
