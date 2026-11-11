@@ -61,9 +61,9 @@ Automatic. Disable with `--no-register`.
 - `--spikes` (default **true**)
 - `--no-spikes` — explicit opt-out
 - `--spikes-percent F` (default **0.2**)
-- `--spikes-length F` (default 100) — brightest star's arm half-length in px
-- `--spikes-intensity F` (default 0.7) — brightest star's peak additive brightness
-- `--spikes-arms N` (default **6**; 4=cross, 6=hexagonal)
+- `--spikes-length F` (default **10**) — brightest star's arm half-length in px
+- `--spikes-intensity F` (default **0.3**) — brightest star's peak additive brightness
+- `--spikes-arms N` (default **4**; 4=cross, 6=hexagonal)
 - `--spikes-softness F` (default **0.5**) — intensity falloff exponent
 - `--spikes-min-ratio F` (default **0.2**) — intensity floor for faintest spiked star
 - `--spikes-length-softness F` (default **1.0**) — length falloff exponent
@@ -87,7 +87,7 @@ At defaults (baseLength=100, baseIntensity=0.7):
 | 50%     |  50 px  | 0.49      |
 | 25%     |  25 px  | 0.35      |
 | 10%     |  10 px  | 0.22      |
-| 1%      |   3 px  | 0.14      |
+| 1%      |   1 px  | 0.06      |
 
 (The 1% intensity is 0.14, not 0.20: `intensityWeight` is floored at 0.2,
 then multiplied by `baseIntensity=0.7`, so 0.7 × 0.2 = 0.14.)
@@ -99,6 +99,42 @@ Additive only (never darkens); Gaussian cross-section σ=1.5 px along arms.
 Stars detected **once** on `step7Frame`, reused for all 4 variants, so
 `post_step8_1..4` spike the same stars at the same angles. `post_step1` …
 `post_step7` are untouched.
+
+## EXIF metadata (total exposure in report)
+
+Enabled by default. Reads EXIF from every accepted JPG frame during
+pass 1 and:
+
+- Sums `ExposureTime` across all frames that have EXIF metadata → total
+  exposure in seconds.
+- Adds an `Exposure summary:` block to `report.txt`:
+  - frames with EXIF (e.g. `70 / 70`)
+  - total exposure (`1050.000 s (17.50 min)`)
+  - average per frame
+  - camera make + model
+  - aperture (f-number)
+  - ISO
+  - reference frame's `DateTimeOriginal`
+
+The block only appears when the run actually found EXIF data. Runs on
+files without EXIF metadata produce the same report as before this
+feature.
+
+**Disable with `--no-exif`** — skips extraction entirely; the report
+simply omits the exposure summary.
+
+**Scope limitations** (documented for future work):
+
+- **Only JPG inputs are parsed.** RAW (CR2/CR3) and FITS would need
+  dedicated decoders. The current pipeline's JPG path covers the common
+  case where total-exposure metadata matters.
+- **No EXIF is embedded into the output JPEGs.** A future patch could
+  inject an aggregate `ExposureTime` tag into each written JPEG, but
+  that requires building a full APP1 payload and would need a
+  dedicated self-test to verify all three output JPEG helpers
+  (`writePreviewJPEGScaled`, `writeLinearPreviewJPEG`,
+  `writeAutoNormalizedLinearPreviewJPEG`) produce valid output.
+  Deferred to keep this patch small and focused.
 
 ## Known constraints
 
@@ -113,6 +149,10 @@ Stars detected **once** on `step7Frame`, reused for all 4 variants, so
 
 ## Recent decisions / caveats
 
+- **Time-estimate calibration APPLIED** (was pending): the ETA at run
+  start now uses `sigma: 1.03 * N^1.20 * MP`, `median: 0.88 * N^1.18 * MP`,
+  `mean: 0.55 * N^1.00 * MP`. Both real runs (Orion 70 fr, M42 152 fr)
+  predicted within 2.5% of actual. Confirmed present in `main.go`.
 - Curves applied identically per channel to preserve hue.
 - Step 7 uses the curves output (step 6) as its display base.
 - Affine refinement per-frame optional: similarity first, affine only when
@@ -180,30 +220,6 @@ Patch is written and self-tested but **failed to apply** on
 `\tSpikesLengthMinRatio  float64` — anchor has two spaces, but the actual
 file has one (gofmt collapsed it in an earlier run). To apply: re-anchor on
 `\tSpikesLengthMinRatio float64` (single space) or add the field manually.
-
-### Time-estimate calibration (ETA is 2.0–2.4× low)
-
-**Problem**: the printed ETA at run start is linear in frame count, but the
-median/sigma reduction is O(N log N) per pixel, so cost grows super-linearly.
-Fit `T = k·N^α·MP` to the two real runs:
-
-```
-70 frames  →  598 s  (9 m 58 s),  k·70^α·3.84
-152 frames → 1522 s (25 m 22 s),  k·152^α·3.84
-```
-
-Solves to **α ≈ 1.20**, **k ≈ 1.03** for sigma.
-
-**Fix** (proposed, not applied):
-
-```
-sigma:  1.03 * N^1.20 * MP   + CR2/CR3 overhead + post
-median: 0.88 * N^1.18 * MP   + CR2/CR3 overhead + post
-mean:   0.55 * N^1.00 * MP   + CR2/CR3 overhead + post
-post = 15 s base + 5 s * denoise-strength + 3 s if --spikes
-```
-
-Verified in-simulation against both real runs: within 2.5% of actual.
 
 ### Crop diagnostic for pure-translation drift
 
