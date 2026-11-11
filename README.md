@@ -1,11 +1,18 @@
 # SkyStacker
 
-**SkyStacker is a local-first command-line tool for stacking astrophotography images.** It takes a folder of night-sky exposures, detects stars, aligns the frames, combines them into useful image stacks and can apply an automated post-processing workflow.
+**SkyStacker is a local-first command-line tool for stacking astrophotography images.**  
+It takes a folder of night-sky exposures, detects stars, aligns the frames, combines them into useful image stacks and can apply an automated post-processing workflow.
+
+<p align="center">
+  <img src="assets/Triffid-Stacked.jpg" alt="Before and after: single frame vs 25-frame stack of the Trifid Nebula" width="100%">
+</p>
+<p align="center">
+  <em>Stacking multiple frames dramatically improves signal-to-noise ratio and reveals faint structure (Trifid Nebula, 1 frame vs. 25 frames).</em>
+</p>
 
 <p align="center">
   <img src="assets/infograph-staking-skystacker.jpg" alt="SkyStacker infographic showing the astrophotography image-stacking workflow" width="100%">
 </p>
-
 <p align="center">
   <em>From a folder of individual exposures to aligned stacks and processed astrophotography images.</em>
 </p>
