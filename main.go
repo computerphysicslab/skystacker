@@ -3275,12 +3275,38 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	logf("Stacking %d frame(s) at %dx%d using up to %d worker(s)",
 		len(candidates), refW, refH, workers)
 
-	// Rough estimation based on previous runs or a base formula
-	// Assuming ~0.05s per megapixel per worker
-	// Time estimation: ~0.35s per MP per frame + 10s for post-processing
-	estSecs := float64(len(candidates)) * (float64(refW*refH) / 1e6) * 0.35
-	// CR2/CR3 decode via dcraw + convert adds ~12 s of subprocess overhead
-	// per frame, which dominates pixel-level processing for typical sizes.
+	// Time estimation. Calibrated against two real sigma runs on
+	// 2400x1600 JPGs:
+	//    70 frames ->  598 s ( 9 m 58 s)
+	//   152 frames -> 1522 s (25 m 22 s)
+	//
+	// The median/sigma reduction is O(N log N) per pixel, so the total
+	// grows super-linearly with frame count. Fitting T = k * N^alpha * MP
+	// to the two data points above gives alpha ~= 1.20, k ~= 1.01 for
+	// sigma. The old formula (linear in N) was 2.0x low at N=70 and 2.4x
+	// low at N=152, which is exactly the growth you'd expect from missing
+	// the log factor.
+	//
+	// Mean has no reduction step (streaming accumulate) and stays linear
+	// in N, but its coefficient is corrected upward from 0.35 to 0.55 --
+	// the old value was also low, just not super-linear-low.
+	//
+	// Median sits between mean and sigma: single sort per pixel (O(N log N))
+	// but only one pass (no MAD iterations), so alpha=1.18, k=0.88.
+	mpx := float64(refW*refH) / 1e6
+	nf := float64(len(candidates))
+	var estSecs float64
+	switch opts.Method {
+	case "median":
+		estSecs = 0.88 * math.Pow(nf, 1.18) * mpx
+	case "sigma":
+		estSecs = 1.03 * math.Pow(nf, 1.20) * mpx
+	default: // mean
+		estSecs = nf * mpx * 0.55
+	}
+	// CR2/CR3 decode via dcraw + convert adds ~12 s of subprocess
+	// overhead per frame, which dominates pixel-level processing for
+	// typical sizes.
 	for _, c := range candidates {
 		ext := strings.ToLower(filepath.Ext(c.path))
 		if ext == ".cr2" || ext == ".cr3" {
@@ -3288,19 +3314,19 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			break
 		}
 	}
+	// Post-processing: base ~15 s for loading the work file and writing
+	// the ten output JPEGs, plus ~5 s per denoise pass (guided filter is
+	// the dominant cost) and an extra 3 s if spike overlay runs its own
+	// star detection. The previous flat 10 s was too low for any run with
+	// --denoise-strength > 1.
 	if opts.PostProcess && !opts.StackOnly {
-		estSecs += 10.0
-	}
-	// The median/sigma reduction is O(pixels x frames x log(frames))
-	// and dominates the runtime for anything beyond a handful of
-	// frames. Empirically ~0.2 s/Mpx/frame for median and ~0.7 s/Mpx/frame
-	// for MAD-based sigma clipping on a modern laptop (both passes).
-	mpxFrames := float64(len(candidates)) * (float64(refW*refH) / 1e6)
-	switch opts.Method {
-	case "median":
-		estSecs += 0.2 * mpxFrames
-	case "sigma":
-		estSecs += 0.7 * mpxFrames
+		estSecs += 15.0
+		if !opts.NoDenoise && opts.DenoiseStrength > 0 {
+			estSecs += 5.0 * opts.DenoiseStrength
+		}
+		if opts.AddSpikes {
+			estSecs += 3.0
+		}
 	}
 	logf("Estimated processing time: ~%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second))
 
