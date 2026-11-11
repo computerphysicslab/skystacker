@@ -12,8 +12,9 @@
 //     found even on bright nebula backgrounds.
 //   - Reference-frame selection by star count; triangle-invariant star
 //     matching; RANSAC similarity estimation (rotation + uniform scale
-//     + translation); bilinear sub-pixel resampling; safe crop to the
-//     largest fully-valid region.
+//     + translation) with optional full-affine refinement; bilinear
+//     sub-pixel resampling; safe crop to the largest fully-valid
+//     region.
 //   - Stacking methods: mean (streaming), median and sigma (tiled,
 //     out-of-core, MAD-based rejection, per-pixel weight and rejection
 //     maps). Median/sigma frames are spilled to disk so peak memory
@@ -739,8 +740,27 @@ func estimateBackgroundNoise(gray []float32) (bg, noise float64) {
 }
 
 // detectStars returns up to maxStars stars sorted by decreasing flux.
+//
+// Tries the standard 5-sigma threshold first. If that yields very few
+// stars (e.g. faint, low-contrast frames, or frames dominated by nebulosity),
+// retries with progressively lower thresholds so the caller still gets a
+// workable star list. This is a simple form of multi-scale matching: at
+// each level the threshold is relaxed until at least ~20 stars are found.
 func detectStars(f *frame, maxStars int) []star {
-	return detectStarsSigma(f, maxStars, 5.0)
+	stars := detectStarsSigma(f, maxStars, 5.0)
+	if len(stars) >= 20 {
+		return stars
+	}
+	for _, sig := range []float64{4.0, 3.5, 3.0} {
+		s := detectStarsSigma(f, maxStars, sig)
+		if len(s) > len(stars) {
+			stars = s
+		}
+		if len(stars) >= 20 {
+			break
+		}
+	}
+	return stars
 }
 
 // boxBlurLuminance returns a box-blurred copy of gray using the given
@@ -819,6 +839,28 @@ func estimateResidualNoise(residual []float32) float64 {
 	return sigma
 }
 
+// estimateHighPassRadius returns a star-detection high-pass radius sized
+// to the image. The old fixed radius (12 px) was fine for ~1000-3000 px
+// images where stars are typically 2-6 px across, but is too small for
+// 4000+ px images (where stars can be 5-12 px) and too large for small
+// previews. Scaling with the shorter edge keeps the radius comparable to
+// the typical star size across image scales, so the same threshold works
+// from a 500 px test image up to a 6000 px full-frame stack.
+func estimateHighPassRadius(w, h int) int {
+	m := w
+	if h < m {
+		m = h
+	}
+	r := m / 200
+	if r < 8 {
+		r = 8
+	}
+	if r > 24 {
+		r = 24
+	}
+	return r
+}
+
 func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 	w, h := f.Width, f.Height
 	gray := grayscale(f)
@@ -830,8 +872,9 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 	//
 	// Radius must exceed the largest star we want to catch (typically
 	// <= 6 px) but stay below the scale of any real nebula structure.
-	// 12 px is a good compromise for 50-200 mm lenses and small refractors.
-	const hpRadius = 12
+	// estimateHighPassRadius scales with the image so the same threshold
+	// works on both small previews and full-frame stacks.
+	hpRadius := estimateHighPassRadius(w, h)
 	blurred := boxBlurLuminance(gray, w, h, hpRadius)
 	residual := make([]float32, len(gray))
 	for i := range gray {
@@ -1030,6 +1073,151 @@ func estimateSimilarity(src, dst []point2D) similarity {
 	}
 }
 
+// affine is a full 6-DOF 2D affine transform:
+//
+//	x' = A*x + B*y + C
+//	y' = D*x + E*y + F
+//
+// It subsumes similarity (SC, SS, Tx, Ty) when the matrix is a scaled
+// rotation, but also handles anisotropic scale and shear. That makes it
+// a better fit than a pure similarity for wide-field optics that show
+// small astigmatism or field rotation across the frame. Full field
+// distortion (SIP / plate solving) would require a higher-order model
+// and is out of scope for this single-file stacker.
+type affine struct {
+	A, B, C, D, E, F float64
+}
+
+var identityAffine = affine{A: 1, B: 0, C: 0, D: 0, E: 1, F: 0}
+
+func (a affine) apply(p point2D) point2D {
+	return point2D{
+		X: a.A*p.X + a.B*p.Y + a.C,
+		Y: a.D*p.X + a.E*p.Y + a.F,
+	}
+}
+
+// inverse returns the affine transform that undoes a, or identityAffine
+// if a is singular.
+func (a affine) inverse() affine {
+	det := a.A*a.E - a.B*a.D
+	if math.Abs(det) < 1e-12 {
+		return identityAffine
+	}
+	invDet := 1.0 / det
+	return affine{
+		A: a.E * invDet,
+		B: -a.B * invDet,
+		C: (a.B*a.F - a.E*a.C) * invDet,
+		D: -a.D * invDet,
+		E: a.A * invDet,
+		F: (a.D*a.C - a.A*a.F) * invDet,
+	}
+}
+
+// scale returns an approximate uniform scale (sqrt of |det|). For a
+// pure similarity this matches similarity.scale(); for a general
+// affine it is the geometric mean of the two singular values.
+func (a affine) scale() float64 {
+	det := a.A*a.E - a.B*a.D
+	if det < 0 {
+		det = -det
+	}
+	return math.Sqrt(det)
+}
+
+// rotation returns an approximate rotation angle in radians. For a pure
+// rotation this is exactly the rotation; for a general affine it is a
+// best-effort estimate suitable for the quality diagnostic.
+func (a affine) rotation() float64 {
+	return math.Atan2(a.D-a.B, a.A+a.E)
+}
+
+// estimateAffine returns the least-squares full affine transform mapping
+// src -> dst via the 3x3 normal equations. Returns ok=false if the system
+// is singular (fewer than 3 non-collinear points) or if the source points
+// have zero variance.
+//
+// The system is normalised internally (centroid subtraction, RMS scaling)
+// so the same routine works whether the caller passes image pixels or
+// sub-pixel star centroids.
+func estimateAffine(src, dst []point2D) (affine, bool) {
+	n := len(src)
+	if n < 3 || n != len(dst) {
+		return affine{}, false
+	}
+	var scx, scy float64
+	for i := 0; i < n; i++ {
+		scx += src[i].X
+		scy += src[i].Y
+	}
+	scx /= float64(n)
+	scy /= float64(n)
+	var srms float64
+	for i := 0; i < n; i++ {
+		dx := src[i].X - scx
+		dy := src[i].Y - scy
+		srms += dx*dx + dy*dy
+	}
+	srms = math.Sqrt(srms / float64(n))
+	if srms < 1e-9 {
+		return affine{}, false
+	}
+	var M [3][3]float64
+	var bx, by [3]float64
+	for i := 0; i < n; i++ {
+		xn := (src[i].X - scx) / srms
+		yn := (src[i].Y - scy) / srms
+		M[0][0] += 1
+		M[0][1] += xn
+		M[0][2] += yn
+		M[1][0] += xn
+		M[1][1] += xn * xn
+		M[1][2] += xn * yn
+		M[2][0] += yn
+		M[2][1] += xn * yn
+		M[2][2] += yn * yn
+		bx[0] += dst[i].X
+		bx[1] += dst[i].X * xn
+		bx[2] += dst[i].X * yn
+		by[0] += dst[i].Y
+		by[1] += dst[i].Y * xn
+		by[2] += dst[i].Y * yn
+	}
+	det := M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1]) -
+		M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0]) +
+		M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0])
+	if math.Abs(det) < 1e-12 {
+		return affine{}, false
+	}
+	invDet := 1.0 / det
+	var inv [3][3]float64
+	inv[0][0] = (M[1][1]*M[2][2] - M[1][2]*M[2][1]) * invDet
+	inv[0][1] = -(M[0][1]*M[2][2] - M[0][2]*M[2][1]) * invDet
+	inv[0][2] = (M[0][1]*M[1][2] - M[0][2]*M[1][1]) * invDet
+	inv[1][0] = -(M[1][0]*M[2][2] - M[1][2]*M[2][0]) * invDet
+	inv[1][1] = (M[0][0]*M[2][2] - M[0][2]*M[2][0]) * invDet
+	inv[1][2] = -(M[0][0]*M[1][2] - M[0][2]*M[1][0]) * invDet
+	inv[2][0] = (M[1][0]*M[2][1] - M[1][1]*M[2][0]) * invDet
+	inv[2][1] = -(M[0][0]*M[2][1] - M[0][1]*M[2][0]) * invDet
+	inv[2][2] = (M[0][0]*M[1][1] - M[0][1]*M[1][0]) * invDet
+	var cx, cy [3]float64
+	for j := 0; j < 3; j++ {
+		for k := 0; k < 3; k++ {
+			cx[j] += inv[j][k] * bx[k]
+			cy[j] += inv[j][k] * by[k]
+		}
+	}
+	return affine{
+		A: cx[1] / srms,
+		B: cx[2] / srms,
+		C: cx[0] - cx[1]*scx/srms - cx[2]*scy/srms,
+		D: cy[1] / srms,
+		E: cy[2] / srms,
+		F: cy[0] - cy[1]*scx/srms - cy[2]*scy/srms,
+	}, true
+}
+
 // =========================================================================
 // Triangle-based star matching
 // =========================================================================
@@ -1048,8 +1236,8 @@ func dist2(a, b star) float64 {
 // buildTriangles forms canonical triangles from the top-N brightest stars.
 func buildTriangles(stars []star) []triangle {
 	n := len(stars)
-	if n > 30 {
-		n = 30
+	if n > 40 {
+		n = 40
 	}
 	if n < 3 {
 		return nil
@@ -1296,19 +1484,41 @@ func sampleBilinear(f *frame, x, y float64) (r, g, b float32, ok bool) {
 	return r, g, b, true
 }
 
-// resampleToReference produces a refW×refH frame in the reference coordinate
-// system. Pixels with no source are marked -1.
+// resampleToReference produces a refW×refH frame in the reference
+// coordinate system. Pixels with no source are marked -1. sim maps
+// source -> reference, so its inverse maps reference -> source.
 func resampleToReference(f *frame, sim similarity, refW, refH, workers int) *frame {
-	out := &frame{Width: refW, Height: refH, Pix: make([]float32, refW*refH*3)}
 	inv := sim.inverse()
+	return resampleToReferenceFn(f, func(x, y float64) (float64, float64) {
+		p := inv.apply(point2D{x, y})
+		return p.X, p.Y
+	}, refW, refH, workers)
+}
+
+// resampleToReferenceAffine is the affine-transform variant of
+// resampleToReference. Use it when registration was refined to a full
+// affine model; otherwise resampleToReference with the similarity model
+// is the right call.
+func resampleToReferenceAffine(f *frame, aff affine, refW, refH, workers int) *frame {
+	inv := aff.inverse()
+	return resampleToReferenceFn(f, func(x, y float64) (float64, float64) {
+		p := inv.apply(point2D{x, y})
+		return p.X, p.Y
+	}, refW, refH, workers)
+}
+
+// resampleToReferenceFn is the shared body of the two public resamplers.
+// sampleRef maps a reference coordinate (x, y) to the source coordinate
+// that should be sampled there.
+func resampleToReferenceFn(f *frame, sampleRef func(x, y float64) (float64, float64), refW, refH, workers int) *frame {
+	out := &frame{Width: refW, Height: refH, Pix: make([]float32, refW*refH*3)}
 	rowBand := func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			fy := float64(y)
 			rowBase := y * refW * 3
 			for x := 0; x < refW; x++ {
 				fx := float64(x)
-				sx := inv.SC*fx - inv.SS*fy + inv.Tx
-				sy := inv.SS*fx + inv.SC*fy + inv.Ty
+				sx, sy := sampleRef(fx, fy)
 				i := rowBase + x*3
 				r, g, b, ok := sampleBilinear(f, sx, sy)
 				if ok {
@@ -2296,7 +2506,12 @@ func logf(format string, args ...any) {
 }
 
 type frameTransform struct {
-	sim       similarity
+	sim similarity
+	aff *affine // optional full-affine refinement; when non-nil,
+	// the resampler and bounding-box diagnostic use it
+	// instead of sim. Set only when affine refinement
+	// measurably reduces the inlier residual, so most
+	// frames stay on the faster similarity path.
 	valid     bool
 	starCount int
 	inliers   int
@@ -2366,6 +2581,36 @@ func frameBoxInReference(fw, fh int, sim similarity) (minX, minY, maxX, maxY int
 	maxX, maxY = -1, -1
 	for _, p := range pts {
 		q := sim.apply(p)
+		x, y := int(q.X), int(q.Y)
+		if x < minX {
+			minX = x
+		}
+		if y < minY {
+			minY = y
+		}
+		if x > maxX {
+			maxX = x
+		}
+		if y > maxY {
+			maxY = y
+		}
+	}
+	return minX, minY, maxX, maxY
+}
+
+// frameBoxInReferenceAffine is the affine variant of frameBoxInReference.
+// Use it when registration was refined to a full affine model.
+func frameBoxInReferenceAffine(fw, fh int, aff affine) (minX, minY, maxX, maxY int) {
+	pts := []point2D{
+		{0, 0},
+		{float64(fw - 1), 0},
+		{float64(fw - 1), float64(fh - 1)},
+		{0, float64(fh - 1)},
+	}
+	minX, minY = math.MaxInt32, math.MaxInt32
+	maxX, maxY = -1, -1
+	for _, p := range pts {
+		q := aff.apply(p)
 		x, y := int(q.X), int(q.Y)
 		if x < minX {
 			minX = x
@@ -3207,10 +3452,41 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				}
 				scale := sim.scale()
 				rotDeg := sim.rotation() * 180 / math.Pi
-				logf("  register %s: scale=%.4f rot=%.2f° inliers=%d",
-					filepath.Base(accepted[i].path), scale, rotDeg, inliers)
+
+				// Optional affine refinement. Only attempt when there are
+				// enough inliers to make a 6-DOF fit well-conditioned, and
+				// only keep it when it measurably reduces the residual.
+				var affRef *affine
+				if inliers >= 15 {
+					srcPts, dstPts := collectInliers(sim, starLists[i], refStars, 3.0)
+					if len(srcPts) >= 15 {
+						if aff, aok := estimateAffine(srcPts, dstPts); aok {
+							if sc := aff.scale(); sc > 0.5 && sc < 2.0 {
+								var simRes, affRes float64
+								for j := range srcPts {
+									pS := sim.apply(srcPts[j])
+									pA := aff.apply(srcPts[j])
+									simRes += math.Hypot(pS.X-dstPts[j].X, pS.Y-dstPts[j].Y)
+									affRes += math.Hypot(pA.X-dstPts[j].X, pA.Y-dstPts[j].Y)
+								}
+								if simRes > 1e-6 && affRes < 0.90*simRes {
+									affCopy := aff
+									affRef = &affCopy
+									logf("  register %s: scale=%.4f rot=%.2f° inliers=%d [affine %.1f%% residual]",
+										filepath.Base(accepted[i].path), scale, rotDeg, inliers,
+										100*(1-affRes/simRes))
+								}
+							}
+						}
+					}
+				}
+				if affRef == nil {
+					logf("  register %s: scale=%.4f rot=%.2f° inliers=%d",
+						filepath.Base(accepted[i].path), scale, rotDeg, inliers)
+				}
 				transforms[i] = frameTransform{
 					sim:       sim,
+					aff:       affRef,
 					valid:     true,
 					starCount: len(starLists[i]),
 					inliers:   inliers,
@@ -3270,7 +3546,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				}
 			}
 			calibrate(f, darkFrame, flatFrame, biasFrame)
-			resampled := resampleToReference(f, transforms[i].sim, refW, refH, workers)
+			var resampled *frame
+			if transforms[i].aff != nil {
+				resampled = resampleToReferenceAffine(f, *transforms[i].aff, refW, refH, workers)
+			} else {
+				resampled = resampleToReference(f, transforms[i].sim, refW, refH, workers)
+			}
 			f.Pix = nil
 			if opts.Method == "mean" {
 				if err := regAcc.addFrameMasked(resampled, workers, validCount); err != nil {
@@ -3313,7 +3594,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			td.OffsetX = origin.X
 			td.OffsetY = origin.Y
 			td.Quality = computeFrameQuality(td.Inliers, td.Stars, len(refStars), td.Scale, td.RotationDeg)
-			td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReference(refW, refH, transforms[i].sim)
+			if transforms[i].aff != nil {
+				td.Note = strings.TrimSpace(td.Note + " [affine]")
+			}
+			if transforms[i].aff != nil {
+				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReferenceAffine(refW, refH, *transforms[i].aff)
+			} else {
+				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReference(refW, refH, transforms[i].sim)
+			}
 			bx0, by0 := td.BoxMinX, td.BoxMinY
 			bx1, by1 := td.BoxMaxX, td.BoxMaxY
 			if bx0 < 0 {
@@ -3358,10 +3646,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			cropExplanation = fmt.Sprintf(
 				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The following frames constrain the crop or have low registration quality: %s. A normal frame has scale~1.0 and rotation~0deg (translation-only alignment); frames with scale far from 1 or rotation far from 0 were typically fitted on only a few noise stars, which shrinks their actual footprint inside the reference and forces the safe crop to shrink to the common overlap. Removing these frames would yield a larger crop.",
 				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
-		} else {
 			cropExplanation = fmt.Sprintf(
 				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). All registered frames cover the full reference image, so no frame is limiting the crop.",
 				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH)
+		}
+		numAffine := 0
+		for i := range transforms {
+			if transforms[i].aff != nil {
+				numAffine++
+			}
+		}
+		if numAffine > 0 {
+			cropExplanation += fmt.Sprintf(" %d frame(s) were refined with a full affine model (handles field rotation and mild optical distortion); the crop accounts for their true footprint.", numAffine)
 		}
 	}
 
@@ -3819,6 +4115,9 @@ func runSelfTests() int {
 		{"chroma denoise", testChromaDenoiseGB},
 		{"chroma denoise multi-scale", testChromaDenoiseMultiScale},
 		{"apply curves", testApplyCurves},
+		{"estimate affine", testEstimateAffine},
+		{"affine inverse round trip", testAffineInverseRoundTrip},
+		{"high pass radius adaptive", testHighPassRadiusAdaptive},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -5808,7 +6107,12 @@ func testChromaDenoiseMultiScale() error {
 }
 
 func testApplyCurves() error {
-	const w, h = 32, 1
+	// w must be odd so the midpoint pixel lands exactly at 0.5: mid =
+	// (w-1)/2, and mid/(w-1) == 0.5 iff w-1 is even, i.e. w is odd.
+	// Earlier versions used w=32 and asserted ((0.5-0.03)/0.97)^1.2,
+	// but the mid pixel was at 15/31 ~= 0.48387, so the got/want values
+	// differed by ~0.017 and the test failed once it was actually run.
+	const w, h = 33, 1
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	for i := 0; i < w; i++ {
 		v := float32(i) / float32(w-1)
@@ -5826,7 +6130,7 @@ func testApplyCurves() error {
 	if math.Abs(float64(last)-1.0) > 1e-6 {
 		return fmt.Errorf("white should stay 1, got %v", last)
 	}
-	// 0.5 -> ((0.5-0.03)/0.97)^1.20 ~= 0.412
+	// 0.5 -> ((0.5-0.03)/0.97)^1.20 ~= 0.419
 	mid := (w - 1) / 2
 	gotMid := out.Pix[mid*3]
 	wantMid := float32(math.Pow((0.5-0.03)/0.97, 1.20))
@@ -5854,6 +6158,86 @@ func testApplyCurves() error {
 	for i := 0; i < 6; i++ {
 		if out.Pix[i] < 0 || out.Pix[i] > 1 {
 			return fmt.Errorf("output %d out of range: %v", i, out.Pix[i])
+		}
+	}
+	return nil
+}
+
+func testEstimateAffine() error {
+	src := []point2D{
+		{0, 0}, {10, 0}, {0, 10}, {10, 10}, {5, 5}, {3, 7}, {8, 2},
+	}
+	theta := 5.0 * math.Pi / 180
+	c, s := math.Cos(theta), math.Sin(theta)
+	a := affine{
+		A: 1.02 * c,
+		B: -1.02*s + 0.02,
+		C: 2,
+		D: 1.02 * s,
+		E: 1.02 * c,
+		F: 3,
+	}
+	dst := make([]point2D, len(src))
+	for i, p := range src {
+		dst[i] = a.apply(p)
+	}
+	got, ok := estimateAffine(src, dst)
+	if !ok {
+		return errors.New("estimateAffine returned ok=false")
+	}
+	for i := range src {
+		want := a.apply(src[i])
+		g := got.apply(src[i])
+		if math.Hypot(g.X-want.X, g.Y-want.Y) > 1e-6 {
+			return fmt.Errorf("point %d: got %v, want %v", i, g, want)
+		}
+	}
+	if _, ok := estimateAffine(src[:2], dst[:2]); ok {
+		return errors.New("estimateAffine accepted <3 points")
+	}
+	line := []point2D{{0, 0}, {1, 1}, {2, 2}, {3, 3}}
+	if _, ok := estimateAffine(line, line); ok {
+		return errors.New("estimateAffine accepted collinear points")
+	}
+	return nil
+}
+
+func testAffineInverseRoundTrip() error {
+	a := affine{A: 1.1, B: -0.2, C: 5, D: 0.3, E: 0.9, F: -3}
+	inv := a.inverse()
+	for _, p := range []point2D{{0, 0}, {10, 5}, {-5, 20}} {
+		q := a.apply(p)
+		back := inv.apply(q)
+		if math.Hypot(back.X-p.X, back.Y-p.Y) > 1e-9 {
+			return fmt.Errorf("roundtrip %v -> %v -> %v", p, q, back)
+		}
+	}
+	rot := affine{
+		A: math.Cos(0.3), B: -math.Sin(0.3), C: 0,
+		D: math.Sin(0.3), E: math.Cos(0.3), F: 0,
+	}
+	if math.Abs(rot.scale()-1.0) > 1e-9 {
+		return fmt.Errorf("unit rotation scale = %v, want 1", rot.scale())
+	}
+	if math.Abs(rot.rotation()-0.3) > 1e-9 {
+		return fmt.Errorf("rotation = %v, want 0.3", rot.rotation())
+	}
+	return nil
+}
+
+func testHighPassRadiusAdaptive() error {
+	cases := []struct{ w, h, want int }{
+		{500, 500, 8},
+		{1000, 1000, 8},
+		{2000, 2000, 10},
+		{4000, 3000, 15},
+		{8000, 6000, 24},
+		{100, 100, 8},
+	}
+	for i, c := range cases {
+		got := estimateHighPassRadius(c.w, c.h)
+		if got != c.want {
+			return fmt.Errorf("case %d (%dx%d): got %d, want %d", i, c.w, c.h, got, c.want)
 		}
 	}
 	return nil
