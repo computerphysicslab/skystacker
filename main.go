@@ -2952,6 +2952,17 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if opts.PostProcess && !opts.StackOnly {
 		estSecs += 10.0
 	}
+	// The median/sigma reduction is O(pixels x frames x log(frames))
+	// and dominates the runtime for anything beyond a handful of
+	// frames. Empirically ~0.2 s/Mpx/frame for median and ~0.7 s/Mpx/frame
+	// for MAD-based sigma clipping on a modern laptop (both passes).
+	mpxFrames := float64(len(candidates)) * (float64(refW*refH) / 1e6)
+	switch opts.Method {
+	case "median":
+		estSecs += 0.2 * mpxFrames
+	case "sigma":
+		estSecs += 0.7 * mpxFrames
+	}
 	logf("Estimated processing time: ~%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second))
 
 	// Memory estimation.
@@ -3101,12 +3112,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				return fmt.Errorf("spill %s: %w", c.path, err)
 			}
 			spillPaths1 = append(spillPaths1, sp)
-			f.Pix = nil // release decoded pixels
-		} else {
-			if err := unregAcc.addFrame(f, workers); err != nil {
-				return fmt.Errorf("accumulate %s: %w", c.path, err)
-			}
 		}
+		// Accumulate into the plain mean accumulator regardless of
+		// method. This keeps stacked_no_correction_mean semantically
+		// correct (it is the plain arithmetic mean without any
+		// registration), while the sigma/median reduction writes
+		// its own outputs into unregSumPix / unregMeanPix below.
+		if err := unregAcc.addFrame(f, workers); err != nil {
+			return fmt.Errorf("accumulate %s: %w", c.path, err)
+		}
+		f.Pix = nil
 		accepted = append(accepted, c)
 	}
 	if unregAcc.Count == 0 && len(spillPaths1) == 0 {
@@ -3325,7 +3340,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 
 	// ============== Tiled median/sigma reduction (spill-based)
-	var unregSumPix []float32
+	var unregSumPix, unregMeanPix []float32
 	if opts.Method == "median" || opts.Method == "sigma" {
 		// Unregistered stack: full frame, all accepted frames.
 		tr := opts.SigmaClipThreshold
@@ -3345,11 +3360,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return fmt.Errorf("reduce unregistered: %w", rerr)
 		}
 		unregSumPix = sum1
-		unregAcc.Pix = mean1
-		unregAcc.Count = 0 // prevent later divide()
+		unregMeanPix = mean1
+		// Do NOT overwrite unregAcc. It holds the plain sum
+		// accumulated in Pass 1 and is divided later to produce
+		// stacked_no_correction_mean.jpg, which is always the
+		// plain arithmetic mean, regardless of method.
 		if len(spillPaths2) == 0 {
 			// No registration: report reduction and write maps directly.
 			writeGrayscaleMaps(outputDir, refW, refH, rej1, wgt1)
+			logf("Reduction complete (unregistered only)")
 		}
 
 		// Registered stack (only if registration ran and produced spills).
@@ -3470,7 +3489,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		var sumPix, meanPix []float32
 		if unregSumPix != nil {
 			sumPix = unregSumPix
-			meanPix = unregAcc.Pix
+			meanPix = unregMeanPix
 			sumMax = 0
 			for _, v := range sumPix {
 				if v > sumMax {
@@ -3537,9 +3556,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("write min jpg: %w", err)
 	}
 
-	if registrationOn {
-		unregAcc.divide()
-	}
+	// Divide the unregistered accumulator regardless of mode.
+	// divide() is idempotent: it is a no-op when Count == 0,
+	// so calling it twice (once inside the mean path and
+	// once here) is safe. With the fix in Pass 1 it is the
+	// plain arithmetic mean over all accepted frames, which
+	// is what stacked_no_correction_mean.jpg is documented to
+	// be even when --method is median or sigma.
+	unregAcc.divide()
 	logf("Writing no-correction mean preview")
 	if err := writeFileAtomic(noCorrJPG, func(w io.Writer) error {
 		return writePreviewJPEG(w, refW, refH, unregAcc.Pix)
@@ -3582,9 +3606,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	} else {
 		notes = append(notes,
 			"Registration: disabled. Frames were combined in their existing pixel coordinate system.",
-			"stacked_mean.tiff and stacked_no_correction_mean.tiff are identical in this run.",
-			fmt.Sprintf("Sum TIFF was divided by %g (global max); multiply by %g to recover raw float32 sum.", sumMax, sumMax),
 		)
+		if opts.Method == "mean" {
+			notes = append(notes, "stacked_mean.tiff and stacked_no_correction_mean.tiff are identical in this run (both are the plain arithmetic mean).")
+		} else {
+			notes = append(notes, fmt.Sprintf("stacked_mean.tiff is the %s of all frames; stacked_no_correction_mean.tiff is the plain arithmetic mean.", opts.Method))
+		}
+		notes = append(notes, fmt.Sprintf("Sum TIFF was divided by %g (global max); multiply by %g to recover raw float32 sum.", sumMax, sumMax))
 	}
 
 	acceptedPaths := make([]string, len(accepted))
@@ -3603,10 +3631,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		Width:             refW,
 		Height:            refH,
 		Channels:          3,
-		Method:            methodString(registrationOn),
+		Method:            methodString(registrationOn, opts.Method),
 		AccumulatorType:   "float32 (interleaved RGB)",
 		OutputFormat:      "TIFF: uncompressed, little-endian, RGB, IEEE float32, single strip. JPG: 8-bit, gamma 0.5 display preview.",
-		OutputScaling:     scalingString(registrationOn),
+		OutputScaling:     scalingString(registrationOn, opts.Method),
 		RegistrationOn:    registrationOn,
 		RegisteredCount:   registeredCount,
 		RegistrationFails: regFailures,
@@ -3645,18 +3673,37 @@ func appendIf(cond bool, item string) []string {
 	}
 	return nil
 }
-func methodString(registered bool) string {
-	if registered {
-		return "sum and arithmetic mean over registered frames; no-correction mean over all frames"
+func methodString(registered bool, method string) string {
+	var prefix string
+	switch method {
+	case "median":
+		prefix = "sum and per-pixel median"
+	case "sigma":
+		prefix = "sum and MAD-based sigma-clipped mean"
+	default:
+		prefix = "sum and arithmetic mean"
 	}
-	return "sum and arithmetic mean (no registration)"
+	if registered {
+		return prefix + " over registered frames; no_correction is the plain arithmetic mean over all frames"
+	}
+	return prefix + " (no registration); no_correction is the plain arithmetic mean"
 }
 
-func scalingString(registered bool) string {
-	if registered {
-		return "registered sum.tiff divided by its global max (recoverable via reported factor); mean.tiff divided by per-pixel valid count; no_correction_mean.tiff divided by total frames. Preview JPGs use gamma 0.5."
+func scalingString(registered bool, method string) string {
+	var meanKind string
+	switch method {
+	case "median":
+		meanKind = "per-pixel median"
+	case "sigma":
+		meanKind = "MAD-based sigma-clipped mean"
+	default:
+		meanKind = "arithmetic mean divided by per-pixel valid count"
 	}
-	return "sum.tiff divided by its global max (recoverable via reported factor); mean.tiff divided by total frames. Preview JPGs use gamma 0.5."
+	base := "sum.tiff divided by its global max (recoverable via reported factor); stacked_mean is the " + meanKind + "; no_correction_mean.tiff is the plain arithmetic mean of all frames. Preview JPGs use gamma 0.5."
+	if registered {
+		return "registered " + base
+	}
+	return base
 }
 
 // =========================================================================
