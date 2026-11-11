@@ -3790,6 +3790,7 @@ func runSelfTests() int {
 		{"sigma clip all same", testSigmaClipAllSame},
 		{"read tile from raw", testReadTileFromRaw},
 		{"reduce tiles stack", testReduceTilesStack},
+		{"chroma denoise", testChromaDenoiseGB},
 		{"report contains", testReportContains},
 	}
 	failures := 0
@@ -5619,6 +5620,74 @@ func testReduceTilesStack() error {
 	return nil
 }
 
+func testChromaDenoiseGB() error {
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	// Build an image with uniform luminance Y=0.5 but chroma that
+	// follows a sinusoidal spatial pattern at ~20 px scale. This is
+	// the synthetic analogue of "color blotch" noise in the sky
+	// background of a stretched astro frame.
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := (y*w + x) * 3
+			cb := 0.10 * math.Sin(float64(x+y)/20*2*math.Pi)
+			cr := 0.10 * math.Sin(float64(x-y)/20*2*math.Pi)
+			y0 := 0.5
+			r := y0 + cr
+			b := y0 + cb
+			g := y0 - 0.5094*cr - 0.1942*cb
+			f.Pix[i] = float32(clampFloat(r, 0, 1))
+			f.Pix[i+1] = float32(clampFloat(g, 0, 1))
+			f.Pix[i+2] = float32(clampFloat(b, 0, 1))
+		}
+	}
+	out := chromaDenoiseGB(f, 24, 0.02, 0.7, 0.25)
+	stddev := func(v []float64) float64 {
+		var sum, sq float64
+		for _, x := range v {
+			sum += x
+			sq += x * x
+		}
+		n := float64(len(v))
+		mean := sum / n
+		return math.Sqrt(sq/n - mean*mean)
+	}
+	var origCb, afterCb, origY, afterY []float64
+	for i := 0; i < w*h; i++ {
+		r0 := float64(f.Pix[i*3])
+		g0 := float64(f.Pix[i*3+1])
+		b0 := float64(f.Pix[i*3+2])
+		yI0 := 0.299*r0 + 0.587*g0 + 0.114*b0
+		origY = append(origY, yI0)
+		origCb = append(origCb, b0-yI0)
+		r1 := float64(out.Pix[i*3])
+		g1 := float64(out.Pix[i*3+1])
+		b1 := float64(out.Pix[i*3+2])
+		yI1 := 0.299*r1 + 0.587*g1 + 0.114*b1
+		afterY = append(afterY, yI1)
+		afterCb = append(afterCb, b1-yI1)
+	}
+	origCbSD := stddev(origCb)
+	afterCbSD := stddev(afterCb)
+	origYSD := stddev(origY)
+	afterYSD := stddev(afterY)
+	if origCbSD < 0.03 {
+		return fmt.Errorf("test fixture: original chroma stddev %.4f too small", origCbSD)
+	}
+	// Chroma noise must drop by at least 40%.
+	if afterCbSD >= 0.6*origCbSD {
+		return fmt.Errorf("chroma stddev reduced only from %.4f to %.4f", origCbSD, afterCbSD)
+	}
+	// Luminance should stay essentially flat (original is already flat).
+	if origYSD > 0.02 {
+		return fmt.Errorf("test fixture: original luminance stddev %.4f too large", origYSD)
+	}
+	if afterYSD > 0.03 {
+		return fmt.Errorf("luminance stddev grew to %.4f (should stay near 0)", afterYSD)
+	}
+	return nil
+}
+
 func testReportContains() error {
 	dir, err := os.MkdirTemp("", "skystacker-report-")
 	if err != nil {
@@ -6711,6 +6780,26 @@ func denoiseFrame(f *frame, radius int, eps, strength float64) *frame {
 		}
 		cur = out
 	}
+
+	// Chroma-selective coarse pass: removes low-frequency
+	// "color blotch" noise (red/green/blue granularity 15-40 px
+	// wide) that small-radius passes cannot see, without
+	// softening the luminance detail that defines nebula
+	// structure. Only fires for strength >= 1.5 so a very mild
+	// --denoise-strength 1 does not silently gain a large
+	// chroma blur.
+	if strength >= 1.5 {
+		coarseRadius := radius * 8
+		if coarseRadius < 20 {
+			coarseRadius = 20
+		}
+		if coarseRadius > 64 {
+			coarseRadius = 64
+		}
+		logf("  denoise: chroma coarse pass (radius=%d, chroma=0.7, lum=0.25)", coarseRadius)
+		cur = chromaDenoiseGB(cur, coarseRadius, eps*2.0, 0.7, 0.25)
+	}
+
 	return cur
 }
 
@@ -6739,6 +6828,99 @@ func blendWeighted(a, b *frame, wa float64) *frame {
 			v = 1
 		}
 		result.Pix[i] = v
+	}
+	return result
+}
+
+// chromaDenoiseGB is a chroma-selective denoise pass. It splits the
+// image into approximate luminance (Y) and chroma (Cb, Cr), applies a
+// wide, aggressive guided filter to chroma and a narrower, milder one
+// to luminance, then recombines. This is the standard technique for
+// removing low-frequency "color blotch" noise: the eye is far less
+// sensitive to chroma blur than to luminance blur, so chroma can be
+// smoothed much more aggressively without the image looking soft.
+//
+// Small-radius per-channel guided filters cannot fix these blobs
+// because the blobs are 15-40 px wide and have similar local variance
+// to real luminance structure, so the guided filter mistakes them for
+// detail and preserves them.
+//
+// chromaStrength controls how much of the chroma filtered result is
+// blended in (0 = no change, 1 = fully filtered).
+// lumStrength controls the same for luminance, and is meant to be
+// small (0.1-0.3) so that nebula detail survives.
+func chromaDenoiseGB(f *frame, radius int, eps, chromaStrength, lumStrength float64) *frame {
+	if chromaStrength <= 0 && lumStrength <= 0 {
+		return f
+	}
+	if radius < 1 {
+		radius = 24
+	}
+	nPix := f.Width * f.Height
+	Y := make([]float32, nPix)
+	Cb := make([]float32, nPix)
+	Cr := make([]float32, nPix)
+	for i := 0; i < nPix; i++ {
+		r := float64(f.Pix[i*3])
+		g := float64(f.Pix[i*3+1])
+		b := float64(f.Pix[i*3+2])
+		y := 0.299*r + 0.587*g + 0.114*b
+		Y[i] = float32(y)
+		Cb[i] = float32(b - y)
+		Cr[i] = float32(r - y)
+	}
+	if chromaStrength > 0 {
+		Cbd := guidedFilterGray(Cb, f.Width, f.Height, radius, eps)
+		Crd := guidedFilterGray(Cr, f.Width, f.Height, radius, eps)
+		cs := float32(chromaStrength)
+		for i := 0; i < nPix; i++ {
+			Cb[i] = Cb[i] + cs*(Cbd[i]-Cb[i])
+			Cr[i] = Cr[i] + cs*(Crd[i]-Cr[i])
+		}
+	}
+	if lumStrength > 0 {
+		lumRadius := radius / 4
+		if lumRadius < 3 {
+			lumRadius = 3
+		}
+		Yd := guidedFilterGray(Y, f.Width, f.Height, lumRadius, eps*0.5)
+		ls := float32(lumStrength)
+		for i := 0; i < nPix; i++ {
+			Y[i] = Y[i] + ls*(Yd[i]-Y[i])
+		}
+	}
+	// Recombine RGB from Y, Cb, Cr.
+	//   r = y + cr
+	//   b = y + cb
+	//   g = y - (0.299/0.587)*cr - (0.114/0.587)*cb
+	const cCrToG = 0.299 / 0.587
+	const cCbToG = 0.114 / 0.587
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for i := 0; i < nPix; i++ {
+		y := Y[i]
+		cr := Cr[i]
+		cb := Cb[i]
+		r := y + cr
+		b := y + cb
+		g := y - float32(cCrToG)*cr - float32(cCbToG)*cb
+		if r < 0 {
+			r = 0
+		} else if r > 1 {
+			r = 1
+		}
+		if g < 0 {
+			g = 0
+		} else if g > 1 {
+			g = 1
+		}
+		if b < 0 {
+			b = 0
+		} else if b > 1 {
+			b = 1
+		}
+		result.Pix[i*3] = r
+		result.Pix[i*3+1] = g
+		result.Pix[i*3+2] = b
 	}
 	return result
 }
