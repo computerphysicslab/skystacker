@@ -60,6 +60,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,6 +123,11 @@ type cliOptions struct {
 	NoCurves           bool
 	CurvesBlack        float64
 	CurvesGamma        float64
+	AddSpikes          bool
+	SpikesPercent      float64
+	SpikesLength       float64
+	SpikesIntensity    float64
+	SpikesArms         int
 	SigmaClipThreshold float64
 	SigmaClipIters     int
 	TileSize           int
@@ -185,6 +191,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.NoCurves, "no-curves", false, "skip the background-darkening curves step (post_step6_curves.jpg)")
 	fs.Float64Var(&o.CurvesBlack, "curves-black", 0.03, "curves: shadow crush point (0-0.5, 0 disables crush)")
 	fs.Float64Var(&o.CurvesGamma, "curves-gamma", 1.20, "curves: midtone gamma (>1 darkens, <1 brightens, 1 neutral)")
+	fs.BoolVar(&o.AddSpikes, "spikes", false, "add diffraction spikes to the brightest stars (post_step8_*.jpg only)")
+	fs.Float64Var(&o.SpikesPercent, "spikes-percent", 1.0, "percent of detected stars to spike (0-50, default 1.0)")
+	fs.Float64Var(&o.SpikesLength, "spikes-length", 100.0, "spike arm half-length in pixels (1-5000)")
+	fs.Float64Var(&o.SpikesIntensity, "spikes-intensity", 0.7, "peak additive spike brightness (0.1-2.0)")
+	fs.IntVar(&o.SpikesArms, "spikes-arms", 4, "number of spike arms: 4=cross, 6=hexagonal (2-12)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -211,7 +222,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
 				skipNext = true
 			}
 		} else {
@@ -263,6 +274,18 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.CurvesGamma < 0.1 || o.CurvesGamma > 4.0 {
 		return nil, fmt.Errorf("--curves-gamma must be in [0.1, 4.0], got %g", o.CurvesGamma)
+	}
+	if o.SpikesPercent < 0 || o.SpikesPercent > 50 {
+		return nil, fmt.Errorf("--spikes-percent must be in [0, 50], got %g", o.SpikesPercent)
+	}
+	if o.SpikesLength <= 0 || o.SpikesLength > 5000 {
+		return nil, fmt.Errorf("--spikes-length must be in (0, 5000], got %g", o.SpikesLength)
+	}
+	if o.SpikesIntensity <= 0 || o.SpikesIntensity > 2.0 {
+		return nil, fmt.Errorf("--spikes-intensity must be in (0, 2.0], got %g", o.SpikesIntensity)
+	}
+	if o.SpikesArms < 2 || o.SpikesArms > 12 {
+		return nil, fmt.Errorf("--spikes-arms must be in [2, 12], got %d", o.SpikesArms)
 	}
 	if o.SigmaClipThreshold < 0 || o.SigmaClipThreshold > 10 {
 		return nil, fmt.Errorf("--sigma-clip must be in [0, 10], got %g", o.SigmaClipThreshold)
@@ -330,6 +353,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --no-curves           skip the background-darkening curves step (post_step6_curves.jpg)")
 	fmt.Fprintln(w, "  --curves-black F      curves: shadow crush point (0-0.5, default 0.03)")
 	fmt.Fprintln(w, "  --curves-gamma F      curves: midtone gamma (>1 darkens, <1 brightens, default 1.20)")
+	fmt.Fprintln(w, "  --spikes              add diffraction spikes to the brightest stars (post_step8_*.jpg)")
+	fmt.Fprintln(w, "  --spikes-percent F    percent of detected stars to spike (default 1.0)")
+	fmt.Fprintln(w, "  --spikes-length F     spike arm half-length in px (default 100)")
+	fmt.Fprintln(w, "  --spikes-intensity F  peak additive spike brightness (default 0.7)")
+	fmt.Fprintln(w, "  --spikes-arms N       number of spike arms: 4=cross, 6=hexagonal (default 4)")
 	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
 	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
@@ -2432,6 +2460,11 @@ type runOptions struct {
 	NoCurves           bool
 	CurvesBlack        float64
 	CurvesGamma        float64
+	AddSpikes          bool
+	SpikesPercent      float64
+	SpikesLength       float64
+	SpikesIntensity    float64
+	SpikesArms         int
 	SigmaClipThreshold float64
 	SigmaClipIters     int
 	TileSize           int
@@ -4115,6 +4148,7 @@ func runSelfTests() int {
 		{"chroma denoise", testChromaDenoiseGB},
 		{"chroma denoise multi-scale", testChromaDenoiseMultiScale},
 		{"apply curves", testApplyCurves},
+		{"add diffraction spikes", testAddDiffractionSpikes},
 		{"estimate affine", testEstimateAffine},
 		{"affine inverse round trip", testAffineInverseRoundTrip},
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
@@ -6163,6 +6197,96 @@ func testApplyCurves() error {
 	return nil
 }
 
+func testAddDiffractionSpikes() error {
+	// --- Part 1: selectSpikeStars percent-based selection ---
+	const w, h = 200, 200
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.05
+	}
+	// 20 stars in a grid (2 rows x 10 cols), each a single bright pixel.
+	// Slight brightness variation keeps the flux-sort well-defined.
+	for k := 0; k < 20; k++ {
+		cx := 20 + (k%10)*16
+		cy := 20 + (k/10)*100
+		v := float32(0.9) - float32(k)*0.03
+		for c := 0; c < 3; c++ {
+			f.Pix[(cy*w+cx)*3+c] = v
+		}
+	}
+
+	all := selectSpikeStars(f, 100.0)
+	if len(all) < 15 {
+		return fmt.Errorf("percent=100: expected ~20, got %d", len(all))
+	}
+	if n := selectSpikeStars(f, 0); n != nil {
+		return fmt.Errorf("percent=0: expected nil, got %d", len(n))
+	}
+	one := selectSpikeStars(f, 1.0)
+	if len(one) != 1 {
+		return fmt.Errorf("percent=1: expected 1 (floored), got %d", len(one))
+	}
+	if all[0].Flux < all[len(all)-1].Flux {
+		return fmt.Errorf("stars not sorted by decreasing flux")
+	}
+
+	// --- Part 2: overlaySpikes at baseAngle=0 (arms at 0/90/180/270 deg) ---
+	out := overlaySpikes(f, all[:1], 20, 0.7, 4, 0)
+	bx := int(all[0].X + 0.5)
+	by := int(all[0].Y + 0.5)
+	right := out.Pix[(by*w+bx+5)*3]
+	if right <= 0.05 {
+		return fmt.Errorf("horizontal spike not visible at +5px: %v", right)
+	}
+	up := out.Pix[((by-5)*w+bx)*3]
+	if up <= 0.05 {
+		return fmt.Errorf("vertical spike not visible at -5px: %v", up)
+	}
+	diag := out.Pix[((by+5)*w+bx+5)*3]
+	if diag > 0.10 {
+		return fmt.Errorf("diagonal should not be spiked with 4 arms at baseAngle=0: %v", diag)
+	}
+
+	// --- Part 3: rotate baseAngle to pi/4, diagonal now spiked ---
+	out45 := overlaySpikes(f, all[:1], 20, 0.7, 4, math.Pi/4)
+	diag45 := out45.Pix[((by+5)*w+bx+5)*3]
+	if diag45 <= 0.05 {
+		return fmt.Errorf("diagonal should be spiked at baseAngle=pi/4: %v", diag45)
+	}
+
+	// --- Part 4: proportional intensity ---
+	f2 := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f2.Pix {
+		f2.Pix[i] = 0.05
+	}
+	// Bright star at (50, 50), dim star at (150, 50). Both single pixels.
+	for c := 0; c < 3; c++ {
+		f2.Pix[(50*w+50)*3+c] = 0.9
+		f2.Pix[(50*w+150)*3+c] = 0.3
+	}
+	stars2 := selectSpikeStars(f2, 100.0)
+	if len(stars2) != 2 {
+		return fmt.Errorf("expected 2 stars, got %d", len(stars2))
+	}
+	out2 := overlaySpikes(f2, stars2, 20, 0.7, 4, 0)
+	// stars2[0] is the brighter star at (50, 50); spike at (55, 50).
+	// stars2[1] is the dimmer star at (150, 50); spike at (155, 50).
+	bSpike := out2.Pix[(50*w+55)*3]
+	dSpike := out2.Pix[(50*w+155)*3]
+	if bSpike <= dSpike {
+		return fmt.Errorf("brighter star spike (%.3f) should exceed dimmer (%.3f)",
+			bSpike, dSpike)
+	}
+	if bSpike < 0.4 {
+		return fmt.Errorf("bright star spike too dim: %.3f", bSpike)
+	}
+	if dSpike > 0.3 {
+		return fmt.Errorf("dim star spike too bright: %.3f", dSpike)
+	}
+
+	return nil
+}
+
 func testEstimateAffine() error {
 	src := []point2D{
 		{0, 0}, {10, 0}, {0, 10}, {10, 10}, {5, 5}, {3, 7}, {8, 2},
@@ -7675,6 +7799,146 @@ func applyCurves(f *frame, black, gamma float64) *frame {
 	return result
 }
 
+// selectSpikeStars detects the brightest stars in f and returns the top
+// `percent` percent of them, sorted by decreasing flux. Capped at 100
+// stars (a practical limit on dense fields) and floored at 1 (so a very
+// small percent still produces a visible effect on sparse fields). Returns
+// nil if percent <= 0 or no stars are detected at all.
+//
+// Detection uses 5 sigma, the strictest threshold used elsewhere in the
+// pipeline, so noise blobs never become spikes.
+func selectSpikeStars(f *frame, percent float64) []star {
+	if percent <= 0 {
+		return nil
+	}
+	stars := detectStarsSigma(f, 5000, 5.0)
+	if len(stars) == 0 {
+		return nil
+	}
+	n := int(float64(len(stars)) * percent / 100.0)
+	if n < 1 {
+		n = 1
+	}
+	if n > 100 {
+		n = 100
+	}
+	if n > len(stars) {
+		n = len(stars)
+	}
+	return stars[:n]
+}
+
+// overlaySpikes draws diffraction spikes through each star's centroid.
+// The intensity and length of each star's spikes are proportional to
+// that star's flux relative to the brightest star in the list, so a star
+// half as bright as the brightest gets half-length and half-intensity
+// spikes. The base angle determines the arm orientation (shared by every
+// star in the frame, per the "same orientation for all stars"
+// requirement); each arm is at baseAngle + arm * 2*pi/numArms.
+//
+// The effect is purely additive: spikes brighten pixels along their rays
+// but never darken anything, so applying it on top of a finished
+// post-processing pipeline cannot destroy background or star detail.
+//
+// Parameters:
+//   - f:             input frame
+//   - stars:         star list; the first entry is used as the brightness
+//     reference. Typically the output of selectSpikeStars.
+//   - baseLength:    arm half-length in pixels for the brightest star
+//   - baseIntensity: peak additive brightness for the brightest star
+//   - numArms:       number of spike arms (2-12, clamped)
+//   - baseAngle:     base orientation in radians
+//
+// Returns a new frame. Returns f unchanged if stars is empty, any of
+// baseLength/baseIntensity is non-positive, or numArms < 2.
+func overlaySpikes(f *frame, stars []star, baseLength, baseIntensity float64, numArms int, baseAngle float64) *frame {
+	if len(stars) == 0 || baseLength <= 0 || baseIntensity <= 0 || numArms < 2 {
+		return f
+	}
+	if numArms > 12 {
+		numArms = 12
+	}
+	maxFlux := stars[0].Flux
+	if maxFlux <= 0 {
+		return f
+	}
+	lengthCap := float32(f.Width) / 2
+	if float32(f.Height)/2 < lengthCap {
+		lengthCap = float32(f.Height) / 2
+	}
+	intensityCap := float32(baseIntensity)
+	if intensityCap > 2 {
+		intensityCap = 2
+	}
+
+	// Gaussian cross-section perpendicular to each arm, sigma = 1.5 px.
+	// Sweep 3 px perpendicular so the arm has visible width without
+	// becoming a fat band.
+	const perpSigma = 1.5
+	perpVar := 2.0 * perpSigma * perpSigma
+	const perpBand = 3
+
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	copy(result.Pix, f.Pix)
+
+	for _, s := range stars {
+		relFlux := s.Flux / maxFlux
+		if relFlux <= 0 {
+			continue
+		}
+		starLength := float32(baseLength * relFlux)
+		if starLength > lengthCap {
+			starLength = lengthCap
+		}
+		if starLength < 1 {
+			continue
+		}
+		starIntensity := intensityCap * float32(relFlux)
+		cx, cy := float32(s.X), float32(s.Y)
+		for arm := 0; arm < numArms; arm++ {
+			angle := baseAngle + float64(arm)*2*math.Pi/float64(numArms)
+			dx := float32(math.Cos(angle))
+			dy := float32(math.Sin(angle))
+			for t := float32(1); t < starLength; t += 1.0 {
+				armFade := 1.0 - t/starLength
+				if armFade <= 0 {
+					break
+				}
+				px := cx + dx*t
+				py := cy + dy*t
+				ix := int(px + 0.5)
+				iy := int(py + 0.5)
+				if ix < 0 || iy < 0 || ix >= f.Width || iy >= f.Height {
+					break
+				}
+				for pOff := -perpBand; pOff <= perpBand; pOff++ {
+					px2 := px - dy*float32(pOff)
+					py2 := py + dx*float32(pOff)
+					ix2 := int(px2 + 0.5)
+					iy2 := int(py2 + 0.5)
+					if ix2 < 0 || iy2 < 0 || ix2 >= f.Width || iy2 >= f.Height {
+						continue
+					}
+					perpFade := float32(math.Exp(-float64(pOff*pOff) / perpVar))
+					add := starIntensity * armFade * perpFade
+					if add < 0.005 {
+						continue
+					}
+					i := (iy2*f.Width + ix2) * 3
+					for c := 0; c < 3; c++ {
+						v := result.Pix[i+c] + add
+						if v > 1 {
+							v = 1
+						}
+						result.Pix[i+c] = v
+					}
+				}
+			}
+		}
+	}
+	return result
+}
+
 func floatToByte(v float32) uint8 {
 	if v <= 0 {
 		return 0
@@ -7914,8 +8178,33 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if step1Frame != nil && step7Frame != nil && !opts.NoHDRMix {
 		weights := []float64{0.90, 0.80, 0.70, 0.60}
 		logf("  post: HDR mix (%d weighted variants: step8_1..step8_%d)", len(weights), len(weights))
+
+		// If spikes are requested, detect stars ONCE (using the HDR base
+		// step7Frame as the reference) and generate a single random base
+		// angle. Reusing the same star list and base angle across all
+		// four variants means post_step8_1..4 show spikes on the same
+		// stars, at the same orientation, with the same brightness
+		// ordering. Without this the four outputs would spike slightly
+		// different stars because their relative fluxes differ.
+		var spikedStars []star
+		var spikesBaseAngle float64
+		if opts.AddSpikes {
+			spikedStars = selectSpikeStars(step7Frame, opts.SpikesPercent)
+			if len(spikedStars) > 0 {
+				rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+				spikesBaseAngle = rng.Float64() * 2 * math.Pi
+				logf("  spikes: %d star(s) selected (base angle = %.1f°, arms=%d)",
+					len(spikedStars), spikesBaseAngle*180/math.Pi, opts.SpikesArms)
+			} else {
+				logf("  spikes: no stars detected, skipping")
+			}
+		}
+
 		for i, w1 := range weights {
 			mixed := blendWeighted(step1Frame, step7Frame, w1)
+			if opts.AddSpikes && len(spikedStars) > 0 {
+				mixed = overlaySpikes(mixed, spikedStars, opts.SpikesLength, opts.SpikesIntensity, opts.SpikesArms, spikesBaseAngle)
+			}
 			p = filepath.Join(outputDir, fmt.Sprintf("post_step8_%d.jpg", i+1))
 			if err := writePostPreview(outputDir, filepath.Base(p), mixed); err != nil {
 				logf("  WARNING: %v", err)
@@ -8245,6 +8534,11 @@ func main() {
 		NoCurves:           opts.NoCurves,
 		CurvesBlack:        opts.CurvesBlack,
 		CurvesGamma:        opts.CurvesGamma,
+		AddSpikes:          opts.AddSpikes,
+		SpikesPercent:      opts.SpikesPercent,
+		SpikesLength:       opts.SpikesLength,
+		SpikesIntensity:    opts.SpikesIntensity,
+		SpikesArms:         opts.SpikesArms,
 		SigmaClipThreshold: opts.SigmaClipThreshold,
 		SigmaClipIters:     opts.SigmaClipIters,
 		TileSize:           opts.TileSize,
