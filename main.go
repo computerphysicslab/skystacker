@@ -3154,8 +3154,6 @@ type frameTransform struct {
 	inliers   int
 }
 
-// frameDiag carries per-frame diagnostics for the report: detected stars,
-// matched inliers, the estimated transform (scale/rotation/offset), a
 // frameLimiterFlags classifies a registered frame as a crop limiter
 // or low-quality contributor. Returns zero or more of:
 //
@@ -3187,6 +3185,8 @@ func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 	return flags
 }
 
+// frameDiag carries per-frame diagnostics for the report: detected stars,
+// matched inliers, the estimated transform (scale/rotation/offset), a
 // combined quality score (0-100), the transformed bounding box in
 // reference coordinates, and the fraction of the reference area that box
 // covers (Box%). Used to explain the crop rectangle and to spot frames
@@ -7374,7 +7374,7 @@ func testSpikesMinCount() error {
 	if len(withFloor2) != 2 {
 		return fmt.Errorf("floor=2: got %d, want 2", len(withFloor2))
 	}
-	// Dense field: 100 stars * 5%% = 5, floor=5 -> still 5.
+	// Dense field: 100 stars * 5% = 5, floor=5 -> still 5.
 	dense := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	for i := range dense.Pix {
 		dense.Pix[i] = 0.05
@@ -7858,7 +7858,7 @@ func testFrameLimiterFlags() error {
 	if !found {
 		return fmt.Errorf("677 px horizontal drift missing LARGE OFFSET: %v", flags)
 	}
-	// Vertical drift > 10%% of refH.
+	// Vertical drift > 10% of refH.
 	vertical := frameDiag{Quality: 80, BoxPct: 95, OffsetX: 0, OffsetY: 200}
 	flags = frameLimiterFlags(vertical, refW, refH)
 	found = false
@@ -7900,7 +7900,7 @@ func testFrameLimiterFlags() error {
 		}
 	}
 	if !hasLowBox {
-		return fmt.Errorf("LOW BOX%%%% flag missing: %v", flags)
+		return fmt.Errorf("LOW BOX%% flag missing: %v", flags)
 	}
 	return nil
 }
