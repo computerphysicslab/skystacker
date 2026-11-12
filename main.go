@@ -382,7 +382,10 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "registration into sum, mean and no-correction-mean images.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Arguments:")
-	fmt.Fprintln(w, "  input-directory   directory containing JPG/JPEG files (default: .)")
+	fmt.Fprintln(w, "  input-directory   directory containing image files (default: .)")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Auto-detection: Light/, Dark/, Flat/, Bias/ (or plural forms) subfolders")
+	fmt.Fprintln(w, "are discovered automatically; --calib-root or --dark/--flat/--bias override.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  --output string   output directory (default: <input>/0_skystacker_results)")
@@ -4180,6 +4183,38 @@ func writeGrayscaleMaps(outputDir string, w, h int, rej, wgt []float32, suffix s
 	}
 }
 
+// calibLayout describes the standard calibration folder names found under
+// a top-level dataset directory. Each field is an absolute path, or "" if
+// no matching subfolder exists. This lets a user point skystacker at
+// 04_emission_nebula_Flame/ and have it stack Light/*.fits with the
+// matching Dark/, Flat/ and Bias/ frames without needing four flags.
+type calibLayout struct {
+	Light, Dark, Flat, Bias string
+}
+
+// detectCalibrationSubdirs searches inputDir for subfolders with the
+// standard calibration names. Both singular and plural forms are
+// accepted, case-insensitively. Matching is done by exact folder name
+// (Light, Darks, etc.), not by substring, so a folder named "Lighter
+// subs" is not mistaken for a Light folder.
+func detectCalibrationSubdirs(inputDir string) calibLayout {
+	check := func(names ...string) string {
+		for _, name := range names {
+			p := filepath.Join(inputDir, name)
+			if info, err := os.Stat(p); err == nil && info.IsDir() {
+				return p
+			}
+		}
+		return ""
+	}
+	return calibLayout{
+		Light: check("Light", "Lights", "LIGHT", "LIGHTS"),
+		Dark:  check("Dark", "Darks", "DARK", "DARKS"),
+		Flat:  check("Flat", "Flats", "FLAT", "FLATS"),
+		Bias:  check("Bias", "Biases", "BIAS", "BIASES"),
+	}
+}
+
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
 
@@ -4242,16 +4277,52 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("output directory: %w", err)
 	}
 
-	files, err := discoverFiles(inputDir, opts.Recursive, []string{
+	// Auto-detect standard calibration subfolders. If inputDir contains a
+	// Light/ (or Lights/) subfolder, discovery runs there instead, and any
+	// Dark/, Flat/, Bias/ subfolder becomes the corresponding calibration
+	// source unless --calib-root or an explicit --dark/--flat/--bias flag
+	// is already set.
+	//
+	// --calib-root takes precedence: when it is set, the user has explicitly
+	// described the layout and we leave all detection disabled. Calibration
+	// subfolders are always excluded from light-frame discovery so that a
+	// recursive scan cannot stack dark frames as lights.
+	lightInputDir := inputDir
+	excludes := []string{
 		outputDir,
 		filepath.Join(inputDir, "skystacker_results"),
 		filepath.Join(inputDir, "0_skystacker_results"),
-	})
+	}
+	if opts.CalibRoot == "" {
+		layout := detectCalibrationSubdirs(inputDir)
+		if layout.Light != "" {
+			logf("Auto-detected Light/ subfolder: %s", layout.Light)
+			lightInputDir = layout.Light
+		}
+		if opts.DarkFile == "" && layout.Dark != "" {
+			logf("Auto-detected Dark/ subfolder: %s", layout.Dark)
+			opts.DarkFile = layout.Dark
+		}
+		if opts.FlatFile == "" && layout.Flat != "" {
+			logf("Auto-detected Flat/ subfolder: %s", layout.Flat)
+			opts.FlatFile = layout.Flat
+		}
+		if opts.BiasFile == "" && layout.Bias != "" {
+			logf("Auto-detected Bias/ subfolder: %s", layout.Bias)
+			opts.BiasFile = layout.Bias
+		}
+		for _, p := range []string{layout.Dark, layout.Flat, layout.Bias} {
+			if p != "" {
+				excludes = append(excludes, p)
+			}
+		}
+	}
+	files, err := discoverFiles(lightInputDir, opts.Recursive, excludes)
 	if err != nil {
 		return err
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("no JPG/JPEG images found in %s", inputDir)
+		return fmt.Errorf("no image files (JPG/PNG/RAW/FITS) found in %s", lightInputDir)
 	}
 
 	type candidate struct {
@@ -5624,6 +5695,7 @@ func runSelfTests() int {
 		{"report shows weight columns", testReportShowsWeightColumns},
 		{"write grayscale maps suffix", testWriteGrayscaleMapsSuffix},
 		{"write coverage map", testWriteCoverageMap},
+		{"detect calibration subdirs", testDetectCalibrationSubdirs},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -8614,6 +8686,95 @@ func testWriteCoverageMap() error {
 	writeCoverageMap(dir, w, h, nil, 10, "")
 	writeCoverageMap(dir, 16, 16, counts, 10, "")
 	writeCoverageMap(dir, w, h, counts, 0, "")
+	return nil
+}
+
+// testDetectCalibrationSubdirs verifies the auto-detection of the
+// standard calibration folder layout. The feature exists so that
+// `skystacker <dataset>/` discovers Light/, Dark/, Flat/ and Bias/
+// subfolders without the user needing --calib-root or four separate
+// flags.
+func testDetectCalibrationSubdirs() error {
+	// Case 1: empty directory.
+	dir, err := os.MkdirTemp("", "skystacker-calib-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if got := detectCalibrationSubdirs(dir); got.Light != "" || got.Dark != "" || got.Flat != "" || got.Bias != "" {
+		return fmt.Errorf("empty dir: got non-empty layout %+v", got)
+	}
+
+	// Case 2: canonical singular names.
+	for _, name := range []string{"Light", "Dark", "Flat", "Bias"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got := detectCalibrationSubdirs(dir)
+	for name, path := range map[string]string{
+		"Light": got.Light, "Dark": got.Dark,
+		"Flat": got.Flat, "Bias": got.Bias,
+	} {
+		want := filepath.Join(dir, name)
+		if path != want {
+			return fmt.Errorf("%s: got %q, want %q", name, path, want)
+		}
+	}
+
+	// Case 3: plural forms when singular is absent.
+	dir2, err := os.MkdirTemp("", "skystacker-calib2-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir2)
+	for _, name := range []string{"Lights", "Darks", "Flats", "Biases"} {
+		if err := os.Mkdir(filepath.Join(dir2, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got = detectCalibrationSubdirs(dir2)
+	for name, want := range map[string]string{
+		"Lights": got.Light, "Darks": got.Dark,
+		"Flats": got.Flat, "Biases": got.Bias,
+	} {
+		if want != filepath.Join(dir2, name) {
+			return fmt.Errorf("%s: got %q, want %q", name, want, filepath.Join(dir2, name))
+		}
+	}
+
+	// Case 4: singular takes precedence over plural when both exist.
+	dir3, err := os.MkdirTemp("", "skystacker-calib3-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir3)
+	for _, name := range []string{"Light", "Lights"} {
+		if err := os.Mkdir(filepath.Join(dir3, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got = detectCalibrationSubdirs(dir3)
+	if got.Light != filepath.Join(dir3, "Light") {
+		return fmt.Errorf("singular preference: got %q, want Light/", got.Light)
+	}
+
+	// Case 5: exact folder name, not substring.
+	dir4, err := os.MkdirTemp("", "skystacker-calib4-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir4)
+	for _, name := range []string{"Lighter", "Darker", "Flatten"} {
+		if err := os.Mkdir(filepath.Join(dir4, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got = detectCalibrationSubdirs(dir4)
+	if got.Light != "" || got.Dark != "" || got.Flat != "" || got.Bias != "" {
+		return fmt.Errorf("substring names matched: %+v", got)
+	}
+
 	return nil
 }
 
