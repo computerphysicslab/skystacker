@@ -647,7 +647,7 @@ func decodeImageConfig(path string) (image.Config, error) {
 		return decodeCR2Config(path)
 	}
 	if ext == ".fits" || ext == ".fit" {
-		w, h, _, _, _, _, _, err := parseFITSHeader(path)
+		w, h, _, _, _, _, _, _, _, err := parseFITSHeader(path)
 		if err == nil && w > 0 && h > 0 {
 			return image.Config{Width: w, Height: h}, nil
 		}
@@ -5711,6 +5711,7 @@ func runSelfTests() int {
 		{"write coverage map", testWriteCoverageMap},
 		{"detect calibration subdirs", testDetectCalibrationSubdirs},
 		{"fits native read", testFITSNative},
+		{"fits debayer", testFITSDebayer},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -10731,7 +10732,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 // POST-PROCESSING SELF-TESTS
 // =========================================================================
 
-func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bzero float64, offset int64, err error) {
+func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bzero float64, offset int64, baypat, roworder string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -10766,16 +10767,20 @@ func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bz
 			bscale, _ = strconv.ParseFloat(val, 64)
 		case "BZERO":
 			bzero, _ = strconv.ParseFloat(val, 64)
+		case "BAYERPAT":
+			baypat = strings.Trim(val, "'")
+		case "ROWORDER":
+			roworder = strings.Trim(val, "'")
 		}
 	}
 	if width <= 0 || height <= 0 {
-		return 0, 0, 0, 0, 1, 0, 0, fmt.Errorf("invalid FITS header")
+		return 0, 0, 0, 0, 1, 0, 0, "", "", fmt.Errorf("invalid FITS header")
 	}
 	return
 }
 
 func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
-	w, h, naxis3, bitpix, bscale, bzero, offset, err := parseFITSHeader(path)
+	w, h, naxis3, bitpix, bscale, bzero, offset, baypat, roworder, err := parseFITSHeader(path)
 	if err != nil {
 		return nil, err
 	}
@@ -10869,10 +10874,127 @@ func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
 		}
 	}
 
+	if numPlanes == 1 && baypat != "" {
+		return debayerFITS(vals, w, h, baypat, roworder, targetW, targetH), nil
+	}
+
 	if targetW > 0 && targetH > 0 && (w != targetW || h != targetH) {
 		frm = resizeFrame(frm, targetW, targetH)
 	}
 	return frm, nil
+}
+
+func debayerFITS(vals []float32, w, h int, baypat, roworder string, targetW, targetH int) *frame {
+	if roworder == "BOTTOM-UP" {
+		for y := 0; y < h/2; y++ {
+			for x := 0; x < w; x++ {
+				idx1 := y*w + x
+				idx2 := (h-1-y)*w + x
+				vals[idx1], vals[idx2] = vals[idx2], vals[idx1]
+			}
+		}
+		switch baypat {
+		case "RGGB":
+			baypat = "GBRG"
+		case "BGGR":
+			baypat = "GRBG"
+		case "GRBG":
+			baypat = "BGGR"
+		case "GBRG":
+			baypat = "RGGB"
+		}
+	}
+
+	minVal, maxVal := float32(1e30), float32(-1e30)
+	for _, v := range vals {
+		if v < minVal {
+			minVal = v
+		}
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+	rangeVal := maxVal - minVal
+	if rangeVal <= 0 {
+		rangeVal = 1.0
+	}
+	norm := make([]float32, len(vals))
+	for i, v := range vals {
+		norm[i] = (v - minVal) / rangeVal
+	}
+
+	var cfa [2][2]int
+	switch baypat {
+	case "RGGB":
+		cfa = [2][2]int{{0, 1}, {1, 2}}
+	case "BGGR":
+		cfa = [2][2]int{{2, 1}, {1, 0}}
+	case "GRBG":
+		cfa = [2][2]int{{1, 0}, {2, 1}}
+	case "GBRG":
+		cfa = [2][2]int{{1, 2}, {0, 1}}
+	default:
+		frm := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for i := 0; i < w*h; i++ {
+			frm.Pix[i*3] = norm[i]
+			frm.Pix[i*3+1] = norm[i]
+			frm.Pix[i*3+2] = norm[i]
+		}
+		if targetW > 0 && targetH > 0 && (w != targetW || h != targetH) {
+			return resizeFrame(frm, targetW, targetH)
+		}
+		return frm
+	}
+
+	frm := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	getV := func(x, y int) float32 {
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		if x >= w {
+			x = w - 1
+		}
+		if y >= h {
+			y = h - 1
+		}
+		return norm[y*w+x]
+	}
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			c := cfa[y%2][x%2]
+			var r, g, b float32
+			if c == 0 { // R
+				r = getV(x, y)
+				g = (getV(x-1, y) + getV(x+1, y) + getV(x, y-1) + getV(x, y+1)) * 0.25
+				b = (getV(x-1, y-1) + getV(x+1, y-1) + getV(x-1, y+1) + getV(x+1, y+1)) * 0.25
+			} else if c == 2 { // B
+				b = getV(x, y)
+				g = (getV(x-1, y) + getV(x+1, y) + getV(x, y-1) + getV(x, y+1)) * 0.25
+				r = (getV(x-1, y-1) + getV(x+1, y-1) + getV(x-1, y+1) + getV(x+1, y+1)) * 0.25
+			} else { // G
+				g = getV(x, y)
+				if cfa[y%2][(x+1)%2] == 0 { // R is horizontally adjacent
+					r = (getV(x-1, y) + getV(x+1, y)) * 0.5
+					b = (getV(x, y-1) + getV(x, y+1)) * 0.5
+				} else { // B is horizontally adjacent
+					b = (getV(x-1, y) + getV(x+1, y)) * 0.5
+					r = (getV(x, y-1) + getV(x, y+1)) * 0.5
+				}
+			}
+			frm.Pix[(y*w+x)*3] = r
+			frm.Pix[(y*w+x)*3+1] = g
+			frm.Pix[(y*w+x)*3+2] = b
+		}
+	}
+
+	if targetW > 0 && targetH > 0 && (w != targetW || h != targetH) {
+		return resizeFrame(frm, targetW, targetH)
+	}
+	return frm
 }
 
 func testFITSNative() error {
@@ -10919,6 +11041,50 @@ func testFITSNative() error {
 	}
 	if f.Pix[99*3] != 1.0 {
 		return fmt.Errorf("FITS pixel 99 = %v, want 1.0", f.Pix[99*3])
+	}
+	return nil
+}
+
+func testFITSDebayer() error {
+	dir, err := os.MkdirTemp("", "skystacker-fits-debayer-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "test_bayer.fits")
+	var buf bytes.Buffer
+	header := []string{
+		"SIMPLE  =                    T",
+		"BITPIX  =                   16",
+		"NAXIS   =                    2",
+		"NAXIS1  =                   10",
+		"NAXIS2  =                   10",
+		"BSCALE  =                  1.0",
+		"BZERO   =                  0.0",
+		"BAYERPAT= 'RGGB'",
+		"ROWORDER= 'BOTTOM-UP'",
+		"END",
+	}
+	for _, line := range header {
+		buf.WriteString(fmt.Sprintf("%-80s", line))
+	}
+	for buf.Len()%2880 != 0 {
+		buf.WriteByte(' ')
+	}
+	payload := make([]byte, 200)
+	for i := 0; i < 100; i++ {
+		binary.BigEndian.PutUint16(payload[i*2:], uint16(i))
+	}
+	buf.Write(payload)
+	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+		return err
+	}
+	f, err := decodeFITSNative(path, 0, 0)
+	if err != nil {
+		return err
+	}
+	if f.Width != 10 || f.Height != 10 {
+		return fmt.Errorf("FITS debayer: got %dx%d, want 10x10", f.Width, f.Height)
 	}
 	return nil
 }
