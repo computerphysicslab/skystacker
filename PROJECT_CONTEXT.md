@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 93 passing.** Update this number after any test change.
+**Self-test count: 97 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -254,6 +254,37 @@ simply omits the exposure summary.
 - **Spikes: 1 star selected** at `--spikes-percent 0.2`. Math: 626 stars
   detected × 0.002 = 1.25 → 1. This motivated `--spikes-min-count` (Pending).
 
+## Post-v0.5.0 session updates (APPLIED)
+
+### Star / transform cache (APPLIED)
+
+Re-runs skip Pass 1 detection and Pass 2 registration via JSON files
+under `<output>/_work/cache/`:
+
+  - `stars_s<N>_<hash>.json` — star list + medianBlob + bgNoise
+  - `xf_s<N>_<refHash>_<frameHash>.json` — similarity (+affine), inliers, or fail reason
+
+`<hash>` = `sha256(absPath + "|" + mtime_nano + "|" + size)`; any file change invalidates its entry. `cacheVersion = 1` must be bumped when detection or registration algorithms change. Cache filename embeds `starDetectionSig(scale)` so `--scale 4` and `--scale 1` never collide.
+
+New flags: `--no-cache` (disable reads+writes), `--cache-dir P` (override location; default `<output>/_work/cache`). Write failures log a warning, never abort. Second run logs `Cache: N/M star hits, K/L transform hits` after registration.
+
+New self-tests: `testStarCacheRoundTrip`, `testStarCacheInvalidation`, `testXfCacheInvalidation`.
+
+### Release workflow (APPLIED)
+
+`.github/workflows/release.yml` triggers on `v*` tag push. Matrix: linux/darwin/windows × amd64/arm64. Builds with `-trimpath -ldflags '-s -w -X main.version=${TAG} -X main.buildDate=...'`, uploads artifacts + `SHA256SUMS.txt` to a GitHub Release.
+
+`version` is now `var` (was `const`) so `-ldflags -X main.version=v0.5.1` overrides it. `go.mod` declares `module github.com/computerphysicslab/skystacker`, so `go install github.com/computerphysicslab/skystacker@latest` works once a tag exists.
+
+### Native PNG input (APPLIED)
+
+`.png` accepted in `discoverFiles`; `image/png` was already imported via `_ "image/png"`. The `testDiscovery` fixture was updated: `c.png` → `c.tif` (still excluded, still proves unsupported extensions are skipped) and a positive assertion that `starfield.png` is discovered was added. Test count unchanged (97).
+
+### Deferred to a future session
+
+- **Parallel registration** — needs a producer/worker/collector rewrite with `transforms[]`, `registeredCount`, `regFailures`, cache writes, and per-frame log ordering all synchronized. Requires `testParallelRegistrationMatches` for bit-exact verification.
+- **Native FITS reader (`decodeFITSNative`)** — ~150-line header/bitpix parser with BSCALE/BZERO application; fall back to ImageMagick on unrecognised variants.
+
 ## Pending patches
 
 Designed and validated but **not yet applied to the repo** as of the last
@@ -270,7 +301,7 @@ complexity.
 **Fix** (future work): implement a weighted median and wire it into the
 `case "median":` branch of `reduceTile`.
 
-### `--spikes-min-count` (fixes sparse-field collapse)
+### `--spikes-min-count` — APPLIED
 
 **Problem**: `--spikes-percent 0.2` selects 0 or 1 stars on fields with few
 detected stars. M42 got 1 star (626 × 0.002 = 1.25 → 1). Sparse fields
@@ -279,10 +310,7 @@ end up with almost no spiked output.
 **Fix**: `--spikes-min-count N` (default 5), a hard floor on stars selected.
 Floors only when `int(percent × detected) < N`; dense fields unaffected.
 
-Patch is written and self-tested but **failed to apply** on
-`\tSpikesLengthMinRatio  float64` — anchor has two spaces, but the actual
-file has one (gofmt collapsed it in an earlier run). To apply: re-anchor on
-`\tSpikesLengthMinRatio float64` (single space) or add the field manually.
+**Applied.** `selectSpikeStars` gained a trailing `minCount int`.
 
 ### Crop diagnostic for pure-translation drift — APPLIED
 
@@ -314,7 +342,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker main.go`
-- Test: `./skystacker --selftest` (expect: **all 93 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 97 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
