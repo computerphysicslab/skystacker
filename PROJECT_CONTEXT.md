@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker . && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 99 passing.** Update this number after any test change.
+**Self-test count: 100 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -306,6 +306,33 @@ remain future work; drizzle is a multi-session feature, and full
 photometric calibration requires an external catalog (waiving the
 stdlib-only rule).
 
+### Auto-detect calibration layout (APPLIED)
+
+`discoverFiles` was previously called on the raw input directory, so
+a N.I.N.A./APT-style layout like
+`04_emission_nebula_Flame/{Light,Dark,Flat,Bias}/*.fits` produced
+`no image files found` because the top-level directory had no
+images. `--calib-root` covers a *different* naming convention
+(`Darks`, `Flats/<filter>`) and does not help.
+
+`detectCalibrationSubdirs(inputDir)` (new) recognises singular and
+plural forms of `Light`, `Dark`, `Flat`, `Bias` case-insensitively,
+by exact folder name (so `Lighter/` is not matched). When a folder
+is found and `--calib-root` is unset:
+
+- `Light/` (or `Lights/`) replaces the input directory for discovery
+- `Dark/`, `Flat/`, `Bias/` become calibration sources unless an
+  explicit `--dark`/`--flat`/`--bias` was already given
+- calibration directories are appended to the discovery exclude
+  list, so `--recursive` cannot stack dark frames as lights
+
+`--calib-root` keeps precedence over auto-detection. The
+"no images" error now names the directory that was actually
+scanned and lists the accepted formats (JPG/PNG/RAW/FITS).
+
+New self-test: `testDetectCalibrationSubdirs`. Test count
+100.
+
 ### Deferred to a future session
 
 - **Parallel registration** — needs a producer/worker/collector rewrite with `transforms[]`, `registeredCount`, `regFailures`, cache writes, and per-frame log ordering all synchronized. Requires `testParallelRegistrationMatches` for bit-exact verification.
@@ -368,7 +395,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 99 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 100 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
