@@ -2314,7 +2314,7 @@ func writeAutoNormalizedPreviewJPEG(w io.Writer, width, height int, pix []float3
 // so its minimum becomes 0 (pure black) and its maximum becomes 255
 // (pure white). Unlike writeAutoNormalizedPreviewJPEG, this does NOT
 // apply a gamma 0.5 lift: it is a direct, gamma-free visualization of
-// the buffer's full dynamic range. Used for post_step_0-stretched.jpg,
+// the buffer's full dynamic range. Used for post_step0-stretched.jpg,
 // the min-max complement to stacked_sum.jpg.
 //
 // The degenerate case (all pixels the same value per channel) yields a
@@ -4269,20 +4269,35 @@ type calibLayout struct {
 // (Light, Darks, etc.), not by substring, so a folder named "Lighter
 // subs" is not mistaken for a Light folder.
 func detectCalibrationSubdirs(inputDir string) calibLayout {
-	check := func(names ...string) string {
-		for _, name := range names {
-			p := filepath.Join(inputDir, name)
-			if info, err := os.Stat(p); err == nil && info.IsDir() {
+	// Read the directory once and build a case-insensitive map of
+	// lowercased folder name -> actual absolute path. Because both
+	// sides of the lookup are lowercased, pick("Dark", "Darks")
+	// resolves any case of either singular or plural (dark, DARK,
+	// Dark, darks, DARKS, Darks). Adding a new convention such as
+	// pick("Dark", "Darks", "Dark_frames") also matches any case.
+	entries, err := os.ReadDir(inputDir)
+	if err != nil {
+		return calibLayout{}
+	}
+	dirs := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs[strings.ToLower(e.Name())] = filepath.Join(inputDir, e.Name())
+		}
+	}
+	pick := func(names ...string) string {
+		for _, n := range names {
+			if p, ok := dirs[strings.ToLower(n)]; ok {
 				return p
 			}
 		}
 		return ""
 	}
 	return calibLayout{
-		Light: check("Light", "Lights", "LIGHT", "LIGHTS"),
-		Dark:  check("Dark", "Darks", "DARK", "DARKS"),
-		Flat:  check("Flat", "Flats", "FLAT", "FLATS"),
-		Bias:  check("Bias", "Biases", "BIAS", "BIASES"),
+		Light: pick("Light", "Lights"),
+		Dark:  pick("Dark", "Darks"),
+		Flat:  pick("Flat", "Flats"),
+		Bias:  pick("Bias", "Biases"),
 	}
 }
 
@@ -5393,12 +5408,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}); err != nil {
 			return fmt.Errorf("write sum jpg: %w", err)
 		}
-		step0Path = filepath.Join(outputDir, "post_step_0-stretched.jpg")
+		step0Path = filepath.Join(outputDir, "post_step0-stretched.jpg")
 		logf("Writing min-max stretched sum (post_step_0)")
 		if err := writeFileAtomic(step0Path, func(w io.Writer) error {
 			return writeMinMaxStretchedPreviewJPEG(w, outW, outH, sumPix)
 		}); err != nil {
-			logf("  WARNING: could not write post_step_0-stretched.jpg: %v", err)
+			logf("  WARNING: could not write post_step0-stretched.jpg: %v", err)
 			step0Path = ""
 		}
 
@@ -5467,12 +5482,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}); err != nil {
 			return fmt.Errorf("write sum jpg: %w", err)
 		}
-		step0Path = filepath.Join(outputDir, "post_step_0-stretched.jpg")
+		step0Path = filepath.Join(outputDir, "post_step0-stretched.jpg")
 		logf("Writing min-max stretched sum (post_step_0)")
 		if err := writeFileAtomic(step0Path, func(w io.Writer) error {
 			return writeMinMaxStretchedPreviewJPEG(w, outW, outH, sumPix)
 		}); err != nil {
-			logf("  WARNING: could not write post_step_0-stretched.jpg: %v", err)
+			logf("  WARNING: could not write post_step0-stretched.jpg: %v", err)
 			step0Path = ""
 		}
 
@@ -8936,6 +8951,101 @@ func testDetectCalibrationSubdirs() error {
 	got = detectCalibrationSubdirs(dir4)
 	if got.Light != "" || got.Dark != "" || got.Flat != "" || got.Bias != "" {
 		return fmt.Errorf("substring names matched: %+v", got)
+	}
+
+	// Case 6: all-lowercase PLURAL names. Standard Linux layout from
+	// `mkdir lights darks flats biases`. This is the exact layout that
+	// motivated the fix: pre-fix, only specific case variants were
+	// listed, so this tree returned an empty calibLayout and discovery
+	// fell back to the parent, dying with 'no image files found'.
+	dir5, err := os.MkdirTemp("", "skystacker-calib5-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir5)
+	for _, name := range []string{"lights", "darks", "flats", "biases"} {
+		if err := os.Mkdir(filepath.Join(dir5, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got = detectCalibrationSubdirs(dir5)
+	for name, want := range map[string]string{
+		"lights": got.Light, "darks": got.Dark,
+		"flats": got.Flat, "biases": got.Bias,
+	} {
+		if want != filepath.Join(dir5, name) {
+			return fmt.Errorf("plural-lower %s: got %q, want %q", name, want, filepath.Join(dir5, name))
+		}
+	}
+
+	// Case 7: all-lowercase SINGULAR names. pick() lowercases each
+	// alias before lookup, so pick("Dark", "Darks") also resolves
+	// the singular half.
+	dir6, err := os.MkdirTemp("", "skystacker-calib6-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir6)
+	for _, name := range []string{"light", "dark", "flat", "bias"} {
+		if err := os.Mkdir(filepath.Join(dir6, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got = detectCalibrationSubdirs(dir6)
+	for name, want := range map[string]string{
+		"light": got.Light, "dark": got.Dark,
+		"flat": got.Flat, "bias": got.Bias,
+	} {
+		if want != filepath.Join(dir6, name) {
+			return fmt.Errorf("singular-lower %s: got %q, want %q", name, want, filepath.Join(dir6, name))
+		}
+	}
+
+	// Case 8: mixed case (macOS / Windows after a case-insensitive
+	// filesystem rename, or from a zip that preserved original case).
+	dir7, err := os.MkdirTemp("", "skystacker-calib7-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir7)
+	for _, name := range []string{"LIGHT", "Darks", "flat", "BIASES"} {
+		if err := os.Mkdir(filepath.Join(dir7, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got = detectCalibrationSubdirs(dir7)
+	if got.Light != filepath.Join(dir7, "LIGHT") {
+		return fmt.Errorf("mixed Light: got %q, want LIGHT/", got.Light)
+	}
+	if got.Dark != filepath.Join(dir7, "Darks") {
+		return fmt.Errorf("mixed Dark: got %q, want Darks/", got.Dark)
+	}
+	if got.Flat != filepath.Join(dir7, "flat") {
+		return fmt.Errorf("mixed Flat: got %q, want flat/", got.Flat)
+	}
+	if got.Bias != filepath.Join(dir7, "BIASES") {
+		return fmt.Errorf("mixed Bias: got %q, want BIASES/", got.Bias)
+	}
+
+	// Case 9: singular + plural both present — singular wins. This
+	// extends the Case 4 contract (Light/ wins over Lights/) to Dark
+	// and Flat, proving pick()'s argument-order precedence is general.
+	dir8, err := os.MkdirTemp("", "skystacker-calib8-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir8)
+	for _, name := range []string{"dark", "darks", "flat", "flats"} {
+		if err := os.Mkdir(filepath.Join(dir8, name), 0o755); err != nil {
+			return err
+		}
+	}
+	got = detectCalibrationSubdirs(dir8)
+	if got.Dark != filepath.Join(dir8, "dark") {
+		return fmt.Errorf("dark singular-wins: got %q, want dark/", got.Dark)
+	}
+	if got.Flat != filepath.Join(dir8, "flat") {
+		return fmt.Errorf("flat singular-wins: got %q, want flat/", got.Flat)
 	}
 
 	return nil
