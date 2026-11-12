@@ -3179,7 +3179,29 @@ func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 	if d.BoxPct < 50 {
 		flags = append(flags, "LOW BOX%")
 	}
-	if math.Abs(d.OffsetX) > 0.10*float64(refW) || math.Abs(d.OffsetY) > 0.10*float64(refH) {
+	// The raw OffsetX/Y is where the frame's top-left corner lands after
+	// the similarity. On a rotation-only similarity about the frame
+	// center, that corner inevitably moves even when there is no real
+	// drift. Subtract the rotation-induced component so the check only
+	// fires on genuine translation drift (e.g. the M42 677 px shift),
+	// not on every legitimately-rotated frame (e.g. Polaris at 25 deg).
+	//
+	// The s <= 0 || s > 10 guard keeps backward compatibility with
+	// frameDiag values built without Scale set (zero value): without
+	// it, expX/expY would be (cx, cy) instead of (0, 0) and every
+	// existing test fixture would start failing.
+	cx, cy := float64(refW)/2, float64(refH)/2
+	s := d.Scale
+	if s <= 0 || s > 10 {
+		s = 1.0
+	}
+	theta := d.RotationDeg * math.Pi / 180
+	cosT, sinT := math.Cos(theta), math.Sin(theta)
+	expX := cx*(1-s*cosT) + s*cy*sinT
+	expY := -s*cx*sinT + cy*(1-s*cosT)
+	driftX := d.OffsetX - expX
+	driftY := d.OffsetY - expY
+	if math.Abs(driftX) > 0.10*float64(refW) || math.Abs(driftY) > 0.10*float64(refH) {
 		flags = append(flags, "LARGE OFFSET")
 	}
 	return flags
@@ -4702,9 +4724,56 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH)
 		if len(limiterNames) > 0 {
 			logf("Crop limited by %d frame(s): %s", len(limiterNames), strings.Join(limiterNames, ", "))
-			cropExplanation = fmt.Sprintf(
-				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The following frames constrain the crop or have low registration quality: %s. A normal frame has scale~1.0 and rotation~0deg (translation-only alignment); frames with scale far from 1 or rotation far from 0 were typically fitted on only a few noise stars, which shrinks their actual footprint inside the reference and forces the safe crop to shrink to the common overlap. Removing these frames would yield a larger crop.",
-				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
+
+			// Classify the limiters: translation drift vs field rotation.
+			// Translation drift is actionable (remove the drifting frames);
+			// field rotation is inherent to the mount and removing those
+			// frames trades crop for stacked-frame count. The .Note string
+			// is a presentation concern and may be empty when a flag was
+			// disabled, so recompute drift and rotation directly.
+			anyTranslationDrift := false
+			anyFieldRotation := false
+			for i := range frameDiags {
+				if i == refIdx || !transforms[i].valid {
+					continue
+				}
+				d := frameDiags[i]
+				if len(frameLimiterFlags(d, refW, refH)) == 0 {
+					continue
+				}
+				cx, cy := float64(refW)/2, float64(refH)/2
+				s := d.Scale
+				if s <= 0 || s > 10 {
+					s = 1.0
+				}
+				theta := d.RotationDeg * math.Pi / 180
+				cosT, sinT := math.Cos(theta), math.Sin(theta)
+				expX := cx*(1-s*cosT) + s*cy*sinT
+				expY := -s*cx*sinT + cy*(1-s*cosT)
+				driftX := d.OffsetX - expX
+				driftY := d.OffsetY - expY
+				if math.Abs(driftX) > 0.10*float64(refW) || math.Abs(driftY) > 0.10*float64(refH) {
+					anyTranslationDrift = true
+				}
+				if math.Abs(d.RotationDeg) > 5.0 {
+					anyFieldRotation = true
+				}
+			}
+
+			switch {
+			case anyTranslationDrift:
+				cropExplanation = fmt.Sprintf(
+					"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The following frames constrain the crop or have low registration quality: %s. A normal frame has scale~1.0 and rotation~0deg (translation-only alignment); frames with scale far from 1 or rotation far from 0 were typically fitted on only a few noise stars, which shrinks their actual footprint inside the reference and forces the safe crop to shrink to the common overlap. Translation drift is the dominant cause here. Removing these frames would yield a larger crop.",
+					cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
+			case anyFieldRotation:
+				cropExplanation = fmt.Sprintf(
+					"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The safe crop is limited by frames whose field rotation pushes their footprint outside the reference: %s. This is normal for Alt-Az mounts or long unguided runs. Removing them would yield a larger crop but fewer stacked frames.",
+					cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
+			default:
+				cropExplanation = fmt.Sprintf(
+					"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The following frames constrain the crop or have low registration quality: %s. A normal frame has scale~1.0 and rotation~0deg (translation-only alignment); frames with scale far from 1 or rotation far from 0 were typically fitted on only a few noise stars, which shrinks their actual footprint inside the reference and forces the safe crop to shrink to the common overlap. Removing these frames would yield a larger crop.",
+					cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
+			}
 		}
 		numAffine := 0
 		for i := range transforms {
@@ -5209,6 +5278,7 @@ func runSelfTests() int {
 		{"local normalize gradient", testLocalNormalizeGradient},
 		{"local normalize masked pixels", testLocalNormalizeMaskedPixels},
 		{"frame limiter flags", testFrameLimiterFlags},
+		{"frame limiter flags rotation aware", testFrameLimiterFlagsRotationAware},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
 	}
@@ -7901,6 +7971,79 @@ func testFrameLimiterFlags() error {
 	}
 	if !hasLowBox {
 		return fmt.Errorf("LOW BOX%% flag missing: %v", flags)
+	}
+	return nil
+}
+
+func testFrameLimiterFlagsRotationAware() error {
+	// Case 1: exact Polaris IMG_7272.JPG — rot=25.77°, scale=1.0007,
+	// offset=(440.2, -415.6) on 2256×1504. Legitimately rotated
+	// (74-95 inliers); the old rotation-blind code fired LARGE
+	// OFFSET here. Must NOT be flagged.
+	polaris := frameDiag{
+		Quality: 80, BoxPct: 95,
+		Scale:       1.0007,
+		RotationDeg: 25.77,
+		OffsetX:     440.2,
+		OffsetY:     -415.6,
+	}
+	if flags := frameLimiterFlags(polaris, 2256, 1504); len(flags) != 0 {
+		return fmt.Errorf("Polaris IMG_7272 should not be flagged, got: %v", flags)
+	}
+
+	// Case 2: same rotation, plus 300 px of added horizontal drift.
+	// Must fire LARGE OFFSET.
+	drifted := frameDiag{
+		Quality: 80, BoxPct: 95,
+		Scale:       1.0007,
+		RotationDeg: 25.77,
+		OffsetX:     740.0,
+		OffsetY:     -415.6,
+	}
+	flags := frameLimiterFlags(drifted, 2256, 1504)
+	found := false
+	for _, f := range flags {
+		if f == "LARGE OFFSET" {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("drifted-rotated frame missing LARGE OFFSET: %v", flags)
+	}
+
+	// Case 3: M42-style 677 px horizontal drift on a 2400 px wide
+	// reference (rotation 0, so the fix must not suppress it).
+	m42 := frameDiag{
+		Quality: 80, BoxPct: 95,
+		Scale:       1.0,
+		RotationDeg: 0.0,
+		OffsetX:     677.0,
+		OffsetY:     10.0,
+	}
+	flags = frameLimiterFlags(m42, 2400, 1600)
+	found = false
+	for _, f := range flags {
+		if f == "LARGE OFFSET" {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("M42 drift missing LARGE OFFSET: %v", flags)
+	}
+
+	// Case 4: under-threshold, no rotation. Must NOT fire.
+	under := frameDiag{
+		Quality: 80, BoxPct: 95,
+		Scale:       1.0,
+		RotationDeg: 0.0,
+		OffsetX:     220.0,
+		OffsetY:     100.0,
+	}
+	flags = frameLimiterFlags(under, 2400, 1600)
+	for _, f := range flags {
+		if f == "LARGE OFFSET" {
+			return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
+		}
 	}
 	return nil
 }

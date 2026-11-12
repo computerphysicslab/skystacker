@@ -284,14 +284,18 @@ Patch is written and self-tested but **failed to apply** on
 file has one (gofmt collapsed it in an earlier run). To apply: re-anchor on
 `\tSpikesLengthMinRatio float64` (single space) or add the field manually.
 
-### Crop diagnostic for pure-translation drift
+### Crop diagnostic for pure-translation drift — APPLIED
 
 **Problem**: `LOW BOX%` fires only when BoxPct < 50%. A frame with 30%
 translation but a mostly-full bounding box passes and goes unnamed, even
 when it's dragging the crop (M42 case).
 
-**Fix** (future work): add `LARGE OFFSET` flag when `|Offset| > 10% of
-frame dimension`, independent of BoxPct.
+**Fix** (APPLIED): `LARGE OFFSET` flag fires when `|drift| > 10% of frame
+dimension`, independent of BoxPct. Drift is computed as
+`Offset - expected_rotation_offset(Scale, RotationDeg)`, so legitimately
+rotated frames (e.g. the Polaris run at 25°+) are not falsely flagged.
+The crop-explanation template now distinguishes translation drift from
+field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 ## Future work (not implemented)
 
