@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 102 passing.** Update this number after any test change.
+**Self-test count: 103 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -178,6 +178,19 @@ simply omits the exposure summary.
 - Normalization requires registration and the reference frame's background to be measurable. Both are opt-in (`--normalize` / `--local-normalize`). Global scale is clamped to [0.5, 2.0] to prevent runaway corrections on nearly-uniform tiles.
 
 ## Recent decisions / caveats
+
+- **post_step_0-stretched.jpg APPLIED**: alongside every `stacked_sum.jpg`,
+  the pipeline now also writes `post_step_0-stretched.jpg`, a per-channel
+  min-max normalized preview of the raw float32 sum. Each channel is
+  mapped independently so its minimum becomes 0 (pure black) and its
+  maximum becomes 255 (pure white), with no gamma lift. This is the
+  gamma-free complement to `stacked_sum.jpg` (which applies a gamma 0.5
+  LUT via `writeAutoNormalizedPreviewJPEG`). Written by
+  `writeMinMaxStretchedPreviewJPEG` right after the sum preview in both
+  the registered and unregistered branches of `runPipeline`. Reported in
+  `report.txt` under "Output files". `stacked_sum.jpg` itself is
+  unchanged. New self-test: `testMinMaxStretchedPreviewJPEG`. Test
+  count 102 -> 103.
 
 - **Tolerance-based float comparison APPLIED**: Tests that compare floating-point
   values (notably `testChromaDenoiseMultiScale` and `testApplyCurves`) now use
@@ -407,7 +420,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 102 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 103 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
