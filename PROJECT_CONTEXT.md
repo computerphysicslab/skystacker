@@ -5,7 +5,7 @@ v0.5.0 (single-file Go program, `main.go`)
 
 ## Build, test, install
 ```
-gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
+gofmt -w main.go && go build -o skystacker . && ./skystacker --selftest
 go install .
 ```
 
@@ -341,7 +341,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 ## Recovery / one-shot context
 
 - Repo: https://github.com/computerphysicslab/skystacker
-- Build: `gofmt -w main.go && go build -o skystacker main.go`
+- Build: `gofmt -w main.go && go build -o skystacker .`
 - Test: `./skystacker --selftest` (expect: **all 97 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`

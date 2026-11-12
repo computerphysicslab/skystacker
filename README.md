@@ -181,7 +181,7 @@ Clone the repository and build the executable:
 git clone https://github.com/computerphysicslab/skystacker.git
 cd skystacker
 
-go build -o skystacker main.go
+go build -o skystacker .
 ```
 
 Run the internal self-tests:
