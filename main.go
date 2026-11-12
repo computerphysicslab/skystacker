@@ -3156,6 +3156,37 @@ type frameTransform struct {
 
 // frameDiag carries per-frame diagnostics for the report: detected stars,
 // matched inliers, the estimated transform (scale/rotation/offset), a
+// frameLimiterFlags classifies a registered frame as a crop limiter
+// or low-quality contributor. Returns zero or more of:
+//
+//   - "LOW QUALITY":  combined registration score < 30 (typically
+//     fitted on noise stars, so it does not really
+//     constrain the crop).
+//   - "LOW BOX%":     transformed bounding box covers < 50% of the
+//     reference area.
+//   - "LARGE OFFSET": |OffsetX| > 10% of reference width, or
+//     |OffsetY| > 10% of reference height. Catches
+//     pure-translation drift (e.g. the M42 run's
+//     677 px left-side loss) which the bounding box
+//     alone misses: a shifted but otherwise full
+//     frame still covers most of the reference, yet
+//     it drags the safe crop in the shifted
+//     direction. Naming these frames lets the user
+//     remove or re-align them.
+func frameLimiterFlags(d frameDiag, refW, refH int) []string {
+	var flags []string
+	if d.Quality < 30 {
+		flags = append(flags, "LOW QUALITY")
+	}
+	if d.BoxPct < 50 {
+		flags = append(flags, "LOW BOX%")
+	}
+	if math.Abs(d.OffsetX) > 0.10*float64(refW) || math.Abs(d.OffsetY) > 0.10*float64(refH) {
+		flags = append(flags, "LARGE OFFSET")
+	}
+	return flags
+}
+
 // combined quality score (0-100), the transformed bounding box in
 // reference coordinates, and the fraction of the reference area that box
 // covers (Box%). Used to explain the crop rectangle and to spot frames
@@ -4659,13 +4690,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			if i == refIdx || !transforms[i].valid {
 				continue
 			}
-			var flags []string
-			if frameDiags[i].Quality < 30 {
-				flags = append(flags, "LOW QUALITY")
-			}
-			if frameDiags[i].BoxPct < 50 {
-				flags = append(flags, "LOW BOX%")
-			}
+			flags := frameLimiterFlags(frameDiags[i], refW, refH)
 			if len(flags) > 0 {
 				frameDiags[i].Note = strings.TrimSpace(frameDiags[i].Note + " ** " + strings.Join(flags, ", ") + " **")
 				limiterNames = append(limiterNames, filepath.Base(frameDiags[i].Path))
@@ -5183,6 +5208,7 @@ func runSelfTests() int {
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
 		{"local normalize masked pixels", testLocalNormalizeMaskedPixels},
+		{"frame limiter flags", testFrameLimiterFlags},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
 	}
@@ -7809,6 +7835,72 @@ func testIntrinsicQualityZeroStars() error {
 	}
 	if got := computeIntrinsicQuality(50, 3.0, 0.01); got <= 0 {
 		return fmt.Errorf("50-star quality = %v, want > 0", got)
+	}
+	return nil
+}
+
+func testFrameLimiterFlags() error {
+	const refW, refH = 2400, 1600
+	// Normal frame: no flags.
+	normal := frameDiag{Quality: 80, BoxPct: 95, OffsetX: 5, OffsetY: -8}
+	if flags := frameLimiterFlags(normal, refW, refH); len(flags) != 0 {
+		return fmt.Errorf("normal frame got flags: %v", flags)
+	}
+	// M42-style 677 px horizontal drift on a 2400 px wide reference.
+	drifted := frameDiag{Quality: 80, BoxPct: 95, OffsetX: -677, OffsetY: 10}
+	flags := frameLimiterFlags(drifted, refW, refH)
+	found := false
+	for _, f := range flags {
+		if f == "LARGE OFFSET" {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("677 px horizontal drift missing LARGE OFFSET: %v", flags)
+	}
+	// Vertical drift > 10%% of refH.
+	vertical := frameDiag{Quality: 80, BoxPct: 95, OffsetX: 0, OffsetY: 200}
+	flags = frameLimiterFlags(vertical, refW, refH)
+	found = false
+	for _, f := range flags {
+		if f == "LARGE OFFSET" {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("200 px vertical drift missing LARGE OFFSET: %v", flags)
+	}
+	// Under threshold must not fire.
+	under := frameDiag{Quality: 80, BoxPct: 95, OffsetX: 220, OffsetY: 100}
+	flags = frameLimiterFlags(under, refW, refH)
+	for _, f := range flags {
+		if f == "LARGE OFFSET" {
+			return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
+		}
+	}
+	// LOW QUALITY still works.
+	lowQ := frameDiag{Quality: 20, BoxPct: 95, OffsetX: 0, OffsetY: 0}
+	flags = frameLimiterFlags(lowQ, refW, refH)
+	hasLowQ := false
+	for _, f := range flags {
+		if f == "LOW QUALITY" {
+			hasLowQ = true
+		}
+	}
+	if !hasLowQ {
+		return fmt.Errorf("LOW QUALITY flag missing: %v", flags)
+	}
+	// LOW BOX%% still works.
+	lowBox := frameDiag{Quality: 80, BoxPct: 40, OffsetX: 0, OffsetY: 0}
+	flags = frameLimiterFlags(lowBox, refW, refH)
+	hasLowBox := false
+	for _, f := range flags {
+		if f == "LOW BOX%" {
+			hasLowBox = true
+		}
+	}
+	if !hasLowBox {
+		return fmt.Errorf("LOW BOX%%%% flag missing: %v", flags)
 	}
 	return nil
 }
