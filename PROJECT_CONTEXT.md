@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 85 passing.** Update this number after any test change.
+**Self-test count: 91 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -175,6 +175,8 @@ simply omits the exposure summary.
 
 - Disk pre-flight only checks the output filesystem. If --output points to a different filesystem than the spill dirs (currently they share one), the check would be wrong — but they always share, so this is currently correct.
 
+- Normalization requires registration and the reference frame's background to be measurable. Both are opt-in (`--normalize` / `--local-normalize`). Global scale is clamped to [0.5, 2.0] to prevent runaway corrections on nearly-uniform tiles.
+
 ## Recent decisions / caveats
 
 - **Tolerance-based float comparison APPLIED**: Tests that compare floating-point
@@ -217,6 +219,8 @@ simply omits the exposure summary.
   were actually applied.
 
 - **Disk-space pre-flight APPLIED**: runPipeline checks syscall.Statfs on the output filesystem before Pass 1; aborts with INSUFFICIENT DISK SPACE if free < estimate × 1.20; --force overrides. Estimate: `int64(frames) × frameBytes × 2 + 500 MB` for median/sigma, 0 for mean.
+
+- **Normalization APPLIED**: opt-in `--normalize` (global scale+offset per frame) and `--local-normalize` (per-tile, bilinear interp, `--ln-tile-size 256` default). Both require registration; reference frame is not normalized. Uses robust (median, MAD) statistics: scale = ref.MAD / frame.MAD (clamped to [0.5, 2.0]), offset = ref.median - scale*frame.median.
 
 ## Real-world validation
 
@@ -304,7 +308,7 @@ frame dimension`, independent of BoxPct.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker main.go`
-- Test: `./skystacker --selftest` (expect: **all 85 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 91 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):

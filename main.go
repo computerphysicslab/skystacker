@@ -141,6 +141,9 @@ type cliOptions struct {
 	TileSize             int
 	Scale                int
 	Force                bool
+	Normalize            bool
+	LocalNormalize       bool
+	LNTileSize           int
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -216,6 +219,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
+	fs.BoolVar(&o.Normalize, "normalize", false, "globally normalize each frame sky background to the reference frame (requires registration)")
+	fs.BoolVar(&o.LocalNormalize, "local-normalize", false, "per-tile normalization (implies --normalize; requires registration)")
+	fs.IntVar(&o.LNTileSize, "ln-tile-size", 256, "tile side length for --local-normalize (64-2048)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
@@ -237,7 +243,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" {
 				skipNext = true
 			}
 		} else {
@@ -326,6 +332,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.TileSize < 0 || o.TileSize > 4096 {
 		return nil, fmt.Errorf("--tile-size must be in [0, 4096], got %d", o.TileSize)
 	}
+	if o.LNTileSize < 64 || o.LNTileSize > 2048 {
+		return nil, fmt.Errorf("--ln-tile-size must be in [64, 2048], got %d", o.LNTileSize)
+	}
+	if o.LocalNormalize {
+		o.Normalize = true
+	}
 	rest := fs.Args()
 	if len(rest) > 1 {
 		return nil, fmt.Errorf("unexpected arguments: %v", rest[1:])
@@ -396,6 +408,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
 	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
+	fmt.Fprintln(w, "  --normalize       globally normalize each frame to the reference (requires registration)")
+	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
+	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -2717,6 +2732,9 @@ type runOptions struct {
 	TileSize             int
 	Scale                int
 	Force                bool
+	Normalize            bool
+	LocalNormalize       bool
+	LNTileSize           int
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -2802,6 +2820,285 @@ func getAvailableDiskBytes(path string) (int64, error) {
 		return 0, err
 	}
 	return int64(st.Bavail) * int64(st.Bsize), nil
+}
+
+// normStats describes a frame's background level and noise: the median
+// luminance and the median absolute deviation (MAD) of luminance around
+// that median. Two such frames can be aligned by scale = ref.MAD/f.MAD
+// and offset = ref.Median - scale*f.Median. Chosen because both are
+// robust to the small number of bright pixels (stars, galaxies) that
+// dominate the mean but not the median.
+type normStats struct {
+	Median float64
+	MAD    float64
+}
+
+// computeRegionStats returns the (median, MAD) pair for the given
+// rectangle of f, ignoring masked pixels (r < 0). The rectangle is
+// clamped to the frame bounds. Uses a 1024-bin histogram with 4x
+// subsampling; quantisation error is ~1/1024, far below sky-glow
+// variation.
+func computeRegionStats(f *frame, x0, y0, x1, y1 int) normStats {
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if x1 > f.Width {
+		x1 = f.Width
+	}
+	if y1 > f.Height {
+		y1 = f.Height
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return normStats{}
+	}
+	const numBins = 1024
+	const subsample = 4
+	var hist [numBins]int64
+	total := int64(0)
+	for y := y0; y < y1; y += subsample {
+		for x := x0; x < x1; x += subsample {
+			i := (y*f.Width + x) * 3
+			if f.Pix[i] < 0 {
+				continue
+			}
+			lum := 0.299*f.Pix[i] + 0.587*f.Pix[i+1] + 0.114*f.Pix[i+2]
+			if lum < 0 {
+				lum = 0
+			} else if lum >= 1 {
+				lum = 0.999999
+			}
+			hist[int(lum*numBins)]++
+			total++
+		}
+	}
+	if total == 0 {
+		return normStats{}
+	}
+	medianIdx := total / 2
+	cum := int64(0)
+	var medianBin int
+	for i := 0; i < numBins; i++ {
+		cum += hist[i]
+		if cum >= medianIdx {
+			medianBin = i
+			break
+		}
+	}
+	median := (float64(medianBin) + 0.5) / float64(numBins)
+	var absHist [numBins]int64
+	absTotal := int64(0)
+	for y := y0; y < y1; y += subsample {
+		for x := x0; x < x1; x += subsample {
+			i := (y*f.Width + x) * 3
+			if f.Pix[i] < 0 {
+				continue
+			}
+			lum := float64(0.299*f.Pix[i] + 0.587*f.Pix[i+1] + 0.114*f.Pix[i+2])
+			dev := math.Abs(lum - median)
+			if dev >= 1 {
+				dev = 0.999999
+			}
+			absHist[int(dev*numBins)]++
+			absTotal++
+		}
+	}
+	if absTotal == 0 {
+		return normStats{Median: median, MAD: 0}
+	}
+	madIdx := absTotal / 2
+	cum = 0
+	var madBin int
+	for i := 0; i < numBins; i++ {
+		cum += absHist[i]
+		if cum >= madIdx {
+			madBin = i
+			break
+		}
+	}
+	mad := (float64(madBin) + 0.5) / float64(numBins)
+	return normStats{Median: median, MAD: mad}
+}
+
+// computeNormStats returns the (median, MAD) pair for the whole frame.
+func computeNormStats(f *frame) normStats {
+	return computeRegionStats(f, 0, 0, f.Width, f.Height)
+}
+
+// applyNormTransform applies value = scale*value + offset to every
+// valid pixel, clamping to [0, 1]. Masked pixels (r < 0) stay masked.
+func applyNormTransform(f *frame, scale, offset float64) *frame {
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	nPix := f.Width * f.Height
+	s := float32(scale)
+	o := float32(offset)
+	for p := 0; p < nPix; p++ {
+		i := p * 3
+		if f.Pix[i] < 0 {
+			out.Pix[i] = -1
+			out.Pix[i+1] = -1
+			out.Pix[i+2] = -1
+			continue
+		}
+		for c := 0; c < 3; c++ {
+			v := f.Pix[i+c]*s + o
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			out.Pix[i+c] = v
+		}
+	}
+	return out
+}
+
+// globalNormalizeWithRef scales f so its background median and MAD
+// match the reference. Frames with degenerate stats are returned
+// unchanged; nothing useful can be computed from them.
+func globalNormalizeWithRef(f *frame, ref normStats) *frame {
+	fs := computeNormStats(f)
+	if fs.MAD < 1e-6 || ref.MAD < 1e-6 {
+		return f
+	}
+	scale := ref.MAD / fs.MAD
+	if scale < 0.5 {
+		scale = 0.5
+	}
+	if scale > 2.0 {
+		scale = 2.0
+	}
+	offset := ref.Median - scale*fs.Median
+	return applyNormTransform(f, scale, offset)
+}
+
+// localNormalizeWithRefTiles applies tile-local scale+offset corrections
+// with bilinear interpolation of the correction field. refTiles is a
+// (nty x ntx) grid of (median, MAD) pairs for the reference frame,
+// pre-computed once before the pass-2 loop. Degenerate tiles (MAD near
+// 0) fall back to the supplied refGlobal stats so the field stays
+// coherent instead of injecting scale=1 discontinuities.
+func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normStats, ntx, nty, ts int) *frame {
+	if ntx <= 0 || nty <= 0 || len(refTiles) != ntx*nty {
+		return globalNormalizeWithRef(f, refGlobal)
+	}
+	if ts < 64 {
+		ts = 64
+	}
+	frameStats := make([]normStats, ntx*nty)
+	for ty := 0; ty < nty; ty++ {
+		for tx := 0; tx < ntx; tx++ {
+			x0 := tx * ts
+			y0 := ty * ts
+			x1 := x0 + ts
+			y1 := y0 + ts
+			if x1 > f.Width {
+				x1 = f.Width
+			}
+			if y1 > f.Height {
+				y1 = f.Height
+			}
+			frameStats[ty*ntx+tx] = computeRegionStats(f, x0, y0, x1, y1)
+		}
+	}
+	frameGlobal := computeNormStats(f)
+	globalScale := 1.0
+	globalOffset := 0.0
+	if frameGlobal.MAD > 1e-6 && refGlobal.MAD > 1e-6 {
+		globalScale = refGlobal.MAD / frameGlobal.MAD
+		if globalScale < 0.5 {
+			globalScale = 0.5
+		}
+		if globalScale > 2.0 {
+			globalScale = 2.0
+		}
+		globalOffset = refGlobal.Median - globalScale*frameGlobal.Median
+	}
+	scales := make([]float64, ntx*nty)
+	offsets := make([]float64, ntx*nty)
+	for i := range scales {
+		rs := refTiles[i]
+		fs := frameStats[i]
+		if fs.MAD < 1e-6 || rs.MAD < 1e-6 {
+			scales[i] = globalScale
+			offsets[i] = globalOffset
+			continue
+		}
+		s := rs.MAD / fs.MAD
+		if s < 0.5 {
+			s = 0.5
+		}
+		if s > 2.0 {
+			s = 2.0
+		}
+		scales[i] = s
+		offsets[i] = rs.Median - s*fs.Median
+	}
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	nPix := f.Width * f.Height
+	maxFx := float64(ntx - 1)
+	maxFy := float64(nty - 1)
+	for p := 0; p < nPix; p++ {
+		i := p * 3
+		if f.Pix[i] < 0 {
+			out.Pix[i] = -1
+			out.Pix[i+1] = -1
+			out.Pix[i+2] = -1
+			continue
+		}
+		x := p % f.Width
+		y := p / f.Width
+		fx := (float64(x)+0.5)/float64(ts) - 0.5
+		fy := (float64(y)+0.5)/float64(ts) - 0.5
+		if fx < 0 {
+			fx = 0
+		}
+		if fy < 0 {
+			fy = 0
+		}
+		if fx > maxFx {
+			fx = maxFx
+		}
+		if fy > maxFy {
+			fy = maxFy
+		}
+		tx0 := int(fx)
+		ty0 := int(fy)
+		tx1 := tx0 + 1
+		ty1 := ty0 + 1
+		if tx1 >= ntx {
+			tx1 = ntx - 1
+		}
+		if ty1 >= nty {
+			ty1 = nty - 1
+		}
+		dx := fx - float64(tx0)
+		dy := fy - float64(ty0)
+		s00 := scales[ty0*ntx+tx0]
+		s10 := scales[ty0*ntx+tx1]
+		s01 := scales[ty1*ntx+tx0]
+		s11 := scales[ty1*ntx+tx1]
+		o00 := offsets[ty0*ntx+tx0]
+		o10 := offsets[ty0*ntx+tx1]
+		o01 := offsets[ty1*ntx+tx0]
+		o11 := offsets[ty1*ntx+tx1]
+		sc := (1-dx)*(1-dy)*s00 + dx*(1-dy)*s10 + (1-dx)*dy*s01 + dx*dy*s11
+		of := (1-dx)*(1-dy)*o00 + dx*(1-dy)*o10 + (1-dx)*dy*o01 + dx*dy*o11
+		s := float32(sc)
+		o := float32(of)
+		for c := 0; c < 3; c++ {
+			v := f.Pix[i+c]*s + o
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			out.Pix[i+c] = v
+		}
+	}
+	return out
 }
 
 func logf(format string, args ...any) {
@@ -4096,6 +4393,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			transforms[i] = frameTransform{sim: identitySimilarity, valid: true}
 		}
 	}
+	if !registrationOn && (opts.Normalize || opts.LocalNormalize) {
+		logf("WARNING: normalization requires registration; --normalize/--local-normalize ignored")
+	}
 
 	// Compute per-frame weights for weighted stacking.
 	// Only done when the user requested registration (opts.Register);
@@ -4166,8 +4466,64 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	cropExplanation := ""
 	var regSumPix, regMeanPix, regRejPix, regWgtPix []float32
 	var spillPaths2 []string
+	var needsNormalize bool
+	var normRefGlobal normStats
+	var normRefTiles []normStats
+	var normNTX, normNTY int
 	if registrationOn {
 		logf("Resampling %d registered frame(s)", registeredCount)
+		// Normalization setup (opt-in). Requires registration because the
+		// reference frame's background is only meaningful once every frame
+		// is expressed in the reference coordinate system.
+		needsNormalize = opts.Normalize || opts.LocalNormalize
+		if needsNormalize {
+			ts := opts.LNTileSize
+			if ts < 64 {
+				ts = 64
+			}
+			var refFrame *frame
+			var rerr error
+			if len(spillPaths1) == len(accepted) {
+				refFrame, rerr = readSpillFrame(spillPaths1[refIdx], refW, refH)
+			} else {
+				refFrame, rerr = decodeImageFile(accepted[refIdx].path, refW, refH)
+				if rerr == nil {
+					calibrate(refFrame, darkFrame, flatFrame, biasFrame)
+				}
+			}
+			if rerr != nil {
+				logf("WARNING: normalization disabled (could not load reference): %v", rerr)
+				needsNormalize = false
+			} else {
+				normRefGlobal = computeNormStats(refFrame)
+				if opts.LocalNormalize {
+					normNTX = (refW + ts - 1) / ts
+					normNTY = (refH + ts - 1) / ts
+					normRefTiles = make([]normStats, normNTX*normNTY)
+					for ty := 0; ty < normNTY; ty++ {
+						for tx := 0; tx < normNTX; tx++ {
+							x0 := tx * ts
+							y0 := ty * ts
+							x1 := x0 + ts
+							y1 := y0 + ts
+							if x1 > refW {
+								x1 = refW
+							}
+							if y1 > refH {
+								y1 = refH
+							}
+							normRefTiles[ty*normNTX+tx] = computeRegionStats(refFrame, x0, y0, x1, y1)
+						}
+					}
+					logf("Local normalization: %dx%d tiles of %d px (ref median=%.4f, MAD=%.4f)",
+						normNTX, normNTY, ts, normRefGlobal.Median, normRefGlobal.MAD)
+				} else {
+					logf("Global normalization: ref median=%.4f, MAD=%.4f",
+						normRefGlobal.Median, normRefGlobal.MAD)
+				}
+				refFrame.Pix = nil
+			}
+		}
 		regAcc = newAccumulator(refW, refH)
 		validCount = make([]int32, refW*refH)
 		if opts.Method == "median" || opts.Method == "sigma" {
@@ -4205,6 +4561,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				resampled = resampleToReference(f, transforms[i].sim, refW, refH, workers)
 			}
 			f.Pix = nil
+			// Normalization (opt-in, requires registration). Applies to
+			// every frame except the reference, whose own stats define
+			// the target (identity normalization).
+			if needsNormalize && i != refIdx {
+				if opts.LocalNormalize && len(normRefTiles) > 0 {
+					resampled = localNormalizeWithRefTiles(resampled, normRefTiles, normRefGlobal, normNTX, normNTY, opts.LNTileSize)
+				} else {
+					resampled = globalNormalizeWithRef(resampled, normRefGlobal)
+				}
+			}
 			if opts.Method == "mean" {
 				if err := regAcc.addFrameMasked(resampled, workers, validCount); err != nil {
 					return fmt.Errorf("accumulate %s: %w", c.path, err)
@@ -4596,6 +4962,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if len(regFailures) > 0 {
 			notes = append(notes, fmt.Sprintf("%d frame(s) failed registration and were excluded from the registered stack; see 'Registration failures' above.", len(regFailures)))
 		}
+		if needsNormalize {
+			if opts.LocalNormalize {
+				notes = append(notes, fmt.Sprintf("Local normalization: per-tile scale+offset over %dx%d tiles of %d px, reference = %s.", normNTX, normNTY, opts.LNTileSize, filepath.Base(accepted[refIdx].path)))
+			} else {
+				notes = append(notes, fmt.Sprintf("Global normalization: per-frame scale+offset, reference = %s.", filepath.Base(accepted[refIdx].path)))
+			}
+		}
 	} else {
 		notes = append(notes,
 			"Registration: disabled. Frames were combined in their existing pixel coordinate system.",
@@ -4797,6 +5170,11 @@ func runSelfTests() int {
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
 		{"disk space guard", testDiskSpaceGuard},
 		{"intrinsic quality zero stars", testIntrinsicQualityZeroStars},
+		{"compute norm stats", testComputeNormStats},
+		{"global normalize offset", testGlobalNormalizeOffset},
+		{"global normalize identity", testGlobalNormalizeIdentity},
+		{"local normalize gradient", testLocalNormalizeGradient},
+		{"local normalize masked pixels", testLocalNormalizeMaskedPixels},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
 	}
@@ -7202,6 +7580,172 @@ func testDiskSpaceGuard() error {
 	return nil
 }
 
+func testComputeNormStats() error {
+	f := &frame{Width: 64, Height: 64, Pix: make([]float32, 64*64*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.3
+	}
+	s := computeNormStats(f)
+	if math.Abs(s.Median-0.3) > 0.01 {
+		return fmt.Errorf("uniform median = %v, want ~0.3", s.Median)
+	}
+	if s.MAD > 0.01 {
+		return fmt.Errorf("uniform MAD = %v, want ~0", s.MAD)
+	}
+	return nil
+}
+
+func testGlobalNormalizeOffset() error {
+	const w, h = 64, 64
+	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	target := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			base := float32(0.4 + 0.15*float64((x*7+y*13)%17)/17.0)
+			i := (y*w + x) * 3
+			ref.Pix[i] = base
+			ref.Pix[i+1] = base
+			ref.Pix[i+2] = base
+			target.Pix[i] = base + 0.1
+			target.Pix[i+1] = base + 0.1
+			target.Pix[i+2] = base + 0.1
+		}
+	}
+	refStats := computeNormStats(ref)
+	targetN := globalNormalizeWithRef(target, refStats)
+	for _, p := range [][2]int{{10, 10}, {32, 32}, {50, 20}} {
+		x, y := p[0], p[1]
+		i := (y*w + x) * 3
+		want := ref.Pix[i]
+		got := targetN.Pix[i]
+		if math.Abs(float64(got-want)) > 0.01 {
+			return fmt.Errorf("global normalize at (%d,%d): got %.4f, want ~%.4f", x, y, got, want)
+		}
+	}
+	return nil
+}
+
+func testGlobalNormalizeIdentity() error {
+	const w, h = 32, 32
+	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			base := float32(0.3 + 0.2*float64((x*3+y*7)%13)/13.0)
+			i := (y*w + x) * 3
+			ref.Pix[i] = base
+			ref.Pix[i+1] = base
+			ref.Pix[i+2] = base
+		}
+	}
+	refStats := computeNormStats(ref)
+	normalized := globalNormalizeWithRef(ref, refStats)
+	for _, p := range [][2]int{{5, 5}, {20, 20}, {15, 25}} {
+		x, y := p[0], p[1]
+		i := (y*w + x) * 3
+		if math.Abs(float64(normalized.Pix[i]-ref.Pix[i])) > 0.01 {
+			return fmt.Errorf("identity normalize at (%d,%d): got %.4f, want %.4f", x, y, normalized.Pix[i], ref.Pix[i])
+		}
+	}
+	return nil
+}
+
+func testLocalNormalizeGradient() error {
+	const w, h = 128, 128
+	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	target := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			noise := float32(0.01 * float64((x*7+y*13)%17) / 17.0)
+			base := float32(0.4) + noise
+			i := (y*w + x) * 3
+			ref.Pix[i] = base
+			ref.Pix[i+1] = base
+			ref.Pix[i+2] = base
+			offset := float32(0.2 * float64(x) / float64(w))
+			tv := base + offset
+			target.Pix[i] = tv
+			target.Pix[i+1] = tv
+			target.Pix[i+2] = tv
+		}
+	}
+	ts := 64
+	ntx := (w + ts - 1) / ts
+	nty := (h + ts - 1) / ts
+	refTiles := make([]normStats, ntx*nty)
+	for ty := 0; ty < nty; ty++ {
+		for tx := 0; tx < ntx; tx++ {
+			x0, y0 := tx*ts, ty*ts
+			x1, y1 := x0+ts, y0+ts
+			if x1 > w {
+				x1 = w
+			}
+			if y1 > h {
+				y1 = h
+			}
+			refTiles[ty*ntx+tx] = computeRegionStats(ref, x0, y0, x1, y1)
+		}
+	}
+	refGlobal := computeNormStats(ref)
+	targetN := localNormalizeWithRefTiles(target, refTiles, refGlobal, ntx, nty, ts)
+	for _, p := range [][2]int{{32, 32}, {96, 32}, {32, 96}, {96, 96}} {
+		x, y := p[0], p[1]
+		i := (y*w + x) * 3
+		want := ref.Pix[i]
+		got := targetN.Pix[i]
+		if math.Abs(float64(got-want)) > 0.02 {
+			return fmt.Errorf("local normalize at (%d,%d): got %.4f, want ~%.4f", x, y, got, want)
+		}
+	}
+	return nil
+}
+
+func testLocalNormalizeMaskedPixels() error {
+	const w, h = 32, 32
+	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	target := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			noise := float32(0.02 * float64((x*7+y*13)%11) / 11.0)
+			v := float32(0.5) + noise
+			i := (y*w + x) * 3
+			ref.Pix[i] = v
+			ref.Pix[i+1] = v
+			ref.Pix[i+2] = v
+			tv := v + 0.1
+			target.Pix[i] = tv
+			target.Pix[i+1] = tv
+			target.Pix[i+2] = tv
+		}
+	}
+	mi := (5*w + 5) * 3
+	target.Pix[mi] = -1
+	target.Pix[mi+1] = -1
+	target.Pix[mi+2] = -1
+	ts := 16
+	ntx := (w + ts - 1) / ts
+	nty := (h + ts - 1) / ts
+	refTiles := make([]normStats, ntx*nty)
+	for ty := 0; ty < nty; ty++ {
+		for tx := 0; tx < ntx; tx++ {
+			x0, y0 := tx*ts, ty*ts
+			x1, y1 := x0+ts, y0+ts
+			if x1 > w {
+				x1 = w
+			}
+			if y1 > h {
+				y1 = h
+			}
+			refTiles[ty*ntx+tx] = computeRegionStats(ref, x0, y0, x1, y1)
+		}
+	}
+	refGlobal := computeNormStats(ref)
+	targetN := localNormalizeWithRefTiles(target, refTiles, refGlobal, ntx, nty, ts)
+	if targetN.Pix[mi] != -1 || targetN.Pix[mi+1] != -1 || targetN.Pix[mi+2] != -1 {
+		return fmt.Errorf("masked pixel not preserved: %v", targetN.Pix[mi:mi+3])
+	}
+	return nil
+}
+
 func testIntrinsicQualityZeroStars() error {
 	if got := computeIntrinsicQuality(0, 0, 0); got != 0 {
 		return fmt.Errorf("zero-star quality = %v, want 0", got)
@@ -9496,6 +10040,9 @@ func main() {
 		TileSize:             opts.TileSize,
 		Scale:                opts.Scale,
 		Force:                opts.Force,
+		Normalize:            opts.Normalize,
+		LocalNormalize:       opts.LocalNormalize,
+		LNTileSize:           opts.LNTileSize,
 		CreateTIFF:           opts.CreateTIFF,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
