@@ -96,6 +96,7 @@ var buildDate = ""
 // =========================================================================
 
 type cliOptions struct {
+	Clean                bool
 	InputDir             string
 	OutputDir            string
 	Workers              int
@@ -231,6 +232,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.SpikesLengthMinRatio, "spikes-length-min-ratio", 0.03, "minimum length fraction for the faintest spiked star (0-1, default 0.03)")
 	fs.IntVar(&o.SpikesMinCount, "spikes-min-count", 5, "minimum number of stars to spike, floors the percent-based selection (default 5)")
 	fs.BoolVar(&o.NoExif, "no-exif", false, "skip EXIF exposure summary in report")
+	fs.BoolVar(&o.Clean, "clean", false, "remove _work directory after successful run")
 	fs.BoolVar(&o.NoCache, "no-cache", false, "disable star/transform cache (default: cache in <output>/_work/cache)")
 	fs.StringVar(&o.CacheDir, "cache-dir", "", "cache directory (default: <output>/_work/cache)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
@@ -645,18 +647,22 @@ func decodeImageConfig(path string) (image.Config, error) {
 		return decodeCR2Config(path)
 	}
 	if ext == ".fits" || ext == ".fit" {
+		w, h, _, _, _, _, _, err := parseFITSHeader(path)
+		if err == nil && w > 0 && h > 0 {
+			return image.Config{Width: w, Height: h}, nil
+		}
 		cmd := exec.Command("identify", "-format", "%w %h", path)
 		var out bytes.Buffer
 		cmd.Stdout = &out
-		if err := cmd.Run(); err != nil {
+		if err = cmd.Run(); err != nil {
 			return image.Config{}, fmt.Errorf("identify %s failed: %w", ext, err)
 		}
 		parts := strings.Fields(out.String())
 		if len(parts) != 2 {
 			return image.Config{}, errors.New("invalid dimensions")
 		}
-		w, _ := strconv.Atoi(parts[0])
-		h, _ := strconv.Atoi(parts[1])
+		w, _ = strconv.Atoi(parts[0])
+		h, _ = strconv.Atoi(parts[1])
 		return image.Config{Width: w, Height: h}, nil
 	}
 	f, err := os.Open(path)
@@ -674,6 +680,10 @@ func decodeImageFile(path string, targetW, targetH int) (*frame, error) {
 		return decodeCR2File(path, targetW, targetH)
 	}
 	if ext == ".fits" || ext == ".fit" {
+		frm, err := decodeFITSNative(path, targetW, targetH)
+		if err == nil {
+			return frm, nil
+		}
 		args := []string{path}
 		if targetW > 0 && targetH > 0 {
 			args = append(args, "-resize", fmt.Sprintf("%dx%d!", targetW, targetH))
@@ -682,7 +692,7 @@ func decodeImageFile(path string, targetW, targetH int) (*frame, error) {
 		cmd := exec.Command("convert", args...)
 		var out bytes.Buffer
 		cmd.Stdout = &out
-		if err := cmd.Run(); err != nil {
+		if err = cmd.Run(); err != nil {
 			return nil, fmt.Errorf("decode %s failed: %w", ext, err)
 		}
 		img, _, err := image.Decode(&out)
@@ -2706,6 +2716,7 @@ func writeFileAtomic(path string, fn func(io.Writer) error) error {
 // =========================================================================
 
 type runOptions struct {
+	Clean                bool
 	InputDir             string
 	OutputDir            string
 	Workers              int
@@ -4249,6 +4260,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if filepath.Clean(outputDir) == filepath.Clean(inputDir) {
 		return fmt.Errorf("output directory must differ from input directory")
 	}
+	if opts.Clean {
+		defer os.RemoveAll(filepath.Join(outputDir, "_work"))
+	}
 	if opts.PostOnly {
 		if _, err := os.Stat(outputDir); err != nil {
 			return fmt.Errorf("--post-only: output directory does not exist: %w", err)
@@ -5696,6 +5710,7 @@ func runSelfTests() int {
 		{"write grayscale maps suffix", testWriteGrayscaleMapsSuffix},
 		{"write coverage map", testWriteCoverageMap},
 		{"detect calibration subdirs", testDetectCalibrationSubdirs},
+		{"fits native read", testFITSNative},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -10716,6 +10731,198 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 // POST-PROCESSING SELF-TESTS
 // =========================================================================
 
+func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bzero float64, offset int64, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	buf := make([]byte, 80)
+	bscale = 1.0
+	bzero = 0.0
+	for {
+		if _, err = io.ReadFull(f, buf); err != nil {
+			break
+		}
+		card := string(buf)
+		if strings.HasPrefix(card, "END") {
+			cur, _ := f.Seek(0, io.SeekCurrent)
+			pad := (2880 - (cur % 2880)) % 2880
+			offset = cur + pad
+			break
+		}
+		key := strings.TrimSpace(card[0:8])
+		val := strings.TrimSpace(card[10:30])
+		switch key {
+		case "NAXIS1":
+			width, _ = strconv.Atoi(val)
+		case "NAXIS2":
+			height, _ = strconv.Atoi(val)
+		case "NAXIS3":
+			naxis3, _ = strconv.Atoi(val)
+		case "BITPIX":
+			bitpix, _ = strconv.Atoi(val)
+		case "BSCALE":
+			bscale, _ = strconv.ParseFloat(val, 64)
+		case "BZERO":
+			bzero, _ = strconv.ParseFloat(val, 64)
+		}
+	}
+	if width <= 0 || height <= 0 {
+		return 0, 0, 0, 0, 1, 0, 0, fmt.Errorf("invalid FITS header")
+	}
+	return
+}
+
+func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
+	w, h, naxis3, bitpix, bscale, bzero, offset, err := parseFITSHeader(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var bytesPerPixel int
+	switch bitpix {
+	case 8:
+		bytesPerPixel = 1
+	case 16:
+		bytesPerPixel = 2
+	case 32:
+		bytesPerPixel = 4
+	case -32:
+		bytesPerPixel = 4
+	case -64:
+		bytesPerPixel = 8
+	default:
+		return nil, fmt.Errorf("unsupported BITPIX %d", bitpix)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	nPix := w * h
+	numPlanes := 1
+	if naxis3 > 1 {
+		numPlanes = naxis3
+	}
+
+	data := make([]byte, nPix*numPlanes*bytesPerPixel)
+	if _, err := io.ReadFull(f, data); err != nil {
+		return nil, err
+	}
+
+	frm := &frame{Width: w, Height: h, Pix: make([]float32, nPix*3)}
+
+	vals := make([]float32, nPix*numPlanes)
+	for i := 0; i < nPix*numPlanes; i++ {
+		var v float64
+		switch bitpix {
+		case 8:
+			v = float64(data[i])
+		case 16:
+			v = float64(int16(binary.BigEndian.Uint16(data[i*2:])))
+		case 32:
+			v = float64(int32(binary.BigEndian.Uint32(data[i*4:])))
+		case -32:
+			v = float64(math.Float32frombits(binary.BigEndian.Uint32(data[i*4:])))
+		case -64:
+			v = math.Float64frombits(binary.BigEndian.Uint64(data[i*8:]))
+		}
+		vals[i] = float32(v*bscale + bzero)
+	}
+
+	for p := 0; p < numPlanes; p++ {
+		minVal, maxVal := float32(1e30), float32(-1e30)
+		for i := 0; i < nPix; i++ {
+			v := vals[p*nPix+i]
+			if v < minVal {
+				minVal = v
+			}
+			if v > maxVal {
+				maxVal = v
+			}
+		}
+		rangeVal := maxVal - minVal
+		if rangeVal <= 0 {
+			rangeVal = 1.0
+		}
+		for i := 0; i < nPix; i++ {
+			v := (vals[p*nPix+i] - minVal) / rangeVal
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			if numPlanes == 1 {
+				frm.Pix[i*3] = v
+				frm.Pix[i*3+1] = v
+				frm.Pix[i*3+2] = v
+			} else {
+				frm.Pix[i*3+p] = v
+			}
+		}
+	}
+
+	if targetW > 0 && targetH > 0 && (w != targetW || h != targetH) {
+		frm = resizeFrame(frm, targetW, targetH)
+	}
+	return frm, nil
+}
+
+func testFITSNative() error {
+	dir, err := os.MkdirTemp("", "skystacker-fits-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "test.fits")
+	var buf bytes.Buffer
+	header := []string{
+		"SIMPLE  =                    T",
+		"BITPIX  =                   16",
+		"NAXIS   =                    2",
+		"NAXIS1  =                   10",
+		"NAXIS2  =                   10",
+		"BSCALE  =                  1.0",
+		"BZERO   =                  0.0",
+		"END",
+	}
+	for _, line := range header {
+		buf.WriteString(fmt.Sprintf("%-80s", line))
+	}
+	for buf.Len()%2880 != 0 {
+		buf.WriteByte(' ')
+	}
+	payload := make([]byte, 200)
+	for i := 0; i < 100; i++ {
+		binary.BigEndian.PutUint16(payload[i*2:], uint16(i))
+	}
+	buf.Write(payload)
+	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+		return err
+	}
+	f, err := decodeFITSNative(path, 0, 0)
+	if err != nil {
+		return err
+	}
+	if f.Width != 10 || f.Height != 10 {
+		return fmt.Errorf("FITS: got %dx%d, want 10x10", f.Width, f.Height)
+	}
+	if f.Pix[0] != 0 {
+		return fmt.Errorf("FITS pixel 0 = %v, want 0", f.Pix[0])
+	}
+	if f.Pix[99*3] != 1.0 {
+		return fmt.Errorf("FITS pixel 99 = %v, want 1.0", f.Pix[99*3])
+	}
+	return nil
+}
+
 func testPolyBasis() error {
 	b := polyBasis(2, 3, 2)
 	want := []float64{1, 2, 3, 4, 6, 9}
@@ -11036,6 +11243,7 @@ func main() {
 		SpikesLengthMinRatio: opts.SpikesLengthMinRatio,
 		SpikesMinCount:       opts.SpikesMinCount,
 		NoExif:               opts.NoExif,
+		Clean:                opts.Clean,
 		SigmaClipThreshold:   opts.SigmaClipThreshold,
 		SigmaClipIters:       opts.SigmaClipIters,
 		TileSize:             opts.TileSize,
