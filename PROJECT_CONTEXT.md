@@ -194,6 +194,7 @@ simply omits the exposure summary.
 - Triangle pool 30 → 40 costs ~2.4× more triangle descriptors in pass 1;
   RANSAC downstream unaffected.
 - **Spikes ON by default** since v0.5.x. `--no-spikes` to disable.
+- Chroma denoise multi-scale test uses tolerance-based float comparison (exact `>=` on stddev could flip on other hardware).
 - **Progress heartbeat APPLIED**: `startProgress` helper + per-tile
   progress logging inside `reduceTilesStack`. Long sigmas no longer
   look hung.
