@@ -4106,10 +4106,48 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 	return nil
 }
 
+// writeCoverageMap writes a per-pixel coverage map: each pixel's value
+// is (valid frame count at that pixel) / totalRegistered, clamped to [0,1].
+// "Valid" means the resampler produced a real sample there (not -1 from
+// resampling outside the source bounds). Full-frame dimensions for the
+// registered stack: the map shows where the safe crop was taken from,
+// because every pixel inside the crop is 100% covered by construction.
+//
+// Unlike the rejection/weight maps this map is linear-mapped, not
+// auto-normalized, so 0.0 is always black and 1.0 is always white. That
+// keeps the meaning stable across runs where the maximum coverage varies.
+func writeCoverageMap(outputDir string, w, h int, counts []int32, totalRegistered int, suffix string) {
+	if counts == nil || totalRegistered <= 0 {
+		return
+	}
+	if len(counts) < w*h {
+		return
+	}
+	inv := 1.0 / float32(totalRegistered)
+	rgb := make([]float32, w*h*3)
+	for i := 0; i < w*h; i++ {
+		v := float32(counts[i]) * inv
+		if v < 0 {
+			v = 0
+		} else if v > 1 {
+			v = 1
+		}
+		rgb[i*3] = v
+		rgb[i*3+1] = v
+		rgb[i*3+2] = v
+	}
+	p := filepath.Join(outputDir, "stacked"+suffix+"_coverage_map.jpg")
+	if err := writeFileAtomic(p, func(wr io.Writer) error {
+		return writeLinearPreviewJPEG(wr, w, h, rgb)
+	}); err != nil {
+		logf("  WARNING: coverage map: %v", err)
+	}
+}
+
 // writeGrayscaleMaps writes the rejection and weight maps as single-channel
 // JPEGs next to the stacked outputs. Best effort: failures are logged but
 // not fatal.
-func writeGrayscaleMaps(outputDir string, w, h int, rej, wgt []float32) {
+func writeGrayscaleMaps(outputDir string, w, h int, rej, wgt []float32, suffix string) {
 	if rej == nil && wgt == nil {
 		return
 	}
@@ -4120,7 +4158,7 @@ func writeGrayscaleMaps(outputDir string, w, h int, rej, wgt []float32) {
 			rgb[i*3+1] = v
 			rgb[i*3+2] = v
 		}
-		p := filepath.Join(outputDir, "stacked_rejection_map.jpg")
+		p := filepath.Join(outputDir, "stacked"+suffix+"_rejection_map.jpg")
 		if err := writeFileAtomic(p, func(wr io.Writer) error {
 			return writeAutoNormalizedLinearPreviewJPEG(wr, w, h, rgb)
 		}); err != nil {
@@ -4133,7 +4171,7 @@ func writeGrayscaleMaps(outputDir string, w, h int, rej, wgt []float32) {
 			rgb[i*3+1] = v
 			rgb[i*3+2] = v
 		}
-		p := filepath.Join(outputDir, "stacked_weight_map.jpg")
+		p := filepath.Join(outputDir, "stacked"+suffix+"_weight_map.jpg")
 		if err := writeFileAtomic(p, func(wr io.Writer) error {
 			return writeAutoNormalizedLinearPreviewJPEG(wr, w, h, rgb)
 		}); err != nil {
@@ -5079,6 +5117,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	// ============== Tiled median/sigma reduction (spill-based)
 	var unregSumPix, unregMeanPix []float32
+	var unregRejPix, unregWgtPix []float32
 	if opts.Method == "median" || opts.Method == "sigma" {
 		// Unregistered stack: full frame, all accepted frames.
 		tr := opts.SigmaClipThreshold
@@ -5099,13 +5138,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		unregSumPix = sum1
 		unregMeanPix = mean1
+		unregRejPix = rej1
+		unregWgtPix = wgt1
 		// Do NOT overwrite unregAcc. It holds the plain sum
 		// accumulated in Pass 1 and is divided later to produce
 		// stacked_no_correction_mean.jpg, which is always the
 		// plain arithmetic mean, regardless of method.
 		if len(spillPaths2) == 0 {
 			// No registration: report reduction and write maps directly.
-			writeGrayscaleMaps(outputDir, refW, refH, rej1, wgt1)
+			writeGrayscaleMaps(outputDir, refW, refH, rej1, wgt1, "")
 			logf("Reduction complete (unregistered only)")
 		}
 
@@ -5220,7 +5261,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return fmt.Errorf("write mean jpg: %w", err)
 		}
 		if regRejPix != nil || regWgtPix != nil {
-			writeGrayscaleMaps(outputDir, outW, outH, regRejPix, regWgtPix)
+			writeGrayscaleMaps(outputDir, outW, outH, regRejPix, regWgtPix, "")
+		}
+		if regRejPix != nil {
+			writeGrayscaleMaps(outputDir, refW, refH, unregRejPix, unregWgtPix, "_unregistered")
+		}
+		if validCount != nil {
+			writeCoverageMap(outputDir, refW, refH, validCount, registeredCount, "")
 		}
 	} else {
 		outW, outH = refW, refH
@@ -5330,6 +5377,19 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		"No calibration (dark, flat, bias) was performed.",
 		"JPEG inputs are gamma-encoded (sRGB-like); samples were averaged in encoded space, not linear light.",
 		"All JPG outputs are display previews, not scientific outputs.",
+	}
+	if regRejPix != nil || unregRejPix != nil {
+		notes = append(notes,
+			"stacked_rejection_map.jpg (and stacked_unregistered_rejection_map.jpg when "+
+				"registration succeeded) count per-pixel sigma-clipped outliers. "+
+				"Bright spots here are the cosmic-ray / hot-pixel candidates: sigma-clipping "+
+				"rejects exactly those extreme outliers. "+
+				"stacked_weight_map.jpg / stacked_unregistered_weight_map.jpg show the "+
+				"surviving-frame count used by the sigma-clipped mean. "+
+				"stacked_coverage_map.jpg shows the fraction of registered frames with a "+
+				"valid sample at each pixel (full frame; every pixel inside the safe crop "+
+				"is 100% by construction).",
+		)
 	}
 	if registrationOn {
 		notes = append(notes,
@@ -5562,6 +5622,8 @@ func runSelfTests() int {
 		{"xf cache invalidation", testXfCacheInvalidation},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
+		{"write grayscale maps suffix", testWriteGrayscaleMapsSuffix},
+		{"write coverage map", testWriteCoverageMap},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -8486,6 +8548,72 @@ func testReportContains() error {
 			return fmt.Errorf("report missing %q", want)
 		}
 	}
+	return nil
+}
+
+// =========================================================================
+// testWriteGrayscaleMapsSuffix: the suffix parameter must select distinct
+// filenames for the registered and unregistered rejection/weight maps, so
+// that a registered sigma run keeps both. Earlier code dropped the
+// unregistered maps silently when registration succeeded.
+func testWriteGrayscaleMapsSuffix() error {
+	dir, err := os.MkdirTemp("", "skystacker-maps-suffix-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 8, 8
+	rej := make([]float32, w*h)
+	wgt := make([]float32, w*h)
+	for i := range rej {
+		rej[i] = float32(i%5) / 5.0
+		wgt[i] = float32(i%3) / 3.0
+	}
+	writeGrayscaleMaps(dir, w, h, rej, wgt, "")
+	for _, name := range []string{"stacked_rejection_map.jpg", "stacked_weight_map.jpg"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return fmt.Errorf("missing %s: %w", name, err)
+		}
+	}
+	writeGrayscaleMaps(dir, w, h, rej, wgt, "_unregistered")
+	for _, name := range []string{
+		"stacked_unregistered_rejection_map.jpg",
+		"stacked_unregistered_weight_map.jpg",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return fmt.Errorf("missing %s: %w", name, err)
+		}
+	}
+	writeGrayscaleMaps(dir, w, h, nil, nil, "")
+	return nil
+}
+
+// testWriteCoverageMap: coverage map must be written for valid inputs,
+// must use linear mapping (so 0 is always black and 1 is always white),
+// and must no-op safely on nil / undersized / zero-total input.
+func testWriteCoverageMap() error {
+	dir, err := os.MkdirTemp("", "skystacker-coverage-map-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 8, 8
+	counts := make([]int32, w*h)
+	for i := range counts {
+		counts[i] = 10
+	}
+	writeCoverageMap(dir, w, h, counts, 10, "")
+	if _, err := os.Stat(filepath.Join(dir, "stacked_coverage_map.jpg")); err != nil {
+		return fmt.Errorf("missing coverage map: %w", err)
+	}
+	counts[0] = 5
+	writeCoverageMap(dir, w, h, counts, 10, "_unregistered")
+	if _, err := os.Stat(filepath.Join(dir, "stacked_unregistered_coverage_map.jpg")); err != nil {
+		return fmt.Errorf("missing suffixed coverage map: %w", err)
+	}
+	writeCoverageMap(dir, w, h, nil, 10, "")
+	writeCoverageMap(dir, 16, 16, counts, 10, "")
+	writeCoverageMap(dir, w, h, counts, 0, "")
 	return nil
 }
 
