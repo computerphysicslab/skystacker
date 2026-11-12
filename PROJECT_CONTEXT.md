@@ -175,6 +175,12 @@ simply omits the exposure summary.
 
 ## Recent decisions / caveats
 
+- **Tolerance-based float comparison APPLIED**: Tests that compare floating-point
+  values (notably `testChromaDenoiseMultiScale` and `testApplyCurves`) now use
+  `math.Abs(float64(got-want)) > 1e-4` instead of exact equality. This fixes
+  CI failures caused by last-digit variations across platforms (e.g.,
+  `0.41581752` vs `0.41581762`). The epsilon `1e-4` absorbs hardware/compiler
+  differences without masking real regressions.
 - **Time-estimate calibration APPLIED** (was pending): the ETA at run
   start now uses `sigma: 1.03 * N^1.20 * MP`, `median: 0.88 * N^1.18 * MP`,
   `mean: 0.55 * N^1.00 * MP`. Both real runs (Orion 70 fr, M42 152 fr)
