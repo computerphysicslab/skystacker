@@ -135,6 +135,7 @@ type cliOptions struct {
 	SpikesMinRatio       float64
 	SpikesLengthSoftness float64
 	SpikesLengthMinRatio float64
+	SpikesMinCount       int
 	NoExif               bool
 	SigmaClipThreshold   float64
 	SigmaClipIters       int
@@ -213,6 +214,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.SpikesMinRatio, "spikes-min-ratio", 0.2, "minimum spike size for the faintest spiked star (0-1, default 0.2)")
 	fs.Float64Var(&o.SpikesLengthSoftness, "spikes-length-softness", 1.0, "length falloff exponent: 1.0=proportional, 1.5=super-linear, 2.0=strongly differentiated")
 	fs.Float64Var(&o.SpikesLengthMinRatio, "spikes-length-min-ratio", 0.03, "minimum length fraction for the faintest spiked star (0-1, default 0.03)")
+	fs.IntVar(&o.SpikesMinCount, "spikes-min-count", 5, "minimum number of stars to spike, floors the percent-based selection (default 5)")
 	fs.BoolVar(&o.NoExif, "no-exif", false, "skip EXIF exposure summary in report")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
@@ -243,7 +245,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" {
 				skipNext = true
 			}
 		} else {
@@ -322,6 +324,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.SpikesLengthMinRatio < 0 || o.SpikesLengthMinRatio > 1.0 {
 		return nil, fmt.Errorf("--spikes-length-min-ratio must be in [0, 1.0], got %g", o.SpikesLengthMinRatio)
+	}
+	if o.SpikesMinCount < 0 || o.SpikesMinCount > 1000 {
+		return nil, fmt.Errorf("--spikes-min-count must be in [0, 1000], got %d", o.SpikesMinCount)
 	}
 	if o.SigmaClipThreshold < 0 || o.SigmaClipThreshold > 10 {
 		return nil, fmt.Errorf("--sigma-clip must be in [0, 10], got %g", o.SigmaClipThreshold)
@@ -405,6 +410,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --spikes-min-ratio F  minimum intensity for faintest spiked star (default 0.2)")
 	fmt.Fprintln(w, "  --spikes-length-softness F  length falloff exponent: 1.0=proportional, 1.5=super-linear (default 1.0)")
 	fmt.Fprintln(w, "  --spikes-length-min-ratio F minimum length for faintest spiked star (default 0.03)")
+	fmt.Fprintln(w, "  --spikes-min-count N  minimum number of stars to spike, floors the percent-based selection (default 5)")
 	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
 	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
@@ -2726,6 +2732,7 @@ type runOptions struct {
 	SpikesMinRatio       float64
 	SpikesLengthSoftness float64
 	SpikesLengthMinRatio float64
+	SpikesMinCount       int
 	NoExif               bool
 	SigmaClipThreshold   float64
 	SigmaClipIters       int
@@ -5165,6 +5172,7 @@ func runSelfTests() int {
 		{"chroma denoise multi-scale", testChromaDenoiseMultiScale},
 		{"apply curves", testApplyCurves},
 		{"add diffraction spikes", testAddDiffractionSpikes},
+		{"spikes min count", testSpikesMinCount},
 		{"estimate affine", testEstimateAffine},
 		{"affine inverse round trip", testAffineInverseRoundTrip},
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
@@ -7314,6 +7322,55 @@ func testApplyCurves() error {
 	return nil
 }
 
+func testSpikesMinCount() error {
+	const w, h = 200, 200
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.05
+	}
+	// Three bright stars — below the minCount floor.
+	for k := 0; k < 3; k++ {
+		cx := 30 + k*60
+		cy := 100
+		for c := 0; c < 3; c++ {
+			f.Pix[(cy*w+cx)*3+c] = 0.9
+		}
+	}
+	noFloor := selectSpikeStars(f, 0.2, 0)
+	if len(noFloor) != 1 {
+		return fmt.Errorf("no floor: got %d, want 1 (percent floor)", len(noFloor))
+	}
+	withFloor5 := selectSpikeStars(f, 0.2, 5)
+	if len(withFloor5) != 3 {
+		return fmt.Errorf("floor=5, 3 stars: got %d, want 3 (capped to available)", len(withFloor5))
+	}
+	withFloor2 := selectSpikeStars(f, 0.2, 2)
+	if len(withFloor2) != 2 {
+		return fmt.Errorf("floor=2: got %d, want 2", len(withFloor2))
+	}
+	// Dense field: 100 stars * 5%% = 5, floor=5 -> still 5.
+	dense := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range dense.Pix {
+		dense.Pix[i] = 0.05
+	}
+	for k := 0; k < 100; k++ {
+		cx := 20 + (k%10)*18
+		cy := 20 + (k/10)*18
+		for c := 0; c < 3; c++ {
+			dense.Pix[(cy*w+cx)*3+c] = 0.9
+		}
+	}
+	denseSame := selectSpikeStars(dense, 5.0, 5)
+	if len(denseSame) != 5 {
+		return fmt.Errorf("dense floor=5: got %d, want 5", len(denseSame))
+	}
+	denseFloored := selectSpikeStars(dense, 5.0, 10)
+	if len(denseFloored) != 10 {
+		return fmt.Errorf("dense floor=10: got %d, want 10", len(denseFloored))
+	}
+	return nil
+}
+
 func testAddDiffractionSpikes() error {
 	// --- Part 1: selectSpikeStars percent-based selection ---
 	const w, h = 200, 200
@@ -7332,14 +7389,14 @@ func testAddDiffractionSpikes() error {
 		}
 	}
 
-	all := selectSpikeStars(f, 100.0)
+	all := selectSpikeStars(f, 100.0, 0)
 	if len(all) < 15 {
 		return fmt.Errorf("percent=100: expected ~20, got %d", len(all))
 	}
-	if n := selectSpikeStars(f, 0); n != nil {
+	if n := selectSpikeStars(f, 0, 0); n != nil {
 		return fmt.Errorf("percent=0: expected nil, got %d", len(n))
 	}
-	one := selectSpikeStars(f, 1.0)
+	one := selectSpikeStars(f, 1.0, 0)
 	if len(one) != 1 {
 		return fmt.Errorf("percent=1: expected 1 (floored), got %d", len(one))
 	}
@@ -7381,7 +7438,7 @@ func testAddDiffractionSpikes() error {
 		f2.Pix[(50*w+50)*3+c] = 0.9
 		f2.Pix[(50*w+150)*3+c] = 0.3
 	}
-	stars2 := selectSpikeStars(f2, 100.0)
+	stars2 := selectSpikeStars(f2, 100.0, 0)
 	if len(stars2) != 2 {
 		return fmt.Errorf("expected 2 stars, got %d", len(stars2))
 	}
@@ -9232,7 +9289,7 @@ func applyCurves(f *frame, black, gamma float64) *frame {
 //
 // Detection uses 5 sigma, the strictest threshold used elsewhere in the
 // pipeline, so noise blobs never become spikes.
-func selectSpikeStars(f *frame, percent float64) []star {
+func selectSpikeStars(f *frame, percent float64, minCount int) []star {
 	if percent <= 0 {
 		return nil
 	}
@@ -9243,6 +9300,9 @@ func selectSpikeStars(f *frame, percent float64) []star {
 	n := int(float64(len(stars)) * percent / 100.0)
 	if n < 1 {
 		n = 1
+	}
+	if minCount > 0 && n < minCount {
+		n = minCount
 	}
 	if n > 100 {
 		n = 100
@@ -9680,7 +9740,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		var spikedStars []star
 		var spikesBaseAngle float64
 		if opts.AddSpikes {
-			spikedStars = selectSpikeStars(step7Frame, opts.SpikesPercent)
+			spikedStars = selectSpikeStars(step7Frame, opts.SpikesPercent, opts.SpikesMinCount)
 			if len(spikedStars) > 0 {
 				rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 				spikesBaseAngle = rng.Float64() * 2 * math.Pi
@@ -10034,6 +10094,7 @@ func main() {
 		SpikesMinRatio:       opts.SpikesMinRatio,
 		SpikesLengthSoftness: opts.SpikesLengthSoftness,
 		SpikesLengthMinRatio: opts.SpikesLengthMinRatio,
+		SpikesMinCount:       opts.SpikesMinCount,
 		NoExif:               opts.NoExif,
 		SigmaClipThreshold:   opts.SigmaClipThreshold,
 		SigmaClipIters:       opts.SigmaClipIters,

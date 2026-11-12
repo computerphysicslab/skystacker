@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 91 passing.** Update this number after any test change.
+**Self-test count: 92 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -222,6 +222,8 @@ simply omits the exposure summary.
 
 - **Normalization APPLIED**: opt-in `--normalize` (global scale+offset per frame) and `--local-normalize` (per-tile, bilinear interp, `--ln-tile-size 256` default). Both require registration; reference frame is not normalized. Uses robust (median, MAD) statistics: scale = ref.MAD / frame.MAD (clamped to [0.5, 2.0]), offset = ref.median - scale*frame.median.
 
+- **`--spikes-min-count` APPLIED** (default 5): floors `selectSpikeStars` at `max(percent-floor, minCount)`, capped at available star count. M42 previously spiked 1 star (626 × 0.2% = 1.25 → 1); with the default floor it now spikes 5. `--spikes-min-count 1` restores the old behaviour. Signature of `selectSpikeStars` gained a trailing `minCount int` parameter (all call sites updated).
+
 ## Real-world validation
 
 ### Run 1 (2026-11-11): Orion-135mm, 70 × JPG, 2400×1600
@@ -308,7 +310,7 @@ frame dimension`, independent of BoxPct.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker main.go`
-- Test: `./skystacker --selftest` (expect: **all 91 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 92 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
