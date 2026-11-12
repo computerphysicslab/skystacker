@@ -167,8 +167,9 @@ type cliOptions struct {
 	PostHDR     bool
 	PostStretch bool
 
-	NoCache  bool
-	CacheDir string
+	NoCache     bool
+	CacheDir    string
+	TestDebayer string
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -235,6 +236,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Clean, "clean", false, "remove _work directory after successful run")
 	fs.BoolVar(&o.NoCache, "no-cache", false, "disable star/transform cache (default: cache in <output>/_work/cache)")
 	fs.StringVar(&o.CacheDir, "cache-dir", "", "cache directory (default: <output>/_work/cache)")
+	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -441,6 +443,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
 	fmt.Fprintln(w, "  --no-cache         disable star/transform cache (default: cache in <output>/_work/cache)")
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
+	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -5712,6 +5715,7 @@ func runSelfTests() int {
 		{"detect calibration subdirs", testDetectCalibrationSubdirs},
 		{"fits native read", testFITSNative},
 		{"fits debayer", testFITSDebayer},
+		{"fits debayer CLI", testDebayerCLI},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -10768,9 +10772,9 @@ func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bz
 		case "BZERO":
 			bzero, _ = strconv.ParseFloat(val, 64)
 		case "BAYERPAT":
-			baypat = strings.Trim(val, "'")
+			baypat = strings.TrimSpace(strings.Trim(val, "'"))
 		case "ROWORDER":
-			roworder = strings.Trim(val, "'")
+			roworder = strings.TrimSpace(strings.Trim(val, "'"))
 		}
 	}
 	if width <= 0 || height <= 0 {
@@ -10997,6 +11001,262 @@ func debayerFITS(vals []float32, w, h int, baypat, roworder string, targetW, tar
 	return frm
 }
 
+// testFITSFileDebayer is the --test-debayer CLI backend: decode one FITS
+// file with debayering, write the result as <base>.jpg next to the source,
+// and write <base>_raw.jpg showing the raw CFA pattern as false-color
+// (R pixels red, G pixels green, B pixels blue), in the orientation stored
+// in the file (before any ROWORDER flip). Header fields are printed to
+// stderr so the user can confirm the header was parsed correctly.
+//
+// Diagnostics that this function is designed to expose:
+//   - raw _raw.jpg shows a clean R/G/B checkerboard but .jpg is grayscale
+//     -> debayerFITS did not run (BAYERPAT missing or wrong pattern)
+//   - .jpg shows the wrong hue (e.g. red nebula looks blue)
+//     -> BAYERPAT or ROWORDER does not match the sensor
+//   - .jpg shows the correct hue and clean color
+//     -> debayering is correct; any remaining issue is in the pipeline
+func testFITSFileDebayer(path string) error {
+	// 1. Header
+	w, h, naxis3, bitpix, bscale, bzero, offset, baypat, roworder, err := parseFITSHeader(path)
+	if err != nil {
+		return fmt.Errorf("read header: %w", err)
+	}
+	logf("FITS: %s", path)
+	logf("  dimensions: %d x %d  (NAXIS3=%d)", w, h, naxis3)
+	logf("  BITPIX=%d  BSCALE=%g  BZERO=%g  data offset=%d", bitpix, bscale, bzero, offset)
+	logf("  BAYERPAT=%q  ROWORDER=%q", baypat, roworder)
+	if baypat == "" {
+		logf("  WARNING: BAYERPAT is missing from the header; the pipeline will emit grayscale, not debayered output")
+	}
+
+	// 2. Raw data
+	var bytesPerPixel int
+	switch bitpix {
+	case 8:
+		bytesPerPixel = 1
+	case 16:
+		bytesPerPixel = 2
+	case 32:
+		bytesPerPixel = 4
+	case -32:
+		bytesPerPixel = 4
+	case -64:
+		bytesPerPixel = 8
+	default:
+		return fmt.Errorf("unsupported BITPIX %d", bitpix)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+	nPix := w * h
+	numPlanes := 1
+	if naxis3 > 1 {
+		numPlanes = naxis3
+	}
+	if numPlanes != 1 {
+		return fmt.Errorf("test-debayer expects mono data, got NAXIS3=%d", naxis3)
+	}
+	data := make([]byte, nPix*bytesPerPixel)
+	if _, err := io.ReadFull(f, data); err != nil {
+		return fmt.Errorf("read data: %w", err)
+	}
+	vals := make([]float32, nPix)
+	for i := 0; i < nPix; i++ {
+		var v float64
+		switch bitpix {
+		case 8:
+			v = float64(data[i])
+		case 16:
+			v = float64(int16(binary.BigEndian.Uint16(data[i*2:])))
+		case 32:
+			v = float64(int32(binary.BigEndian.Uint32(data[i*4:])))
+		case -32:
+			v = float64(math.Float32frombits(binary.BigEndian.Uint32(data[i*4:])))
+		case -64:
+			v = math.Float64frombits(binary.BigEndian.Uint64(data[i*8:]))
+		}
+		vals[i] = float32(v*bscale + bzero)
+	}
+
+	// 3. Min/max for normalization (shared by raw preview and debayer)
+	minVal, maxVal := float32(1e30), float32(-1e30)
+	for _, v := range vals {
+		if v < minVal {
+			minVal = v
+		}
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+	rng := maxVal - minVal
+	if rng <= 0 {
+		rng = 1.0
+	}
+	logf("  value range: min=%g  max=%g  range=%g", minVal, maxVal, rng)
+
+	// 4. Raw CFA pattern as false-color (R->red, G->green, B->blue) using
+	// the header's pattern, as stored (before any ROWORDER flip).
+	rawPix := make([]float32, nPix*3)
+	var cfa [2][2]int
+	haveCFA := true
+	switch baypat {
+	case "RGGB":
+		cfa = [2][2]int{{0, 1}, {1, 2}}
+	case "BGGR":
+		cfa = [2][2]int{{2, 1}, {1, 0}}
+	case "GRBG":
+		cfa = [2][2]int{{1, 0}, {2, 1}}
+	case "GBRG":
+		cfa = [2][2]int{{1, 2}, {0, 1}}
+	default:
+		haveCFA = false
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := y*w + x
+			n := (vals[i] - minVal) / rng
+			if haveCFA {
+				switch cfa[y%2][x%2] {
+				case 0:
+					rawPix[i*3] = n
+				case 1:
+					rawPix[i*3+1] = n
+				case 2:
+					rawPix[i*3+2] = n
+				}
+			} else {
+				rawPix[i*3] = n
+				rawPix[i*3+1] = n
+				rawPix[i*3+2] = n
+			}
+		}
+	}
+	base := strings.TrimSuffix(path, filepath.Ext(path))
+	rawPath := base + "_raw.jpg"
+	if err := writeFileAtomic(rawPath, func(wr io.Writer) error {
+		return writeLinearPreviewJPEG(wr, w, h, rawPix)
+	}); err != nil {
+		return fmt.Errorf("write raw preview: %w", err)
+	}
+	if haveCFA {
+		logf("  wrote raw CFA false-color (pattern %s as stored): %s", baypat, rawPath)
+	} else {
+		logf("  wrote raw CFA grayscale (no BAYERPAT): %s", rawPath)
+	}
+
+	// 5. Debayer. debayerFITS mutates vals for ROWORDER, so pass a copy.
+	var frm *frame
+	if baypat != "" {
+		valsCopy := make([]float32, len(vals))
+		copy(valsCopy, vals)
+		frm = debayerFITS(valsCopy, w, h, baypat, roworder, 0, 0)
+	} else {
+		frm = &frame{Width: w, Height: h, Pix: rawPix}
+	}
+
+	// 6. Sanity: does the output have real channel separation?
+	var maxRG, maxRB float32
+	for i := 0; i < len(frm.Pix); i += 3 {
+		rg := frm.Pix[i] - frm.Pix[i+1]
+		if rg < 0 {
+			rg = -rg
+		}
+		rb := frm.Pix[i] - frm.Pix[i+2]
+		if rb < 0 {
+			rb = -rb
+		}
+		if rg > maxRG {
+			maxRG = rg
+		}
+		if rb > maxRB {
+			maxRB = rb
+		}
+	}
+	if maxRG < 0.01 && maxRB < 0.01 {
+		logf("  WARNING: output channels are near-identical (max |R-G|=%.4f |R-B|=%.4f); debayering may not have run", maxRG, maxRB)
+	} else {
+		logf("  channel separation: max |R-G|=%.4f  |R-B|=%.4f  (debayering active)", maxRG, maxRB)
+	}
+
+	// 7. Debayered JPG
+	outPath := base + ".jpg"
+	if err := writeFileAtomic(outPath, func(wr io.Writer) error {
+		return writeAutoNormalizedLinearPreviewJPEG(wr, frm.Width, frm.Height, frm.Pix)
+	}); err != nil {
+		return fmt.Errorf("write debayered preview: %w", err)
+	}
+	logf("  wrote debayered RGB: %s", outPath)
+	return nil
+}
+
+// testDebayerCLI: the --test-debayer flag must produce both output files
+// (raw CFA and debayered RGB) for a valid RGGB FITS file.
+func testDebayerCLI() error {
+	dir, err := os.MkdirTemp("", "skystacker-test-debayer-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 32, 32
+	var buf bytes.Buffer
+	header := []string{
+		"SIMPLE  =                    T",
+		"BITPIX  =                   16",
+		"NAXIS   =                    2",
+		"NAXIS1  =                   32",
+		"NAXIS2  =                   32",
+		"BSCALE  =                  1.0",
+		"BZERO   =                  0.0",
+		"BAYERPAT= 'RGGB    '",
+		"END",
+	}
+	for _, line := range header {
+		buf.WriteString(fmt.Sprintf("%-80s", line))
+	}
+	for buf.Len()%2880 != 0 {
+		buf.WriteByte(' ')
+	}
+	payload := make([]byte, w*h*2)
+	cfa := [2][2]int{{0, 1}, {1, 2}}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var v uint16
+			switch cfa[y%2][x%2] {
+			case 0:
+				v = 1000
+			case 1:
+				v = 500
+			case 2:
+				v = 100
+			}
+			binary.BigEndian.PutUint16(payload[(y*w+x)*2:], v)
+		}
+	}
+	buf.Write(payload)
+	path := filepath.Join(dir, "test.fits")
+	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+		return err
+	}
+	if err := testFITSFileDebayer(path); err != nil {
+		return fmt.Errorf("testFITSFileDebayer: %w", err)
+	}
+	for _, name := range []string{"test.jpg", "test_raw.jpg"} {
+		fi, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			return fmt.Errorf("missing output %s: %w", name, err)
+		}
+		if fi.Size() == 0 {
+			return fmt.Errorf("empty output %s", name)
+		}
+	}
+	return nil
+}
+
 func testFITSNative() error {
 	dir, err := os.MkdirTemp("", "skystacker-fits-")
 	if err != nil {
@@ -11061,7 +11321,7 @@ func testFITSDebayer() error {
 		"NAXIS2  =                   10",
 		"BSCALE  =                  1.0",
 		"BZERO   =                  0.0",
-		"BAYERPAT= 'RGGB'",
+		"BAYERPAT= 'RGGB    '",
 		"ROWORDER= 'BOTTOM-UP'",
 		"END",
 	}
@@ -11351,6 +11611,13 @@ func main() {
 	}
 	if opts.Version {
 		fmt.Println(version)
+		return
+	}
+	if opts.TestDebayer != "" {
+		if err := testFITSFileDebayer(opts.TestDebayer); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if opts.SelfTest {
