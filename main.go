@@ -49,7 +49,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -162,6 +165,9 @@ type cliOptions struct {
 	PostSharpen bool
 	PostHDR     bool
 	PostStretch bool
+
+	NoCache  bool
+	CacheDir string
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -225,6 +231,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.SpikesLengthMinRatio, "spikes-length-min-ratio", 0.03, "minimum length fraction for the faintest spiked star (0-1, default 0.03)")
 	fs.IntVar(&o.SpikesMinCount, "spikes-min-count", 5, "minimum number of stars to spike, floors the percent-based selection (default 5)")
 	fs.BoolVar(&o.NoExif, "no-exif", false, "skip EXIF exposure summary in report")
+	fs.BoolVar(&o.NoCache, "no-cache", false, "disable star/transform cache (default: cache in <output>/_work/cache)")
+	fs.StringVar(&o.CacheDir, "cache-dir", "", "cache directory (default: <output>/_work/cache)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -254,7 +262,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" {
 				skipNext = true
 			}
 		} else {
@@ -426,6 +434,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --normalize       globally normalize each frame to the reference (requires registration)")
 	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
+	fmt.Fprintln(w, "  --no-cache         disable star/transform cache (default: cache in <output>/_work/cache)")
+	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -2759,6 +2769,9 @@ type runOptions struct {
 	PostSharpen bool
 	PostHDR     bool
 	PostStretch bool
+
+	NoCache  bool
+	CacheDir string
 }
 
 func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
@@ -3218,6 +3231,174 @@ type frameTransform struct {
 //     it drags the safe crop in the shifted
 //     direction. Naming these frames lets the user
 //     remove or re-align them.
+const cacheVersion = 1
+
+type starCache struct {
+	Version      int     `json:"version"`
+	FrameMtime   int64   `json:"frame_mtime_nano"`
+	FrameSize    int64   `json:"frame_size"`
+	DetectionSig string  `json:"detection_sig"`
+	Stars        []star  `json:"stars"`
+	MedianBlob   float64 `json:"median_blob"`
+	BgNoise      float64 `json:"bg_noise"`
+}
+
+type xfCache struct {
+	Version       int        `json:"version"`
+	RefMtime      int64      `json:"ref_mtime_nano"`
+	HasTransform  bool       `json:"has_transform"`
+	Sim           similarity `json:"sim"`
+	HasAffine     bool       `json:"has_affine"`
+	Affine        affine     `json:"affine"`
+	Inliers       int        `json:"inliers"`
+	RegFail       bool       `json:"reg_fail"`
+	RegFailReason string     `json:"reg_fail_reason"`
+}
+
+func frameCacheKey(path string) (key string, mtimeNano, size int64, err error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	mtimeNano = fi.ModTime().UnixNano()
+	size = fi.Size()
+	h := sha256.New()
+	io.WriteString(h, path)
+	io.WriteString(h, "|")
+	io.WriteString(h, strconv.FormatInt(mtimeNano, 10))
+	io.WriteString(h, "|")
+	io.WriteString(h, strconv.FormatInt(size, 10))
+	return hex.EncodeToString(h.Sum(nil)), mtimeNano, size, nil
+}
+
+func starDetectionSig(scale int) string {
+	return fmt.Sprintf("max=%d,scale=%d", 100, scale)
+}
+
+func writeJSON(path string, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+}
+
+func readJSON(path string, v any) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return json.Unmarshal(data, v) == nil
+}
+
+func loadStarCache(path, expectSig string) (starCache, bool) {
+	var sc starCache
+	if !readJSON(path, &sc) {
+		return starCache{}, false
+	}
+	if sc.Version != cacheVersion || sc.DetectionSig != expectSig {
+		return starCache{}, false
+	}
+	return sc, true
+}
+
+func loadXfCache(path string, expectRefMtime int64) (xfCache, bool) {
+	var xc xfCache
+	if !readJSON(path, &xc) {
+		return xfCache{}, false
+	}
+	if xc.Version != cacheVersion || xc.RefMtime != expectRefMtime {
+		return xfCache{}, false
+	}
+	return xc, true
+}
+
+func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]star, float64, float64, bool) {
+	if cacheDir != "" {
+		if key, mtime, size, err := frameCacheKey(path); err == nil {
+			cpath := filepath.Join(cacheDir, fmt.Sprintf("stars_s%d_%s.json", scale, key))
+			if sc, ok := loadStarCache(cpath, starDetectionSig(scale)); ok {
+				return sc.Stars, sc.MedianBlob, sc.BgNoise, true
+			}
+			stars := detectStars(f, 100)
+			mb := medianBlobSize(stars)
+			bn := estimateFrameBgNoise(f)
+			sc := starCache{
+				Version: cacheVersion, FrameMtime: mtime, FrameSize: size,
+				DetectionSig: starDetectionSig(scale),
+				Stars:        stars, MedianBlob: mb, BgNoise: bn,
+			}
+			if err := writeJSON(cpath, sc); err != nil {
+				logf("  WARNING: could not write star cache for %s: %v", filepath.Base(path), err)
+			}
+			return stars, mb, bn, false
+		}
+	}
+	stars := detectStars(f, 100)
+	return stars, medianBlobSize(stars), estimateFrameBgNoise(f), false
+}
+
+func checkXfCache(cacheDir, refPath, framePath string, scale int) (xfCache, bool) {
+	if cacheDir == "" {
+		return xfCache{}, false
+	}
+	refKey, refMtime, _, err := frameCacheKey(refPath)
+	if err != nil {
+		return xfCache{}, false
+	}
+	frameKey, _, _, err := frameCacheKey(framePath)
+	if err != nil {
+		return xfCache{}, false
+	}
+	xpath := filepath.Join(cacheDir, fmt.Sprintf("xf_s%d_%s_%s.json", scale, refKey, frameKey))
+	return loadXfCache(xpath, refMtime)
+}
+
+func writeXfCacheFail(cacheDir, refPath, framePath string, scale int, reason string) {
+	if cacheDir == "" {
+		return
+	}
+	refKey, refMtime, _, err := frameCacheKey(refPath)
+	if err != nil {
+		return
+	}
+	frameKey, _, _, err := frameCacheKey(framePath)
+	if err != nil {
+		return
+	}
+	xpath := filepath.Join(cacheDir, fmt.Sprintf("xf_s%d_%s_%s.json", scale, refKey, frameKey))
+	xc := xfCache{Version: cacheVersion, RefMtime: refMtime, RegFail: true, RegFailReason: reason}
+	if err := writeJSON(xpath, xc); err != nil {
+		logf("  WARNING: could not write xf cache for %s: %v", filepath.Base(framePath), err)
+	}
+}
+
+func writeXfCacheOK(cacheDir, refPath, framePath string, scale int, sim similarity, affRef *affine, inliers int) {
+	if cacheDir == "" {
+		return
+	}
+	refKey, refMtime, _, err := frameCacheKey(refPath)
+	if err != nil {
+		return
+	}
+	frameKey, _, _, err := frameCacheKey(framePath)
+	if err != nil {
+		return
+	}
+	xpath := filepath.Join(cacheDir, fmt.Sprintf("xf_s%d_%s_%s.json", scale, refKey, frameKey))
+	xc := xfCache{Version: cacheVersion, RefMtime: refMtime, HasTransform: true, Sim: sim, Inliers: inliers}
+	if affRef != nil {
+		xc.HasAffine = true
+		xc.Affine = *affRef
+	}
+	if err := writeJSON(xpath, xc); err != nil {
+		logf("  WARNING: could not write xf cache for %s: %v", filepath.Base(framePath), err)
+	}
+}
+
 func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 	var flags []string
 	if d.Quality < 30 {
@@ -10417,6 +10598,8 @@ func main() {
 		PostSharpen:          opts.PostSharpen,
 		PostHDR:              opts.PostHDR,
 		PostStretch:          opts.PostStretch,
+		NoCache:              opts.NoCache,
+		CacheDir:             opts.CacheDir,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
