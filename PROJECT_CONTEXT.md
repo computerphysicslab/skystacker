@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker . && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 97 passing.** Update this number after any test change.
+**Self-test count: 99 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -280,6 +280,32 @@ New self-tests: `testStarCacheRoundTrip`, `testStarCacheInvalidation`, `testXfCa
 
 `.png` accepted in `discoverFiles`; `image/png` was already imported via `_ "image/png"`. The `testDiscovery` fixture was updated: `c.png` → `c.tif` (still excluded, still proves unsupported extensions are skipped) and a positive assertion that `starfield.png` is discovered was added. Test count unchanged (97).
 
+### Intermediate map export (APPLIED)
+
+The registered sigma-clipped run always produced a rejection map and a
+weight map, but the *unregistered* sigma reduction's maps were computed
+and silently discarded when registration succeeded. Both sets are now
+written, distinguished by filename:
+
+- `stacked_rejection_map.jpg`, `stacked_weight_map.jpg` — registered run,
+  cropped to the safe-crop region.
+- `stacked_unregistered_rejection_map.jpg`,
+  `stacked_unregistered_weight_map.jpg` — full-frame unregistered run
+  (only emitted when registration also succeeded; otherwise the
+  unsuffixed names carry the unregistered maps for backwards
+  compatibility).
+- `stacked_coverage_map.jpg` — full-frame, per-pixel fraction of
+  registered frames with a valid sample. Linear-mapped (0 = black,
+  1 = white); every pixel inside the safe crop is 1.0 by construction.
+
+`report.txt` now names these files and states explicitly that the
+rejection map is the cosmic-ray / hot-pixel candidate map: sigma clipping
+rejects extreme outliers, which is exactly what cosmic rays are. A
+dedicated spatial CR filter (L.A.Cosmic-style) and drizzle integration
+remain future work; drizzle is a multi-session feature, and full
+photometric calibration requires an external catalog (waiving the
+stdlib-only rule).
+
 ### Deferred to a future session
 
 - **Parallel registration** — needs a producer/worker/collector rewrite with `transforms[]`, `registeredCount`, `regFailures`, cache writes, and per-frame log ordering all synchronized. Requires `testParallelRegistrationMatches` for bit-exact verification.
@@ -342,7 +368,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 97 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 99 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):

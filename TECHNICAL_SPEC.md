@@ -19,7 +19,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - Max/Min stacks (brightest/darkest pixels), optional TIFF sum output.
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 93 embedded self-tests.
+- 99 embedded self-tests.
 
 ### Excluded
 - Native RAW/FITS decoding (delegated to ImageMagick / dcraw at runtime).
@@ -117,7 +117,7 @@ Before processing:
 - **JPG**: 8-bit display previews, gamma 0.5 encoded, in the root output directory.
 - **Raw work file**: `_work/stacked_mean.f32raw` (uint32 w, uint32 h, float32 RGB), consumed by `--post-only`.
 - **Report**: `report.txt` with per-frame diagnostics, crop explanation, exposure summary, and normalization/limiter notes.
-- **Maps**: `stacked_rejection_map.jpg`, `stacked_weight_map.jpg` (single-channel, gamma 0.5).
+- **Maps**: `stacked_rejection_map.jpg`, `stacked_weight_map.jpg` (registered run, single-channel, gamma 0.5); `stacked_unregistered_rejection_map.jpg`, `stacked_unregistered_weight_map.jpg` (full-frame, when registration succeeded); `stacked_coverage_map.jpg` (full-frame per-pixel registered-frame coverage fraction, linear-mapped). The rejection map is the cosmic-ray / hot-pixel candidate map: sigma clipping rejects extreme outliers.
 
 ## 7. Error Handling
 - Corrupt files are soft-rejected during discovery and logged to `report.txt`; the run continues unless every file fails.
@@ -127,4 +127,4 @@ Before processing:
 - Memory and disk pre-flight checks abort before Pass 1; `--force` bypasses both.
 
 ## 8. Self-tests
-`./skystacker --selftest` runs 93 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, and end-to-end pipeline (stack-only, post-only).
+`./skystacker --selftest` runs 99 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, and end-to-end pipeline (stack-only, post-only).

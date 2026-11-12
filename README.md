@@ -471,7 +471,12 @@ The following items from the original roadmap have been implemented in 0.5.0:
   catching spatially varying sky gradients and transparency changes.
 - **Adaptive rejection and maps** — MAD-based sigma clipping (default 3σ,
   2 iterations), plus per-pixel rejection and weight maps
-  (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`).
+  (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`; plus
+  `stacked_unregistered_rejection_map.jpg`, `stacked_unregistered_weight_map.jpg`
+  when registration succeeds, and a full-frame `stacked_coverage_map.jpg`).
+  The rejection map is the frame's cosmic-ray / hot-pixel candidate map: sigma
+  clipping rejects exactly the extreme outliers, so bright spots there are
+  cosmic-ray or hot-pixel hits.
 
 ## Planned Potential Features and Technologies Roadmap
 
