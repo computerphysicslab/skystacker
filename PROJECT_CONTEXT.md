@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 92 passing.** Update this number after any test change.
+**Self-test count: 93 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -310,7 +310,7 @@ frame dimension`, independent of BoxPct.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker main.go`
-- Test: `./skystacker --selftest` (expect: **all 92 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 93 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
