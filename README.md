@@ -122,6 +122,24 @@ The post-processing workflow includes background removal and optional processing
 
 The processing stages and their settings are evolving during development. Consult `skystacker --help` for the exact options available in the version you have built.
 
+### Frame normalization (optional)
+
+Sessions where individual frames have different sky brightness or transparency
+benefit from normalization before stacking:
+
+- `--normalize` — per-frame global scale+offset: matches each frame's
+  background median and MAD to the reference frame's. Cheap (~1 ms/frame).
+  Handles uniform sky-glow drift and transparency swings.
+- `--local-normalize` — per-tile scale+offset with bilinear interpolation
+  of the correction field (`--ln-tile-size`, default 256 px). Handles
+  spatially varying gradients (light pollution, vignetting direction changes).
+  Implies `--normalize`.
+
+Both options require registration (the reference frame defines the target)
+and are no-ops when `--no-register` is set. The reference frame itself is
+never normalized; every other frame is corrected to match its background
+before being accumulated or spilled.
+
 ## Supported input formats
 
 SkyStacker currently discovers these extensions:
@@ -200,7 +218,7 @@ Run the default workflow:
 By default, the results are written to:
 
 ```text
-M31-session/skystacker_results/
+M31-session/0_skystacker_results/
 ```
 
 Choose a different stacking method:
@@ -289,7 +307,7 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--output string` | Output directory | `<input>/skystacker_results` |
+| `--output string` | Output directory | `<input>/0_skystacker_results` |
 | `--method string` | Stacking method: `mean`, `median` or `sigma` | `sigma` |
 | `--workers int` | Maximum number of concurrent workers | Number of CPUs |
 | `--recursive` | Search input subdirectories recursively | `false` |
@@ -322,6 +340,38 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--post-stretch` | Enable the three-level contrast stretch | `false` |
 | `--no-color-calib` | Skip colour calibration | `false` |
 | `--no-sharpen` | Skip sharpening | `false` |
+| `--no-auto-stretch` | Skip the final STF/MTF auto-stretch | `false` |
+| `--stf-shadows float` | STF shadow clip in sigma units | `-2.8` |
+| `--stf-target float` | STF target background level | `0.25` |
+| `--stf-linked` | Use linked channels for STF (auto colour balance) | `false` |
+| `--no-hdr-blend` | Skip the step-7 HDR blend | `false` |
+| `--hdr-blend-factor float` | HDR blend amount: step6 + F·step1 | `1.0` |
+| `--no-hdr-mix` | Skip the 4 step-8 weighted-mix outputs | `false` |
+| `--no-denoise` | Skip guided-filter denoise | `false` |
+| `--denoise-strength float` | Denoise passes (0=skip, N=iterations, max 10) | `4.0` |
+| `--denoise-radius int` | Guided-filter denoise radius | `3` |
+| `--denoise-chroma float` | Chroma denoise iterations (0 disables) | `1.0` |
+| `--no-curves` | Skip the curves step | `false` |
+| `--curves-black float` | Curves shadow crush point, [0, 0.5) | `0.03` |
+| `--curves-gamma float` | Curves midtone gamma (>1 darkens) | `1.20` |
+| `--spikes` | Add diffraction spikes to bright stars | `true` |
+| `--no-spikes` | Disable diffraction spikes | `false` |
+| `--spikes-percent float` | Percent of detected stars to spike (0-50) | `0.2` |
+| `--spikes-length float` | Spike arm half-length in pixels | `10` |
+| `--spikes-intensity float` | Peak additive spike brightness | `0.3` |
+| `--spikes-arms int` | Number of spike arms (4=cross, 6=hex) | `4` |
+| `--spikes-softness float` | Intensity falloff exponent | `0.5` |
+| `--spikes-min-ratio float` | Intensity floor for faintest spiked star | `0.2` |
+| `--spikes-length-softness float` | Length falloff exponent | `1.0` |
+| `--spikes-length-min-ratio float` | Length floor for faintest spiked star | `0.03` |
+| `--spikes-min-count int` | Minimum number of stars to spike | `5` |
+| `--sigma-clip float` | MAD sigma-clipping threshold (0 disables) | `3.0` |
+| `--sigma-clip-iters int` | Sigma-clipping iterations | `2` |
+| `--tile-size int` | Tile side length for median/sigma (0=auto) | `0` |
+| `--normalize` | Per-frame global scale+offset to reference (needs registration) | `false` |
+| `--local-normalize` | Per-tile scale+offset; implies `--normalize` | `false` |
+| `--ln-tile-size int` | Tile size for `--local-normalize` | `256` |
+| `--no-exif` | Skip EXIF exposure summary in report | `false` |
 | `--selftest` | Run internal self-tests and exit | — |
 | `--version` | Print version and exit | — |
 | `--help` | Print command-line help | — |
@@ -334,7 +384,7 @@ For the authoritative list and defaults in your checked-out build, run:
 
 ## Output
 
-SkyStacker creates a `skystacker_results/` directory by default (or the directory selected with `--output`).
+SkyStacker creates a `0_skystacker_results/` directory by default (or the directory selected with `--output`).
 
 Depending on the selected workflow and enabled options, it can contain:
 
@@ -386,9 +436,26 @@ Astrophotography session
 
 ## Development status
 
-SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.4.1**.
+SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.5.0**.
 
 The feature set, output names and command-line interface may change between development revisions. Treat the source code and `--help` output from the checked-out commit as authoritative.
+## Recently implemented (v0.5.0)
+
+The following items from the original roadmap have been implemented in 0.5.0:
+
+- **Frame quality weighting** — registered frames are weighted by
+  `computeFrameQuality × computeIntrinsicQuality / 100`; unregistered frames
+  by intrinsic quality alone. Weights visible per-frame in `report.txt`
+  (`IntrQ` and `Weight` columns).
+- **Per-frame normalization** — `--normalize` scales each frame's sky
+  background (median + MAD) to match the reference frame.
+- **Local normalization correction** — `--local-normalize` applies the same
+  correction per tile with bilinear interpolation of the correction field,
+  catching spatially varying sky gradients and transparency changes.
+- **Adaptive rejection and maps** — MAD-based sigma clipping (default 3σ,
+  2 iterations), plus per-pixel rejection and weight maps
+  (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`).
+
 ## Planned Potential Features and Technologies Roadmap
 
 To evolve SkyStacker into a more complete scientific astrophotography preprocessing and image-processing platform, the following features and technologies are planned for future integration:
