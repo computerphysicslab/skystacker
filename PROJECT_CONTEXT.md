@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 101 passing.** Update this number after any test change.
+**Self-test count: 102 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -335,6 +335,8 @@ New self-test: `testDetectCalibrationSubdirs`. Test count
 
 ### Native FITS reader (APPLIED)
 
+**FITS string padding bug (fixed 2026-11-12)**: FITS headers pad string values with spaces inside the quotes (e.g., `'RGGB    '`). `parseFITSHeader` originally used `strings.Trim(val, "'")`, which removed the quotes but left the trailing spaces. This caused `baypat` to be `"RGGB    "` instead of `"RGGB"`, so the `switch` in `debayerFITS` fell through to `default` and returned a grayscale frame. Fixed by wrapping in `strings.TrimSpace`. The `--test-debayer` CLI flag was added to diagnose this.
+
 ImageMagick was returning incorrect (thumbnail-sized) dimensions for some FITS files. `parseFITSHeader()` and `decodeFITSNative()` now read the header text directly (NAXIS1/2/3, BITPIX, BSCALE, BZERO) and process the raw data array. Supports 8/16/32-bit integers, -32/-64 floats, and mono/planar RGB.
 
 ### `--clean` flag (APPLIED)
@@ -403,7 +405,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 101 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 102 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
