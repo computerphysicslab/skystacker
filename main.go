@@ -2915,6 +2915,9 @@ func computeFrameQuality(inliers, stars, refStars int, scale, rotDeg float64) fl
 //	blobScore   0-30: 30 at median Size <= 3 px (sharp), 0 at >= 10 px
 //	noiseScore  0-30: 30 at bg noise <= 0.01, 0 at >= 0.15
 func computeIntrinsicQuality(starCount int, medianBlob, bgNoise float64) float64 {
+	if starCount == 0 {
+		return 0
+	}
 	starScore := math.Min(float64(starCount)/100.0, 1.0) * 40.0
 	blobScore := 30.0
 	if medianBlob > 3.0 {
@@ -3855,6 +3858,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			} else {
 				requiredBytes := int64(float64(demandBytes) * 1.20)
 				if freeBytes < requiredBytes {
+					os.Remove(outputDir)
 					return fmt.Errorf("INSUFFICIENT DISK SPACE\n"+
 						"  Estimated disk demand:  %.2f GB  (%s, %d frames)\n"+
 						"  Free on %s:    %.2f GB\n"+
@@ -4295,14 +4299,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		cropPct := 100.0 * float64(cropRect.Dx()*cropRect.Dy()) / float64(refW*refH)
+		cropExplanation = fmt.Sprintf(
+			"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). All registered frames cover the full reference image, so no frame is limiting the crop.",
+			cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH)
 		if len(limiterNames) > 0 {
 			logf("Crop limited by %d frame(s): %s", len(limiterNames), strings.Join(limiterNames, ", "))
 			cropExplanation = fmt.Sprintf(
 				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The following frames constrain the crop or have low registration quality: %s. A normal frame has scale~1.0 and rotation~0deg (translation-only alignment); frames with scale far from 1 or rotation far from 0 were typically fitted on only a few noise stars, which shrinks their actual footprint inside the reference and forces the safe crop to shrink to the common overlap. Removing these frames would yield a larger crop.",
 				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
-			cropExplanation = fmt.Sprintf(
-				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). All registered frames cover the full reference image, so no frame is limiting the crop.",
-				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH)
 		}
 		numAffine := 0
 		for i := range transforms {
@@ -4792,6 +4796,7 @@ func runSelfTests() int {
 		{"affine inverse round trip", testAffineInverseRoundTrip},
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
 		{"disk space guard", testDiskSpaceGuard},
+		{"intrinsic quality zero stars", testIntrinsicQualityZeroStars},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
 	}
@@ -7193,6 +7198,16 @@ func testDiskSpaceGuard() error {
 	}
 	if free <= 0 {
 		return fmt.Errorf("free bytes = %d, want > 0", free)
+	}
+	return nil
+}
+
+func testIntrinsicQualityZeroStars() error {
+	if got := computeIntrinsicQuality(0, 0, 0); got != 0 {
+		return fmt.Errorf("zero-star quality = %v, want 0", got)
+	}
+	if got := computeIntrinsicQuality(50, 3.0, 0.01); got <= 0 {
+		return fmt.Errorf("50-star quality = %v, want > 0", got)
 	}
 	return nil
 }
