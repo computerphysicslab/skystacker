@@ -73,7 +73,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -2816,6 +2815,51 @@ func getAvailableMemoryMB() int {
 	return 0
 }
 
+// getAvailableDiskBytes returns the free bytes available to the current
+// user on the filesystem containing the given path. It uses `df` on
+// Unix and PowerShell on Windows so the entire program remains a
+// single cross-platform file with no build tags or platform-specific
+// syscalls.
+func getAvailableDiskBytes(path string) (int64, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return 0, err
+	}
+	if runtime.GOOS == "windows" {
+		vol := filepath.VolumeName(absPath) + "\\"
+		cmd := exec.Command("powershell", "-NoProfile", "-Command",
+			fmt.Sprintf("(Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -eq '%s' }).Free", vol))
+		out, err := cmd.Output()
+		if err != nil {
+			return 0, fmt.Errorf("powershell: %w", err)
+		}
+		freeStr := strings.TrimSpace(string(out))
+		free, err := strconv.ParseInt(freeStr, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse powershell output: %w", err)
+		}
+		return free, nil
+	}
+	cmd := exec.Command("df", "-P", "-k", absPath)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("df: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return 0, errors.New("df output too short")
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		return 0, fmt.Errorf("df output malformed: %q", lines[1])
+	}
+	freeKB, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse df output: %w", err)
+	}
+	return freeKB * 1024, nil
+}
+
 // estimateDiskDemand returns the estimated peak disk usage of a stack
 // run, in bytes, for the given method and frame count. Pass 1 and Pass 2
 // spill one frame each per source frame; the 500 MB headroom covers the
@@ -2831,13 +2875,6 @@ func estimateDiskDemand(method string, frameCount int, frameBytes int64) int64 {
 // getAvailableDiskBytes returns the free bytes for the user on the given
 // path's filesystem. Returns (0, err) if statfs is unavailable; callers
 // should treat (0, non-nil) as "cannot check, proceed".
-func getAvailableDiskBytes(path string) (int64, error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0, err
-	}
-	return int64(st.Bavail) * int64(st.Bsize), nil
-}
 
 // normStats describes a frame's background level and noise: the median
 // luminance and the median absolute deviation (MAD) of luminance around
