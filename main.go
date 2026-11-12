@@ -79,6 +79,16 @@ import (
 
 const version = "0.5.0"
 
+// repoURL is printed in the startup banner and in --version output.
+const repoURL = "https://github.com/computerphysicslab/skystacker"
+
+// buildDate is injected at build time via:
+//
+//	go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker main.go
+//
+// When empty, the VCS commit time embedded by Go is used.
+var buildDate = ""
+
 // =========================================================================
 // CLI
 // =========================================================================
@@ -10260,7 +10270,31 @@ func testUnsharpMask() error {
 // main
 // =========================================================================
 
+// resolveBuildDate returns the build date from the ldflags-injected variable,
+// falling back to the VCS commit time embedded by Go, and finally to "unknown".
+func resolveBuildDate() string {
+	if buildDate != "" {
+		return buildDate
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.time" && s.Value != "" {
+				return s.Value
+			}
+		}
+	}
+	return "unknown"
+}
+
+// printBanner writes version, repo URL and build date to stderr so stdout
+// stays clean for scripts that consume stack outputs.
+func printBanner() {
+	fmt.Fprintf(os.Stderr, "SkyStacker %s | %s | built %s\n",
+		version, repoURL, resolveBuildDate())
+}
+
 func main() {
+	printBanner()
 	opts, err := parseArgs(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)

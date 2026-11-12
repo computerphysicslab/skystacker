@@ -197,6 +197,23 @@ Print the version or command-line help:
 ./skystacker --help
 ```
 
+### Startup banner
+
+On every run SkyStacker prints a one-line banner to standard error:
+
+```text
+SkyStacker 0.5.0 | https://github.com/computerphysicslab/skystacker | built 2026-11-12T12:00:00Z
+```
+
+To embed the real build time:
+
+```bash
+go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker main.go
+```
+
+Without `-ldflags`, SkyStacker falls back to the VCS commit time that Go
+embeds when building from a Git checkout, or prints `unknown`.
+
 ## Quick start
 
 Put the light frames from one imaging session in a directory, for example:
@@ -499,6 +516,12 @@ To evolve SkyStacker into a more complete scientific astrophotography preprocess
 * **Robust Workflow Control**: Processing cache, checkpoint and resume capabilities, YAML/JSON pipeline configuration files, structured JSON telemetry reports, a modular plugin architecture, and an optional REST API.
 
 ---
+
+## How SkyStacker compares
+
+See [COMPARISON.md](COMPARISON.md) for a feature comparison with DeepSkyStacker,
+Siril, Astro Pixel Processor, PixInsight, Sequator, ASTAP, IRIS, Nebulosity,
+MaxIm DL, AstroImageJ, Starry Landscape Stacker and AutoStakkert!.
 
 ## Project goals
 
