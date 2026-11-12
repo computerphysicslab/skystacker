@@ -148,7 +148,7 @@ SkyStacker currently discovers these extensions:
 - `.cr2` and `.cr3`
 - `.fit` and `.fits`
 
-JPEG decoding is handled by Go's image packages. RAW and FITS decoding uses external command-line tools, so support depends on the relevant decoder being installed and available in `PATH`.
+JPEG decoding is handled by Go's image packages. FITS decoding is handled natively (with ImageMagick as a fallback), and RAW decoding uses external command-line tools, so support depends on the relevant decoder being installed and available in `PATH`.
 
 ### External tools
 
@@ -181,7 +181,7 @@ Clone the repository and build the executable:
 git clone https://github.com/computerphysicslab/skystacker.git
 cd skystacker
 
-go build -o skystacker .
+go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .
 ```
 
 Run the internal self-tests:
@@ -390,6 +390,7 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--ln-tile-size int` | Tile size for `--local-normalize` | `256` |
 | `--no-exif` | Skip EXIF exposure summary in report | `false` |
 | `--no-cache` | Disable the star/transform cache | `false` |
+| `--clean` | Remove `_work` directory after successful run | `false` |
 | `--cache-dir string` | Cache directory (default `<output>/_work/cache`) | — |
 | `--selftest` | Run internal self-tests and exit | — |
 | `--version` | Print version and exit | — |

@@ -5,11 +5,11 @@ v0.5.0 (single-file Go program, `main.go`)
 
 ## Build, test, install
 ```
-gofmt -w main.go && go build -o skystacker . && ./skystacker --selftest
+gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker . && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 100 passing.** Update this number after any test change.
+**Self-test count: 101 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -333,6 +333,14 @@ scanned and lists the accepted formats (JPG/PNG/RAW/FITS).
 New self-test: `testDetectCalibrationSubdirs`. Test count
 100.
 
+### Native FITS reader (APPLIED)
+
+ImageMagick was returning incorrect (thumbnail-sized) dimensions for some FITS files. `parseFITSHeader()` and `decodeFITSNative()` now read the header text directly (NAXIS1/2/3, BITPIX, BSCALE, BZERO) and process the raw data array. Supports 8/16/32-bit integers, -32/-64 floats, and mono/planar RGB.
+
+### `--clean` flag (APPLIED)
+
+By default, `_work` is preserved for fast re-runs. The `--clean` flag removes `_work` (including the cache) after a successful run.
+
 ### Deferred to a future session
 
 - **Parallel registration** — needs a producer/worker/collector rewrite with `transforms[]`, `registeredCount`, `regFailures`, cache writes, and per-frame log ordering all synchronized. Requires `testParallelRegistrationMatches` for bit-exact verification.
@@ -394,8 +402,8 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 ## Recovery / one-shot context
 
 - Repo: https://github.com/computerphysicslab/skystacker
-- Build: `gofmt -w main.go && go build -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 100 self-tests passed**)
+- Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
+- Test: `./skystacker --selftest` (expect: **all 101 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):

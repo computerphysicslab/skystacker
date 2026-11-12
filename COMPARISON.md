@@ -9,6 +9,7 @@ limited or workflow-dependent.
 | Tool | License | Platforms | Interface |
 |---|---|---|---|
 | **SkyStacker** | MIT | Win / Mac / Linux | CLI only |
+| **OriginStack** | GPLv3 | Win / Mac / Linux | GUI + CLI |
 | **DeepSkyStacker** | Free | Win, Mac (6.1.3+), Linux (Wine) | GUI + CLI |
 | **Siril** | GPLv3 | Win / Mac / Linux | GUI + CLI |
 | **Astro Pixel Processor** | Paid | Win / Mac / Linux | GUI |
@@ -27,6 +28,7 @@ limited or workflow-dependent.
 | Tool | Dark / Flat / Bias | Bad-pixel map | Distortion corr. | Plate solving |
 |---|---|---|---|---|
 | **SkyStacker** | Yes | – | – | – |
+| **OriginStack** | Yes | – | – | Yes |
 | **DeepSkyStacker** | Yes | – | – | – |
 | **Siril** | Yes | Yes | Yes | Partial |
 | **Astro Pixel Processor** | Yes | Yes | Yes | – |
@@ -45,6 +47,7 @@ limited or workflow-dependent.
 | Tool | Mean / Med / Sigma | Weighted | Drizzle | Comet |
 |---|---|---|---|---|
 | **SkyStacker** | Yes | Yes | – | – |
+| **OriginStack** | Yes | Yes | Yes | Yes |
 | **DeepSkyStacker** | Yes | Yes | x2 / x3 | Yes |
 | **Siril** | Yes | Yes | HST | Yes |
 | **Astro Pixel Processor** | Yes | Yes | Bayer | Partial |
@@ -63,6 +66,7 @@ limited or workflow-dependent.
 | Tool | Built-in post | Scripting / CLI | Output formats | GPU |
 |---|---|---|---|---|
 | **SkyStacker** | Extensive | CLI only | TIFF / JPEG / raw | – |
+| **OriginStack** | Extensive | CLI (Python) | FITS / JPG | Yes (CUDA) |
 | **DeepSkyStacker** | Minimal | CLI | TIFF / FITS | – |
 | **Siril** | Extensive | Scripts + CLI | FITS / TIFF / JPEG / SER | – |
 | **Astro Pixel Processor** | Moderate | Limited | FITS / TIFF / JPEG | – |
