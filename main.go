@@ -2309,6 +2309,59 @@ func writeAutoNormalizedPreviewJPEG(w io.Writer, width, height int, pix []float3
 	return writePreviewJPEGScaled(w, width, height, pix, maxVal)
 }
 
+// writeMinMaxStretchedPreviewJPEG writes a per-channel min-max normalized
+// preview of a float32 RGB buffer. Each channel is mapped independently
+// so its minimum becomes 0 (pure black) and its maximum becomes 255
+// (pure white). Unlike writeAutoNormalizedPreviewJPEG, this does NOT
+// apply a gamma 0.5 lift: it is a direct, gamma-free visualization of
+// the buffer's full dynamic range. Used for post_step_0-stretched.jpg,
+// the min-max complement to stacked_sum.jpg.
+//
+// The degenerate case (all pixels the same value per channel) yields a
+// zero range; invRange stays 0 and every pixel is written as black. It
+// does not panic or produce NaN.
+func writeMinMaxStretchedPreviewJPEG(w io.Writer, width, height int, pix []float32) error {
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("min-max stretch: invalid dimensions %dx%d", width, height)
+	}
+	if len(pix) < width*height*3 {
+		return fmt.Errorf("min-max stretch: buffer too small (%d < %d)", len(pix), width*height*3)
+	}
+	minC := [3]float32{pix[0], pix[1], pix[2]}
+	maxC := [3]float32{pix[0], pix[1], pix[2]}
+	for i := 3; i+2 < len(pix); i += 3 {
+		for c := 0; c < 3; c++ {
+			v := pix[i+c]
+			if v < minC[c] {
+				minC[c] = v
+			}
+			if v > maxC[c] {
+				maxC[c] = v
+			}
+		}
+	}
+	var invRange [3]float32
+	for c := 0; c < 3; c++ {
+		r := maxC[c] - minC[c]
+		if r > 0 {
+			invRange[c] = 1.0 / r
+		}
+	}
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		rowOff := y * img.Stride
+		for x := 0; x < width; x++ {
+			i := (y*width + x) * 3
+			o := rowOff + x*4
+			for c := 0; c < 3; c++ {
+				img.Pix[o+c] = floatToByte((pix[i+c] - minC[c]) * invRange[c])
+			}
+			img.Pix[o+3] = 255
+		}
+	}
+	return jpeg.Encode(w, img, &jpeg.Options{Quality: 90})
+}
+
 func stretchIndex(v float32) int {
 	if v <= 0 {
 		return 0
@@ -5287,6 +5340,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	var sumMax float32
 	var outW, outH int
+	var step0Path string
 
 	if registrationOn {
 		outW, outH = cropRect.Dx(), cropRect.Dy()
@@ -5338,6 +5392,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return writeAutoNormalizedPreviewJPEG(w, outW, outH, sumPix)
 		}); err != nil {
 			return fmt.Errorf("write sum jpg: %w", err)
+		}
+		step0Path = filepath.Join(outputDir, "post_step_0-stretched.jpg")
+		logf("Writing min-max stretched sum (post_step_0)")
+		if err := writeFileAtomic(step0Path, func(w io.Writer) error {
+			return writeMinMaxStretchedPreviewJPEG(w, outW, outH, sumPix)
+		}); err != nil {
+			logf("  WARNING: could not write post_step_0-stretched.jpg: %v", err)
+			step0Path = ""
 		}
 
 		logf("Writing work file (stacked result, float32 raw)")
@@ -5404,6 +5466,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return writeAutoNormalizedPreviewJPEG(w, outW, outH, sumPix)
 		}); err != nil {
 			return fmt.Errorf("write sum jpg: %w", err)
+		}
+		step0Path = filepath.Join(outputDir, "post_step_0-stretched.jpg")
+		logf("Writing min-max stretched sum (post_step_0)")
+		if err := writeFileAtomic(step0Path, func(w io.Writer) error {
+			return writeMinMaxStretchedPreviewJPEG(w, outW, outH, sumPix)
+		}); err != nil {
+			logf("  WARNING: could not write post_step_0-stretched.jpg: %v", err)
+			step0Path = ""
 		}
 
 		logf("Writing work file (stacked result, float32 raw)")
@@ -5538,7 +5608,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		CropRect:          cropRect,
 		SumNormalization:  sumMax,
 		OutputFiles: append(append(append([]string{},
-			appendIf(opts.CreateTIFF, sumTiff)...),
+			append(appendIf(opts.CreateTIFF, sumTiff), appendIf(step0Path != "", step0Path)...)...),
 			sumJPG, meanJPG, noCorrJPG, maxJPG, minJPG,
 		), append(postOutputs, reportTxt)...),
 		Workers:            workers,
@@ -5723,6 +5793,7 @@ func runSelfTests() int {
 		{"report shows weight columns", testReportShowsWeightColumns},
 		{"write grayscale maps suffix", testWriteGrayscaleMapsSuffix},
 		{"write coverage map", testWriteCoverageMap},
+		{"min max stretched preview jpeg", testMinMaxStretchedPreviewJPEG},
 		{"detect calibration subdirs", testDetectCalibrationSubdirs},
 		{"fits native read", testFITSNative},
 		{"fits debayer", testFITSDebayer},
@@ -8717,6 +8788,67 @@ func testWriteCoverageMap() error {
 	writeCoverageMap(dir, w, h, nil, 10, "")
 	writeCoverageMap(dir, 16, 16, counts, 10, "")
 	writeCoverageMap(dir, w, h, counts, 0, "")
+	return nil
+}
+
+// testMinMaxStretchedPreviewJPEG: the per-channel min-max stretch must
+// map each channel's minimum to 0 and maximum to 255, unlike
+// writeAutoNormalizedPreviewJPEG which divides by the global max and
+// applies a gamma 0.5 lift.
+func testMinMaxStretchedPreviewJPEG() error {
+	// Three pixels chosen so each channel has a different min/max:
+	//
+	//	R: 0.10, 0.50, 1.00  -> min 0.10, max 1.00
+	//	G: 0.20, 0.50, 0.80  -> min 0.20, max 0.80
+	//	B: 0.30, 0.50, 0.70  -> min 0.30, max 0.70
+	//
+	// After per-channel min-max the three pixels become:
+	//
+	//	Pixel 0 -> (0, 0, 0)      black
+	//	Pixel 1 -> (0.44, 0.5, 0.5)
+	//	Pixel 2 -> (1, 1, 1)      white
+	const w, h = 3, 1
+	pix := []float32{
+		0.10, 0.20, 0.30,
+		0.50, 0.50, 0.50,
+		1.00, 0.80, 0.70,
+	}
+	var buf bytes.Buffer
+	if err := writeMinMaxStretchedPreviewJPEG(&buf, w, h, pix); err != nil {
+		return err
+	}
+	if buf.Len() == 0 {
+		return errors.New("empty JPEG output")
+	}
+	img, err := jpeg.Decode(&buf)
+	if err != nil {
+		return fmt.Errorf("decode jpeg: %w", err)
+	}
+	if img.Bounds().Dx() != w || img.Bounds().Dy() != h {
+		return fmt.Errorf("wrong dims: %v, want %dx%d", img.Bounds(), w, h)
+	}
+	// Pixel 0: near black (allow JPEG tolerance).
+	r0, g0, b0, _ := img.At(0, 0).RGBA()
+	if r0 > 0x2000 || g0 > 0x2000 || b0 > 0x2000 {
+		return fmt.Errorf("min pixel not black: (%d,%d,%d)", r0>>8, g0>>8, b0>>8)
+	}
+	// Pixel 2: near white (allow JPEG tolerance).
+	r2, g2, b2, _ := img.At(2, 0).RGBA()
+	if r2 < 0xE000 || g2 < 0xE000 || b2 < 0xE000 {
+		return fmt.Errorf("max pixel not white: (%d,%d,%d)", r2>>8, g2>>8, b2>>8)
+	}
+	// Degenerate: uniform input must not crash (each channel range 0).
+	uniform := make([]float32, w*h*3)
+	for i := range uniform {
+		uniform[i] = 0.42
+	}
+	if err := writeMinMaxStretchedPreviewJPEG(&bytes.Buffer{}, w, h, uniform); err != nil {
+		return fmt.Errorf("uniform case: %w", err)
+	}
+	// Undersized buffer must return an error, not panic.
+	if err := writeMinMaxStretchedPreviewJPEG(&bytes.Buffer{}, 10, 10, []float32{1, 2, 3}); err == nil {
+		return errors.New("expected error for undersized buffer")
+	}
 	return nil
 }
 
