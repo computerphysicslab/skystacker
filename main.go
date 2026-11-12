@@ -169,6 +169,7 @@ type cliOptions struct {
 
 	NoCache     bool
 	CacheDir    string
+	KeepCache   bool
 	TestDebayer string
 }
 
@@ -236,6 +237,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Clean, "clean", false, "remove _work directory after successful run")
 	fs.BoolVar(&o.NoCache, "no-cache", false, "disable star/transform cache (default: cache in <output>/_work/cache)")
 	fs.StringVar(&o.CacheDir, "cache-dir", "", "cache directory (default: <output>/_work/cache)")
+	fs.BoolVar(&o.KeepCache, "keep-cache", false, "keep the star/transform cache after a successful run (default: remove it)")
 	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
@@ -442,6 +444,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
 	fmt.Fprintln(w, "  --no-cache         disable star/transform cache (default: cache in <output>/_work/cache)")
+	fmt.Fprintln(w, "  --keep-cache       keep the star/transform cache after a successful run (default: remove it)")
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
 	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
@@ -2787,8 +2790,9 @@ type runOptions struct {
 	PostHDR     bool
 	PostStretch bool
 
-	NoCache  bool
-	CacheDir string
+	NoCache   bool
+	CacheDir  string
+	KeepCache bool
 }
 
 func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
@@ -5559,6 +5563,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 
 	logf("Actual processing time: %s", rep.Duration.Round(time.Millisecond))
+	if cacheDir != "" && !opts.KeepCache {
+		if err := os.RemoveAll(cacheDir); err != nil {
+			logf("WARNING: could not remove cache %s: %v", cacheDir, err)
+		} else {
+			logf("Cache removed: %s (use --keep-cache to preserve)", cacheDir)
+		}
+	}
 	logf("Done -> %s", outputDir)
 	return nil
 }
@@ -11694,6 +11705,7 @@ func main() {
 		PostStretch:          opts.PostStretch,
 		NoCache:              opts.NoCache,
 		CacheDir:             opts.CacheDir,
+		KeepCache:            opts.KeepCache,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
