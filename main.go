@@ -79,7 +79,7 @@ import (
 	"time"
 )
 
-const version = "0.5.0"
+var version = "0.5.0"
 
 // repoURL is printed in the startup banner and in --version output.
 const repoURL = "https://github.com/computerphysicslab/skystacker"
@@ -483,7 +483,7 @@ func discoverFiles(root string, recursive bool, exclude []string) ([]string, err
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".jpg" || ext == ".jpeg" || ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
 			files = append(files, abs)
 		}
 		return nil
@@ -4464,6 +4464,23 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		logf("Registration: OFF")
 	}
 
+	// Star/transform cache. Lives inside <output>/_work/cache so it is
+	// cleaned up alongside the rest of the session's intermediate files.
+	var cacheDir string
+	if !opts.NoCache {
+		cdir := opts.CacheDir
+		if cdir == "" {
+			cdir = filepath.Join(outputDir, "_work", "cache")
+		}
+		if err := os.MkdirAll(cdir, 0o755); err != nil {
+			logf("WARNING: cache disabled, cannot create %s: %v", cdir, err)
+		} else {
+			cacheDir = cdir
+			logf("Cache: %s", cacheDir)
+		}
+	}
+	var starHits, xfHits int
+
 	// Auto-detect calibration frames if --calib-root is provided
 	if opts.CalibRoot != "" {
 		filterName := filepath.Base(inputDir) // e.g., "Luminance", "Red"
@@ -4545,10 +4562,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 		var frameStars []star
 		if opts.Register {
-			frameStars = detectStars(f, 100)
+			var wasHit bool
+			frameStars, c.medianBlob, c.bgNoise, wasHit = loadOrDetectStars(c.path, f, cacheDir, opts.Scale)
+			if wasHit {
+				starHits++
+				logf("  [cache hit] %s", filepath.Base(c.path))
+			}
 			starLists[len(accepted)] = frameStars
-			c.medianBlob = medianBlobSize(frameStars)
-			c.bgNoise = estimateFrameBgNoise(f)
 		}
 		if opts.Method == "median" || opts.Method == "sigma" {
 			sp := filepath.Join(spillDir1, fmt.Sprintf("frame_%04d.f32raw", len(spillPaths1)))
@@ -4619,11 +4639,37 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					transforms[i].valid = false
 					continue
 				}
+				// Phase A: transform cache. Skip RANSAC + affine on a hit.
+				if xc, hit := checkXfCache(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale); hit {
+					xfHits++
+					if xc.RegFail {
+						regFailures = append(regFailures, xc.RegFailReason)
+						transforms[i].valid = false
+						continue
+					}
+					if xc.HasTransform {
+						tf := frameTransform{
+							sim: xc.Sim, valid: true,
+							starCount: len(starLists[i]), inliers: xc.Inliers,
+						}
+						if xc.HasAffine {
+							affCopy := xc.Affine
+							tf.aff = &affCopy
+						}
+						transforms[i] = tf
+						registeredCount++
+						logf("  register %s: [cache hit] scale=%.4f rot=%.2f° inliers=%d",
+							filepath.Base(accepted[i].path), xc.Sim.scale(), xc.Sim.rotation()*180/math.Pi, xc.Inliers)
+						continue
+					}
+				}
 				sim, inliers, ok := matchStarsToReference(refStars, starLists[i])
 				if !ok {
-					regFailures = append(regFailures, fmt.Sprintf("%s: no consistent transform (%d inliers)",
-						filepath.Base(accepted[i].path), inliers))
+					reason := fmt.Sprintf("%s: no consistent transform (%d inliers)",
+						filepath.Base(accepted[i].path), inliers)
+					regFailures = append(regFailures, reason)
 					transforms[i].valid = false
+					writeXfCacheFail(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, reason)
 					continue
 				}
 				scale := sim.scale()
@@ -4660,6 +4706,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					logf("  register %s: scale=%.4f rot=%.2f° inliers=%d",
 						filepath.Base(accepted[i].path), scale, rotDeg, inliers)
 				}
+				writeXfCacheOK(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, sim, affRef, inliers)
 				transforms[i] = frameTransform{
 					sim:       sim,
 					aff:       affRef,
@@ -4668,6 +4715,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					inliers:   inliers,
 				}
 				registeredCount++
+			}
+			if cacheDir != "" {
+				logf("Cache: %d/%d star hits, %d/%d transform hits", starHits, len(accepted), xfHits, len(accepted)-1)
 			}
 			if registeredCount < 2 {
 				logf("WARNING: only %d frame(s) registered; disabling registration", registeredCount)
@@ -5507,6 +5557,9 @@ func runSelfTests() int {
 		{"local normalize masked pixels", testLocalNormalizeMaskedPixels},
 		{"frame limiter flags", testFrameLimiterFlags},
 		{"frame limiter flags rotation aware", testFrameLimiterFlagsRotationAware},
+		{"star cache round trip", testStarCacheRoundTrip},
+		{"star cache invalidation", testStarCacheInvalidation},
+		{"xf cache invalidation", testXfCacheInvalidation},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
 	}
@@ -5786,7 +5839,7 @@ func testDiscovery() error {
 	for _, p := range []string{
 		filepath.Join(dir, "b.JPG"),
 		filepath.Join(dir, "a.jpeg"),
-		filepath.Join(dir, "c.png"),
+		filepath.Join(dir, "c.tif"),
 		filepath.Join(dir, "sub", "d.jpg"),
 	} {
 		if err := must(p); err != nil {
@@ -5800,6 +5853,25 @@ func testDiscovery() error {
 	want := []string{filepath.Join(dir, "a.jpeg"), filepath.Join(dir, "b.JPG")}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		return fmt.Errorf("discovery: got %v, want %v", got, want)
+	}
+
+	// PNG is now a first-class input (see discoverFiles); a .png file
+	// must be discovered alongside JPGs, while .tif remains excluded.
+	if err := must(filepath.Join(dir, "starfield.png")); err != nil {
+		return err
+	}
+	got2, err := discoverFiles(dir, false, nil)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, p := range got2 {
+		if filepath.Base(p) == "starfield.png" {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("PNG file not discovered: %v", got2)
 	}
 	return nil
 }
@@ -8272,6 +8344,98 @@ func testFrameLimiterFlagsRotationAware() error {
 		if f == "LARGE OFFSET" {
 			return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
 		}
+	}
+	return nil
+}
+
+func testStarCacheRoundTrip() error {
+	dir, err := os.MkdirTemp("", "skystacker-starcache-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	sc := starCache{
+		Version:      cacheVersion,
+		FrameMtime:   12345,
+		FrameSize:    67890,
+		DetectionSig: "max=100,scale=1",
+		Stars:        []star{{X: 1.5, Y: 2.5, Flux: 100.0, Size: 3}, {X: 10, Y: 20, Flux: 50, Size: 4}},
+		MedianBlob:   3.5,
+		BgNoise:      0.02,
+	}
+	path := filepath.Join(dir, "test.json")
+	if err := writeJSON(path, sc); err != nil {
+		return err
+	}
+	loaded, ok := loadStarCache(path, "max=100,scale=1")
+	if !ok {
+		return errors.New("load failed")
+	}
+	if loaded.MedianBlob != 3.5 {
+		return fmt.Errorf("median = %v, want 3.5", loaded.MedianBlob)
+	}
+	if len(loaded.Stars) != 2 {
+		return fmt.Errorf("stars = %d, want 2", len(loaded.Stars))
+	}
+	if loaded.Stars[0].X != 1.5 {
+		return fmt.Errorf("star[0].X = %v, want 1.5", loaded.Stars[0].X)
+	}
+	return nil
+}
+
+func testStarCacheInvalidation() error {
+	dir, err := os.MkdirTemp("", "skystacker-starcache-inv-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "test.json")
+	sc := starCache{Version: 0, DetectionSig: "x", Stars: []star{{X: 1, Y: 2, Flux: 3, Size: 4}}}
+	if err := writeJSON(path, sc); err != nil {
+		return err
+	}
+	if _, ok := loadStarCache(path, "x"); ok {
+		return errors.New("expected version-0 cache to be rejected")
+	}
+	sc.Version = cacheVersion
+	if err := writeJSON(path, sc); err != nil {
+		return err
+	}
+	if _, ok := loadStarCache(path, "different-sig"); ok {
+		return errors.New("expected sig mismatch to be rejected")
+	}
+	if _, ok := loadStarCache(path, "x"); !ok {
+		return errors.New("expected matching cache to be accepted")
+	}
+	return nil
+}
+
+func testXfCacheInvalidation() error {
+	dir, err := os.MkdirTemp("", "skystacker-xfcache-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	xc := xfCache{
+		Version:      cacheVersion,
+		RefMtime:     12345,
+		HasTransform: true,
+		Sim:          similarity{SC: 1, SS: 0, Tx: 5, Ty: 3},
+		Inliers:      50,
+	}
+	path := filepath.Join(dir, "test.json")
+	if err := writeJSON(path, xc); err != nil {
+		return err
+	}
+	loaded, ok := loadXfCache(path, 12345)
+	if !ok {
+		return errors.New("expected hit with matching mtime")
+	}
+	if loaded.Inliers != 50 {
+		return fmt.Errorf("inliers = %d, want 50", loaded.Inliers)
+	}
+	if _, ok := loadXfCache(path, 99999); ok {
+		return errors.New("expected miss with mismatched mtime")
 	}
 	return nil
 }
