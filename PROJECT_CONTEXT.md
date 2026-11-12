@@ -270,6 +270,8 @@ New flags: `--no-cache` (disable reads+writes), `--cache-dir P` (override locati
 
 New self-tests: `testStarCacheRoundTrip`, `testStarCacheInvalidation`, `testXfCacheInvalidation`.
 
+**Default cache removal (2026-11-12)**: `_work/cache/` is now deleted on successful exit by default. Rationale: on datasets with hundreds of subs the cache accumulates one small JSON per frame under every `0_skystacker_results/_work/cache/` on disk, which is invisible to the user and adds up across sessions. The `_work/stacked_mean.f32raw` work file is intentionally preserved so `--post-only` still works. Users who want fast re-runs pass `--keep-cache`. `--no-cache` (unchanged) skips cache writes and reads entirely. `--clean` (unchanged) is still the way to remove `_work/stacked_mean.f32raw` too.
+
 ### Release workflow (APPLIED)
 
 `.github/workflows/release.yml` triggers on `v*` tag push. Matrix: linux/darwin/windows × amd64/arm64. Builds with `-trimpath -ldflags '-s -w -X main.version=${TAG} -X main.buildDate=...'`, uploads artifacts + `SHA256SUMS.txt` to a GitHub Release.
