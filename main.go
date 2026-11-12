@@ -73,6 +73,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -2780,6 +2781,29 @@ func getAvailableMemoryMB() int {
 	return 0
 }
 
+// estimateDiskDemand returns the estimated peak disk usage of a stack
+// run, in bytes, for the given method and frame count. Pass 1 and Pass 2
+// spill one frame each per source frame; the 500 MB headroom covers the
+// work file and post-processing outputs. Mean has no spill, so the
+// demand is 0 (only RAM matters for streaming accumulation).
+func estimateDiskDemand(method string, frameCount int, frameBytes int64) int64 {
+	if method != "median" && method != "sigma" {
+		return 0
+	}
+	return int64(frameCount)*frameBytes*2 + 500*1024*1024
+}
+
+// getAvailableDiskBytes returns the free bytes for the user on the given
+// path's filesystem. Returns (0, err) if statfs is unavailable; callers
+// should treat (0, non-nil) as "cannot check, proceed".
+func getAvailableDiskBytes(path string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return int64(st.Bavail) * int64(st.Bsize), nil
+}
+
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
@@ -3813,6 +3837,38 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			"Or close memory-hungry apps (Chrome, Firefox, Slack) and retry.",
 			estMemMB, realPeak, requiredMB, availMemMB, hint)
 	}
+	frameBytes := int64(refW) * int64(refH) * 3 * 4
+	// Disk pre-flight: median/sigma spill two raw float32 frames per
+	// source frame to _work/_spill1 and _work/_spill2. If the output
+	// filesystem cannot hold the estimate (with 20% headroom), abort
+	// before Pass 1 instead of dying at frame N with ENOSPC after hours
+	// of work. --force skips this check, matching the RAM guard.
+	if !opts.Force {
+		demandBytes := estimateDiskDemand(opts.Method, len(candidates), frameBytes)
+		if demandBytes > 0 {
+			if err := os.MkdirAll(outputDir, 0o755); err != nil {
+				return fmt.Errorf("create output directory: %w", err)
+			}
+			freeBytes, ferr := getAvailableDiskBytes(outputDir)
+			if ferr != nil {
+				logf("WARNING: disk-space pre-flight skipped: %v", ferr)
+			} else {
+				requiredBytes := int64(float64(demandBytes) * 1.20)
+				if freeBytes < requiredBytes {
+					return fmt.Errorf("INSUFFICIENT DISK SPACE\n"+
+						"  Estimated disk demand:  %.2f GB  (%s, %d frames)\n"+
+						"  Free on %s:    %.2f GB\n"+
+						"  Required (demand+20%%):  %.2f GB\n\n"+
+						"Free space on the output filesystem, or use --scale N / --force\n"+
+						"    --scale 2    Halve dimensions (4x less spill)\n"+
+						"    --force      Skip this safety check (not recommended)",
+						float64(demandBytes)/(1024*1024*1024), opts.Method, len(candidates),
+						outputDir, float64(freeBytes)/(1024*1024*1024),
+						float64(requiredBytes)/(1024*1024*1024))
+				}
+			}
+		}
+	}
 	if opts.Register {
 		logf("Registration: ON (use --no-register to disable)")
 	} else {
@@ -4735,6 +4791,7 @@ func runSelfTests() int {
 		{"estimate affine", testEstimateAffine},
 		{"affine inverse round trip", testAffineInverseRoundTrip},
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
+		{"disk space guard", testDiskSpaceGuard},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
 	}
@@ -7100,6 +7157,42 @@ func testHighPassRadiusAdaptive() error {
 		if got != c.want {
 			return fmt.Errorf("case %d (%dx%d): got %d, want %d", i, c.w, c.h, got, c.want)
 		}
+	}
+	return nil
+}
+
+func testDiskSpaceGuard() error {
+	// mean: no disk demand
+	if got := estimateDiskDemand("mean", 100, 100*100*3*4); got != 0 {
+		return fmt.Errorf("mean demand = %d, want 0", got)
+	}
+	// median/sigma: 2× frameCount×frameBytes + 500 MB headroom
+	for _, m := range []string{"median", "sigma"} {
+		const w, h, n = 100, 100, 10
+		fb := int64(w) * int64(h) * 3 * 4
+		want := int64(n)*fb*2 + 500*1024*1024
+		if got := estimateDiskDemand(m, n, fb); got != want {
+			return fmt.Errorf("%s demand = %d, want %d", m, got, want)
+		}
+	}
+	// Demand must be non-negative for all methods.
+	for _, m := range []string{"mean", "median", "sigma"} {
+		if got := estimateDiskDemand(m, 0, 0); got < 0 {
+			return fmt.Errorf("%s demand = %d, want >= 0", m, got)
+		}
+	}
+	// getAvailableDiskBytes on a real path should return > 0
+	dir, err := os.MkdirTemp("", "skystacker-disk-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	free, err := getAvailableDiskBytes(dir)
+	if err != nil {
+		return fmt.Errorf("statfs on %s: %w", dir, err)
+	}
+	if free <= 0 {
+		return fmt.Errorf("free bytes = %d, want > 0", free)
 	}
 	return nil
 }

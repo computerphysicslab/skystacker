@@ -9,7 +9,7 @@ gofmt -w main.go && go build -o skystacker main.go && ./skystacker --selftest
 go install .
 ```
 
-**Self-test count: 84 passing.** Update this number after any test change.
+**Self-test count: 85 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -173,6 +173,8 @@ simply omits the exposure summary.
 - Multi-σ retry may run up to 4× detection cost on frames that never reach
   20 stars at 5σ; typical frames pay 1×.
 
+- Disk pre-flight only checks the output filesystem. If --output points to a different filesystem than the spill dirs (currently they share one), the check would be wrong — but they always share, so this is currently correct.
+
 ## Recent decisions / caveats
 
 - **Tolerance-based float comparison APPLIED**: Tests that compare floating-point
@@ -213,6 +215,8 @@ simply omits the exposure summary.
   `main.go.before_affine_step.bak`, `main.go.before_spikes_step.bak`,
   `main.go.before_spike_length.bak`, etc. — depending on which patches
   were actually applied.
+
+- **Disk-space pre-flight APPLIED**: runPipeline checks syscall.Statfs on the output filesystem before Pass 1; aborts with INSUFFICIENT DISK SPACE if free < estimate × 1.20; --force overrides. Estimate: `int64(frames) × frameBytes × 2 + 500 MB` for median/sigma, 0 for mean.
 
 ## Real-world validation
 
@@ -300,7 +304,7 @@ frame dimension`, independent of BoxPct.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -o skystacker main.go`
-- Test: `./skystacker --selftest` (expect: **all 84 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 85 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
