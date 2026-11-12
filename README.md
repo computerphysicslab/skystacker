@@ -389,6 +389,8 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--local-normalize` | Per-tile scale+offset; implies `--normalize` | `false` |
 | `--ln-tile-size int` | Tile size for `--local-normalize` | `256` |
 | `--no-exif` | Skip EXIF exposure summary in report | `false` |
+| `--no-cache` | Disable the star/transform cache | `false` |
+| `--cache-dir string` | Cache directory (default `<output>/_work/cache`) | — |
 | `--selftest` | Run internal self-tests and exit | — |
 | `--version` | Print version and exit | — |
 | `--help` | Print command-line help | — |
@@ -469,6 +471,9 @@ The following items from the original roadmap have been implemented in 0.5.0:
 - **Local normalization correction** — `--local-normalize` applies the same
   correction per tile with bilinear interpolation of the correction field,
   catching spatially varying sky gradients and transparency changes.
+- **Star / transform cache** — re-runs skip Pass 1 detection and
+  Pass 2 registration via JSON files under `<output>/_work/cache/`.
+  Disable with `--no-cache`; override the location with `--cache-dir`.
 - **Adaptive rejection and maps** — MAD-based sigma clipping (default 3σ,
   2 iterations), plus per-pixel rejection and weight maps
   (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`; plus

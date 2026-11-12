@@ -18,6 +18,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - Optional per-frame normalization (global or per-tile local).
 - Max/Min stacks (brightest/darkest pixels), optional TIFF sum output.
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
+- Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
 - 99 embedded self-tests.
 
@@ -50,6 +51,10 @@ Flags are accepted before or after the positional input directory. Default input
 - `--normalize`: per-frame global scale+offset to the reference frame.
 - `--local-normalize`: per-tile, bilinear-interpolated correction; implies `--normalize`.
 - `--ln-tile-size` (default 256).
+
+### Cache
+- `--no-cache`: disable the star/transform cache (reads and writes).
+- `--cache-dir` (default `<output>/_work/cache`).
 
 ### Stacking
 - `--sigma-clip` (default 3.0), `--sigma-clip-iters` (default 2).
@@ -88,7 +93,7 @@ Flags are accepted before or after the positional input directory. Default input
 - **Matching**: triangles built from the top **40** brightest stars (not 30). Descriptor `(short/long, mid/long)`, bucketed on a 0.01 grid with 0.02 tolerance.
 - **Transform**: closed-form similarity (rotation, scale, translation) via least squares; inlier refinement; optional full 6-DOF affine refinement kept only when residual drops ≥ 10 % and inliers ≥ 15.
 - **Resampling**: bilinear sub-pixel. **Crop**: largest fully-valid rectangle (`findSafeCrop`, maximal-rectangle-in-histogram).
-- **Frame diagnostics**: per-frame stars, inliers, scale, rotation, offset, bounding box, `BoxPct`, `IntrQ`, `Weight`. Crop limiter flags: `LOW QUALITY` (< 30), `LOW BOX%` (< 50 %), `LARGE OFFSET` (`|OffsetX| > 10 % refW` or `|OffsetY| > 10 % refH`).
+- **Frame diagnostics**: per-frame stars, inliers, scale, rotation, offset, bounding box, `BoxPct`, `IntrQ`, `Weight`. Crop limiter flags: `LOW QUALITY` (< 30), `LOW BOX%` (< 50 %), `LARGE OFFSET` (`|drift| > 10 % refW/H`, where drift subtracts the rotation-induced expected offset so legitimately-rotated frames are not falsely flagged).
 
 ### 4.3 Per-frame normalization
 Robust statistics per frame: `(median, MAD)` of luminance, computed on a 1024-bin histogram with 4× subsampling. **Scale** = `ref.MAD / frame.MAD` clamped to `[0.5, 2.0]`. **Offset** = `ref.median - scale * frame.median`. **Global**: single scale+offset per frame. **Local**: same correction per `ln-tile-size` tile, bilinearly interpolated between tile centers. Reference frame is never normalized. Both modes require registration.
@@ -127,4 +132,4 @@ Before processing:
 - Memory and disk pre-flight checks abort before Pass 1; `--force` bypasses both.
 
 ## 8. Self-tests
-`./skystacker --selftest` runs 99 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, and end-to-end pipeline (stack-only, post-only).
+`./skystacker --selftest` runs 99 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, and end-to-end pipeline (stack-only, post-only).
