@@ -255,7 +255,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
-	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: <output>/_work/gaia_cache)")
+	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", 256, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
 	fs.Float64Var(&o.GaiaMagLimit, "gaia-mag-limit", 14.0, "Gaia G-band magnitude limit for tile queries (0-20)")
 	fs.BoolVar(&o.GaiaOffline, "gaia-offline", false, "never query the Gaia mirror; cache misses are a hard error")
@@ -481,7 +481,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
-	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: <output>/_work/gaia_cache)")
+	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
 	fmt.Fprintln(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default 256)")
 	fmt.Fprintln(w, "  --gaia-mag-limit M Gaia G-band magnitude limit (0-20, default 14.0)")
 	fmt.Fprintln(w, "  --gaia-offline     never query the Gaia mirror; cache misses are a hard error")
@@ -6192,6 +6192,21 @@ type gaiaTile struct {
 	Stars     []gaiaStar `json:"stars"`
 }
 
+// gaiaDefaultCacheDir returns the OS user cache directory for Gaia
+// tiles: $XDG_CACHE_HOME/skystacker/gaia_cache on Linux (usually
+// ~/.cache/skystacker/gaia_cache), ~/Library/Caches/skystacker/gaia_cache
+// on macOS, %LocalAppData%\skystacker\gaia_cache on Windows. Falls
+// back to <cwd>/_work/gaia_cache only if os.UserCacheDir() fails
+// (e.g. HOME is unset), which makes the fallback path stable for CI
+// and containerised runs. Gaia DR3 is frozen, so tiles never expire;
+// the cache is a per-user asset, not a per-session scratch dir.
+func gaiaDefaultCacheDir() string {
+	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "skystacker", "gaia_cache")
+	}
+	return filepath.Join("_work", "gaia_cache")
+}
+
 // gaiaTileCachePath returns the cache filename for (nside, ipix).
 func gaiaTileCachePath(cacheDir string, nside, ipix int) string {
 	return filepath.Join(cacheDir, fmt.Sprintf("healpix_n%d_p%d.json", nside, ipix))
@@ -6685,7 +6700,7 @@ func testGaiaCLI(opts *cliOptions) error {
 	ipix := healpixAng2PixNested(opts.GaiaNside, ra, dec)
 	cacheDir := opts.GaiaCacheDir
 	if cacheDir == "" {
-		cacheDir = filepath.Join("_work", "gaia_cache")
+		cacheDir = gaiaDefaultCacheDir()
 		os.MkdirAll(cacheDir, 0o755)
 	}
 	logf("Gaia query: nside=%d ipix=%d (tile area \u2248 %.2f deg\u00b2)",
