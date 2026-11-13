@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 105 passing.** Update this number after any test change.
+**Self-test count: 106 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -61,13 +61,21 @@ Outputs: `post_step1_background_removed.jpg` … `post_step8_4.jpg`.
     scores frames that failed to register.
 
 - **Weighted sigma-clipped mean** (`sigmaClipReduceWeighted`):
-  - Registered stack: `weight = computeFrameQuality × intrinsicQ / 100`.
-  - Unregistered stack: `weight = intrinsicQ / 100`.
+  - Registered stack: `weight = computeFrameQuality × computeAdvancedQuality / 100`.
+  - Unregistered stack: `weight = computeAdvancedQuality / 100`.
+  - `computeAdvancedQuality` (0-100) implements the advanced-stacking
+    formula `Q = w1*SNR - w2*FWHM - w3*E - w4*B`. Each metric is
+    normalized to a "higher is better" `[0,1]` term
+    (`SNR/(SNR+50)`, `1-(FWHM-3)/7`, `1-Ecc`, `1-(Bg-0.01)/0.14`)
+    then weighted `0.40/0.30/0.15/0.15`. SNR and FWHM dominate.
+  - **Eccentricity** is computed per star from second central moments
+    of the intensity-weighted pixel distribution. Star cache bumped to
+    `cacheVersion = 2`; `star.Ecc` and `starCache.MedianEcc` fields added.
   - `--no-register` and `--method median` still use equal weights
     (median is not yet weighted — see Pending).
   - Zero-weight survivors → fallback to unweighted mean (avoids divide-by-zero).
-  - `report.txt` frame-diagnostics table shows `IntrQ` (0-100) and
-    `Weight` (0-1) columns.
+  - `report.txt` frame-diagnostics table shows `IntrQ` (0-100, now the
+    advanced score) and `Weight` (0-1) columns.
 
 ## CLI flags relevant to current work
 
@@ -230,6 +238,17 @@ simply omits the exposure summary.
   `report.txt` under "Output files". `stacked_sum.jpg` itself is
   unchanged. New self-test: `testMinMaxStretchedPreviewJPEG`. Test
   count 102 -> 103.
+
+- **Advanced frame weighting APPLIED** (2026-11-13): frame weights now use
+  `computeAdvancedQuality` (0-100), implementing
+  `Q = w1*SNR - w2*FWHM - w3*E - w4*B`. Per-metric normalization:
+  `SNR/(SNR+50)` (saturating, higher better), `1-(FWHM-3)/7`,
+  `1-Ecc`, `1-(Bg-0.01)/0.14`. Weights `0.40/0.30/0.15/0.15`.
+  Eccentricity from second central moments; `star.Ecc` added;
+  `starCache.MedianEcc` added; `cacheVersion` bumped to 2 to invalidate
+  pre-eccentricity star caches. New test `testComputeAdvancedQuality`
+  (asserts exact Q at SNR=200 and >=99 at saturated SNR). Test count
+  105 → 106.
 
 - **Tolerance-based float comparison APPLIED**: Tests that compare floating-point
   values (notably `testChromaDenoiseMultiScale` and `testApplyCurves`) now use
@@ -459,7 +478,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 105 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 106 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
