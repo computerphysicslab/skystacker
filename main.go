@@ -812,6 +812,7 @@ type star struct {
 	X, Y float64 // sub-pixel centroid
 	Flux float64 // background-subtracted integrated intensity
 	Size int     // connected component pixel count
+	Ecc  float64 // eccentricity: 0=circular, 1=line-shaped
 }
 
 // estimateBackgroundNoise uses a 256-bin histogram over a subsample to
@@ -1096,7 +1097,35 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 		if aspect < 0.33 || aspect > 3.0 {
 			continue
 		}
-		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux, Size: len(c.pixels)})
+		// Second central moments of the intensity-weighted pixel
+		// distribution, used for eccentricity. ecc=0 means circular;
+		// ecc->1 means line-shaped.
+		var cxx, cyy, cxy float64
+		for _, p := range c.pixels {
+			py, px := p/w, p%w
+			val := float64(residual[p])
+			if val < 0 {
+				val = 0
+			}
+			dx := float64(px) - cx
+			dy := float64(py) - cy
+			cxx += dx * dx * val
+			cyy += dy * dy * val
+			cxy += dx * dy * val
+		}
+		ecc := 0.0
+		if sumW > 1e-12 {
+			cxx /= sumW
+			cyy /= sumW
+			cxy /= sumW
+			if denom := cxx + cyy; denom > 1e-12 {
+				ecc = math.Sqrt((cxx-cyy)*(cxx-cyy)+4*cxy*cxy) / denom
+				if ecc > 1 {
+					ecc = 1
+				}
+			}
+		}
+		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux, Size: len(c.pixels), Ecc: ecc})
 	}
 	sort.Slice(stars, func(i, j int) bool { return stars[i].Flux > stars[j].Flux })
 	if len(stars) > maxStars {
@@ -3329,7 +3358,7 @@ type frameTransform struct {
 //     it drags the safe crop in the shifted
 //     direction. Naming these frames lets the user
 //     remove or re-align them.
-const cacheVersion = 1
+const cacheVersion = 2
 
 type starCache struct {
 	Version      int     `json:"version"`
@@ -3338,6 +3367,7 @@ type starCache struct {
 	DetectionSig string  `json:"detection_sig"`
 	Stars        []star  `json:"stars"`
 	MedianBlob   float64 `json:"median_blob"`
+	MedianEcc    float64 `json:"median_ecc"`
 	BgNoise      float64 `json:"bg_noise"`
 }
 
@@ -3414,29 +3444,30 @@ func loadXfCache(path string, expectRefMtime int64) (xfCache, bool) {
 	return xc, true
 }
 
-func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]star, float64, float64, bool) {
+func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]star, float64, float64, float64, bool) {
 	if cacheDir != "" {
 		if key, mtime, size, err := frameCacheKey(path); err == nil {
 			cpath := filepath.Join(cacheDir, fmt.Sprintf("stars_s%d_%s.json", scale, key))
 			if sc, ok := loadStarCache(cpath, starDetectionSig(scale)); ok {
-				return sc.Stars, sc.MedianBlob, sc.BgNoise, true
+				return sc.Stars, sc.MedianBlob, sc.MedianEcc, sc.BgNoise, true
 			}
 			stars := detectStars(f, 100)
 			mb := medianBlobSize(stars)
+			me := medianStarEcc(stars)
 			bn := estimateFrameBgNoise(f)
 			sc := starCache{
 				Version: cacheVersion, FrameMtime: mtime, FrameSize: size,
 				DetectionSig: starDetectionSig(scale),
-				Stars:        stars, MedianBlob: mb, BgNoise: bn,
+				Stars:        stars, MedianBlob: mb, MedianEcc: me, BgNoise: bn,
 			}
 			if err := writeJSON(cpath, sc); err != nil {
 				logf("  WARNING: could not write star cache for %s: %v", filepath.Base(path), err)
 			}
-			return stars, mb, bn, false
+			return stars, mb, me, bn, false
 		}
 	}
 	stars := detectStars(f, 100)
-	return stars, medianBlobSize(stars), estimateFrameBgNoise(f), false
+	return stars, medianBlobSize(stars), medianStarEcc(stars), estimateFrameBgNoise(f), false
 }
 
 func checkXfCache(cacheDir, refPath, framePath string, scale int) (xfCache, bool) {
@@ -3643,6 +3674,89 @@ func computeIntrinsicQuality(starCount int, medianBlob, bgNoise float64) float64
 		noiseScore = math.Max(0, 30.0*(1.0-(bgNoise-0.01)/0.14))
 	}
 	return starScore + blobScore + noiseScore
+}
+
+// frameImageStats bundles the four per-frame quality metrics combined by
+// computeAdvancedQuality.
+type frameImageStats struct {
+	StarCount int
+	SNR       float64
+	FWHM      float64
+	Ecc       float64
+	BgNoise   float64
+}
+
+// computeFrameSNR returns a frame-level SNR proxy: median star flux
+// divided by background noise sigma. Median (not mean) so a handful of
+// very bright stars do not dominate the average on frames with a wide
+// dynamic range.
+func computeFrameSNR(stars []star, bgNoise float64) float64 {
+	if len(stars) == 0 || bgNoise < 1e-9 {
+		return 0
+	}
+	fluxes := make([]float64, len(stars))
+	for i, s := range stars {
+		fluxes[i] = s.Flux
+	}
+	sort.Float64s(fluxes)
+	return fluxes[len(fluxes)/2] / bgNoise
+}
+
+// medianStarEcc returns the median eccentricity across the star list.
+// Eccentricity is computed per star during detection (0 = circular,
+// 1 = line-shaped). Larger values indicate tracking errors, coma, or
+// astigmatism; lower is better.
+func medianStarEcc(stars []star) float64 {
+	if len(stars) == 0 {
+		return 0
+	}
+	eccs := make([]float64, len(stars))
+	for i, s := range stars {
+		eccs[i] = s.Ecc
+	}
+	sort.Float64s(eccs)
+	return eccs[len(eccs)/2]
+}
+
+// clamp01 clamps v to [0, 1].
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+// computeAdvancedQuality returns a 0-100 quality score combining SNR,
+// FWHM, eccentricity and background noise. It implements the weighted
+// formula Q = w1*SNR - w2*FWHM - w3*E - w4*B by first normalizing each
+// metric to a "higher is better" [0, 1] range:
+//
+//	snrN  = SNR / (SNR + 50)              saturating, higher = better
+//	fwhmN = 1 - (FWHM - 3) / 7            lower FWHM = higher score
+//	eccN  = 1 - Ecc                       lower Ecc  = higher score
+//	bgN   = 1 - (BgNoise - 0.01) / 0.14   lower Bg   = higher score
+//
+// and then computing
+//
+//	Q = 0.40*snrN + 0.30*fwhmN + 0.15*eccN + 0.15*bgN,
+//
+// scaled to [0, 100]. SNR and FWHM dominate so sharper, cleaner frames
+// receive the most influence in the weighted stack. Frames with zero
+// detected stars score 0.
+func computeAdvancedQuality(s frameImageStats) float64 {
+	if s.StarCount == 0 {
+		return 0
+	}
+	snrN := s.SNR / (s.SNR + 50.0)
+	fwhmN := clamp01(1.0 - (s.FWHM-3.0)/7.0)
+	eccN := clamp01(1.0 - s.Ecc)
+	bgN := clamp01(1.0 - (s.BgNoise-0.01)/0.14)
+	const w1, w2, w3, w4 = 0.40, 0.30, 0.15, 0.15
+	q := w1*snrN + w2*fwhmN + w3*eccN + w4*bgN
+	return 100.0 * q
 }
 
 // medianBlobSize returns the median of the Size field across all stars.
@@ -4475,6 +4589,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		exif       exifData
 		bgNoise    float64
 		medianBlob float64
+		medianEcc  float64
 	}
 	var (
 		candidates []candidate
@@ -4817,7 +4932,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		var frameStars []star
 		if opts.Register {
 			var wasHit bool
-			frameStars, c.medianBlob, c.bgNoise, wasHit = loadOrDetectStars(c.path, f, cacheDir, opts.Scale)
+			frameStars, c.medianBlob, c.medianEcc, c.bgNoise, wasHit = loadOrDetectStars(c.path, f, cacheDir, opts.Scale)
 			if wasHit {
 				starHits++
 				logf("  [cache hit] %s", filepath.Base(c.path))
@@ -4997,8 +5112,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if opts.Register {
 		unregWeights = make([]float32, len(accepted))
 		for i, c := range accepted {
-			intrinsic := computeIntrinsicQuality(len(starLists[i]), c.medianBlob, c.bgNoise)
-			unregWeights[i] = float32(intrinsic / 100.0)
+			stats := frameImageStats{
+				StarCount: len(starLists[i]),
+				SNR:       computeFrameSNR(starLists[i], c.bgNoise),
+				FWHM:      c.medianBlob,
+				Ecc:       c.medianEcc,
+				BgNoise:   c.bgNoise,
+			}
+			unregWeights[i] = float32(computeAdvancedQuality(stats) / 100.0)
 		}
 		if registrationOn {
 			frameWeights = make([]float32, len(accepted))
@@ -5007,9 +5128,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					frameWeights[i] = 0
 					continue
 				}
-				intrinsic := computeIntrinsicQuality(len(starLists[i]), c.medianBlob, c.bgNoise)
+				stats := frameImageStats{
+					StarCount: len(starLists[i]),
+					SNR:       computeFrameSNR(starLists[i], c.bgNoise),
+					FWHM:      c.medianBlob,
+					Ecc:       c.medianEcc,
+					BgNoise:   c.bgNoise,
+				}
+				advanced := computeAdvancedQuality(stats)
 				tq := computeFrameQuality(transforms[i].inliers, transforms[i].starCount, len(refStars), transforms[i].sim.scale(), transforms[i].sim.rotation()*180/math.Pi)
-				combined := tq * intrinsic / 100.0
+				combined := tq * advanced / 100.0
 				if combined < 0 {
 					combined = 0
 				}
@@ -5206,7 +5334,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			td.Quality = computeFrameQuality(td.Inliers, td.Stars, len(refStars), td.Scale, td.RotationDeg)
 			td.BgNoise = accepted[i].bgNoise
 			td.MedianBlob = accepted[i].medianBlob
-			td.IntrinsicQ = computeIntrinsicQuality(td.Stars, td.MedianBlob, td.BgNoise)
+			td.IntrinsicQ = computeAdvancedQuality(frameImageStats{
+				StarCount: td.Stars,
+				SNR:       computeFrameSNR(starLists[i], td.BgNoise),
+				FWHM:      td.MedianBlob,
+				Ecc:       accepted[i].medianEcc,
+				BgNoise:   td.BgNoise,
+			})
 			if frameWeights != nil && i < len(frameWeights) {
 				td.Weight = float64(frameWeights[i])
 			}
@@ -5853,6 +5987,7 @@ func runSelfTests() int {
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
 		{"disk space guard", testDiskSpaceGuard},
 		{"intrinsic quality zero stars", testIntrinsicQualityZeroStars},
+		{"advanced frame quality weighting", testComputeAdvancedQuality},
 		{"compute norm stats", testComputeNormStats},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
@@ -8564,6 +8699,101 @@ func testIntrinsicQualityZeroStars() error {
 	}
 	if got := computeIntrinsicQuality(50, 3.0, 0.01); got <= 0 {
 		return fmt.Errorf("50-star quality = %v, want > 0", got)
+	}
+	return nil
+}
+
+// testComputeAdvancedQuality verifies the advanced-stacking quality
+// formula Q = w1*SNR - w2*FWHM - w3*E - w4*B (normalized to 0-100).
+// Each metric must move Q in the documented direction, perfect frames
+// must score ~100, empty frames must score 0, and the helper functions
+// (computeFrameSNR, medianStarEcc, clamp01) must behave as specified.
+func testComputeAdvancedQuality() error {
+	// --- edge cases ---
+	if q := computeAdvancedQuality(frameImageStats{}); q != 0 {
+		return fmt.Errorf("empty stats Q = %v, want 0", q)
+	}
+	perfect := frameImageStats{StarCount: 100, SNR: 200, FWHM: 3.0, Ecc: 0.0, BgNoise: 0.01}
+	perfectQ := computeAdvancedQuality(perfect)
+	// With SNR=200, snrN = 200/(200+50) = 0.8. The other three
+	// metrics are all at their best, so Q = 100*(0.4*0.8+0.3+0.15+0.15)
+	// = 92.0 exactly. This is the realistic "perfect frame" ceiling
+	// for SNR=200; use a saturated-SNR fixture below to probe >=99.
+	wantPerfectQ := 100.0 * (0.40*(200.0/250.0) + 0.30 + 0.15 + 0.15)
+	if math.Abs(perfectQ-wantPerfectQ) > 1e-9 {
+		return fmt.Errorf("perfect Q = %v, want %v", perfectQ, wantPerfectQ)
+	}
+	// Saturated-SNR fixture: snrN -> 1, so Q -> 100.
+	ideal := frameImageStats{StarCount: 100, SNR: 1e6, FWHM: 3.0, Ecc: 0.0, BgNoise: 0.01}
+	if idealQ := computeAdvancedQuality(ideal); idealQ < 99 {
+		return fmt.Errorf("ideal Q = %v, want >= 99", idealQ)
+	}
+	bad := frameImageStats{StarCount: 20, SNR: 5, FWHM: 10, Ecc: 0.9, BgNoise: 0.15}
+	badQ := computeAdvancedQuality(bad)
+	if badQ > 25 {
+		return fmt.Errorf("bad Q = %v, want <= 25", badQ)
+	}
+	if perfectQ <= badQ {
+		return fmt.Errorf("perfect Q (%v) not > bad Q (%v)", perfectQ, badQ)
+	}
+
+	// --- monotonicity: each metric in isolation ---
+	base := frameImageStats{StarCount: 100, SNR: 50, FWHM: 5.0, Ecc: 0.3, BgNoise: 0.05}
+	baseQ := computeAdvancedQuality(base)
+
+	// Sharper (lower FWHM) wins.
+	sharper := base
+	sharper.FWHM = 3.0
+	if computeAdvancedQuality(sharper) <= baseQ {
+		return fmt.Errorf("sharper not preferred")
+	}
+	// Rounder (lower Ecc) wins.
+	rounder := base
+	rounder.Ecc = 0.05
+	if computeAdvancedQuality(rounder) <= baseQ {
+		return fmt.Errorf("rounder not preferred")
+	}
+	// Higher SNR wins.
+	brighter := base
+	brighter.SNR = 200
+	if computeAdvancedQuality(brighter) <= baseQ {
+		return fmt.Errorf("higher SNR not preferred")
+	}
+	// Cleaner background wins.
+	cleaner := base
+	cleaner.BgNoise = 0.01
+	if computeAdvancedQuality(cleaner) <= baseQ {
+		return fmt.Errorf("cleaner background not preferred")
+	}
+
+	// --- computeFrameSNR ---
+	stars := []star{{Flux: 100}, {Flux: 200}, {Flux: 300}}
+	if snr := computeFrameSNR(stars, 10.0); math.Abs(snr-20.0) > 1e-9 {
+		return fmt.Errorf("SNR = %v, want 20 (median 200 / 10)", snr)
+	}
+	if computeFrameSNR(nil, 10.0) != 0 {
+		return fmt.Errorf("empty stars SNR != 0")
+	}
+	if computeFrameSNR(stars, 0) != 0 {
+		return fmt.Errorf("zero noise SNR != 0")
+	}
+
+	// --- medianStarEcc ---
+	eccs := []star{{Ecc: 0.1}, {Ecc: 0.3}, {Ecc: 0.9}}
+	if med := medianStarEcc(eccs); math.Abs(med-0.3) > 1e-9 {
+		return fmt.Errorf("median Ecc = %v, want 0.3", med)
+	}
+	if medianStarEcc(nil) != 0 {
+		return fmt.Errorf("empty Ecc != 0")
+	}
+
+	// --- clamp01 ---
+	for _, c := range []struct{ in, want float64 }{
+		{-0.5, 0}, {0, 0}, {0.5, 0.5}, {1, 1}, {1.5, 1},
+	} {
+		if got := clamp01(c.in); got != c.want {
+			return fmt.Errorf("clamp01(%v) = %v, want %v", c.in, got, c.want)
+		}
 	}
 	return nil
 }
