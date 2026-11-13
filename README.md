@@ -499,7 +499,7 @@ The following items from the original roadmap have been implemented in 0.5.0:
   `~/Library/Caches/skystacker/gaia_cache/` on macOS). No pipeline
   consumer yet; run
   `./skystacker --test-gaia RA,DEC` to exercise it end-to-end.
-  See `PROJECT_CONTEXT.md` for the tile-geometry follow-up.
+  Tile geometry matches healpy 1.16.5 at nside up to 256; fixtures live in `testdata/healpix_reference.json`.
 
 ## Planned Potential Features and Technologies Roadmap
 

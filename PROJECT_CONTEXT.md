@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 112 passing.** Update this number after any test change.
+**Self-test count: 116 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -185,17 +185,31 @@ bug. Empirical healpy 1.16.5 data: `pix2ang(256, 0) = (ra=45°, dec=0.15°)`,
 i.e. face 0 extends to the equator at ra≈45°, and the boundary with face 4
 at dec=32.6° is at ra=0° but with face 5 it is at ra=85°. The current
 `za <= 2/3` branch is therefore wrong for equatorial vertices of polar
-faces. The interleave is correct. **Fix pending.**
+faces. The interleave was always correct. The root cause was two independent
+bugs in the pair: (a) `healpixAng2PixNested` used `face = 4 + faceQ`
+for equatorial points and a linear `(1-|z|)*3` polar scaling, when
+healpy derives `face` from `(ifp, ifm) = (jp/nside, jm/nside)` and uses
+`sqrt(3*(1-|z|))` scaling; (b) `healpixPix2AngNested` used the
+equatorial `ra` formula for polar faces and did not invert the
+`ifp`/`ifm` rotation. A previously-undiscovered *third* difference was
+the `z`-reconstruction normalisation: healpy uses
+`fact1 = 2/(3*nside)` and `fact2 = 1/(3*nside^2)`, and the old code's
+matching `(v-0.5)*4/3` and `(1∓z)*3` reconstructions broke round-trip
+as soon as only the face assignment was corrected — which is why the
+earlier one-sided fixes each failed. Fixed at commit
+`e47c3fd`: both functions rewritten as a matched pair, ported
+line-for-line from healpy 1.16.5's
+`healpix_base.cc` (`loc2pix` / `pix2loc` + `nest2xyf` / `xyf2nest`).
 
 **HEALPix nested scheme** — `healpixAng2PixNested`,
 `healpixPix2AngNested`, `healpixTileCorners`, `healpixNsideValid`,
 `healpixTileSizeDeg2`. Implemented fresh from Gorski et al. 2005,
 ApJ 622, 759, section 5. No external dependency; the algorithm is
-~200 lines and covered by `testHealpixNested`. The nside=1 cases are
-matched exactly against healpy 1.16.5; the nside=256 case is
-round-trip-only pending follow-up A1a.5, which investigates a
-discrepancy between our within-face interleave and healpy's output
-at nside>1.
+~200 lines and covered by `testHealpixNested`. All nside=1, 16 and 256 cases match healpy 1.16.5 exactly in
+both directions (`ang2pix` and `pix2ang`); fixtures live in
+`testdata/healpix_reference.json` and are asserted by
+`testHealpixNside16MatchAng2Pix`, `testHealpixNside256MatchAng2Pix`,
+`testHealpixPix2AngMatchesHealpy` and `testHealpixAngPixRoundTrip`.
 
 **TAP client** — `gaiaQueryTile` posts an ADQL `POLYGON` query to a
 configurable TAP mirror, retries 3x with 1s/2s/4s backoff on
@@ -610,7 +624,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 112 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 116 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):

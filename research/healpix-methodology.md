@@ -70,4 +70,4 @@ equatorial` branch structure is therefore wrong for points in the equatorial
 vertices of the polar faces.
 
 The fix is in the face-assignment logic, not the within-face interleave as
-originally hypothesised. **The A1a.5 code fix is still pending.**
+originally hypothesised. **A1a.5 code fix applied at commit e47c3fd.**
