@@ -262,6 +262,14 @@ fewer tiles per image.
 
 ## Recent decisions / caveats
 
+- **Gaia TAP client validated against ESA** (2026-11-13): live
+  `--test-gaia 87.5,-45.0` returns the 4 stars that a direct
+  `curl` to `/tap/sync` returns. Fixes: `/sync` endpoint suffix,
+  project User-Agent, context-cancel ordering (cancel after
+  `io.ReadAll` + body close), mid-body timeout is fatal and not
+  retried, empty-body retry, per-attempt 180 s context timeout
+  with 5 s heartbeat, and VOTable `<INFO>` error extraction.
+  No self-test count change.
 - **Gaia DR3 on-demand HEALPix queries APPLIED** (2026-11-13): the
   data-access layer for the future plate solver. HEALPix nested
   math + TAP client + disk cache + `--test-gaia` diagnostic flag.
