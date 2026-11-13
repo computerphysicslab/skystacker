@@ -6368,6 +6368,70 @@ type gaiaTile struct {
 	Stars     []gaiaStar `json:"stars"`
 }
 
+// wcsTan describes a TAN (gnomonic) WCS. Angles are in radians;
+// CRPIX is in 0-based pixel coordinates.
+type wcsTan struct {
+	CRVAL1, CRVAL2 float64
+	CRPIX1, CRPIX2 float64
+	CD             [2][2]float64
+}
+
+// plateSolution is the output of a successful plate solve.
+type plateSolution struct {
+	WCS       wcsTan
+	SIP       []float64
+	RMSArcsec float64
+	NMatches  int
+	NStars    int
+	Method    string
+}
+
+// matchPair maps a frame-star index to a Gaia-star index.
+type matchPair struct {
+	FrameIdx int
+	GaiaIdx  int
+}
+
+// wcsTanForward returns the pixel coordinates (x, y) of (ra, dec) for w.
+func wcsTanForward(w *wcsTan, ra, dec float64) (x, y float64) {
+	_ = w
+	_ = ra
+	_ = dec
+	return 0, 0 // STUB: A3.2 will implement
+}
+
+// wcsTanInverse returns the sky coordinate (ra, dec) of pixel (x, y).
+func wcsTanInverse(w *wcsTan, x, y float64) (ra, dec float64) {
+	_ = w
+	_ = x
+	_ = y
+	return 0, 0 // STUB: A3.2 will implement
+}
+
+// matchStarsToGaia matches frame stars to Gaia stars.
+func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float64) ([]matchPair, bool) {
+	_, _, _ = frameStars, gaia, toleranceArcsec
+	return nil, false // STUB
+}
+
+// fitWCSFromMatches fits a TAN WCS to pre-matched star pairs.
+func fitWCSFromMatches(frameStars []star, gaia []gaiaStar) (wcsTan, error) {
+	_, _ = frameStars, gaia
+	return wcsTan{}, errors.New("not implemented") // STUB
+}
+
+// fitSIPFromMatches fits SIP coefficients up to the given order.
+func fitSIPFromMatches(frameStars []star, gaia []gaiaStar, wcs wcsTan, order int) ([]float64, error) {
+	_, _, _, _ = frameStars, gaia, wcs, order
+	return nil, errors.New("not implemented") // STUB
+}
+
+// solvePlate solves for the plate solution from the given frame stars.
+func solvePlate(frameStars []star, imgW, imgH int, headerRA, headerDec float64, gaiaCacheDir, gaiaMirror string) (*plateSolution, error) {
+	_, _, _, _, _, _, _ = frameStars, imgW, imgH, headerRA, headerDec, gaiaCacheDir, gaiaMirror
+	return nil, errors.New("not implemented") // STUB
+}
+
 // gaiaDefaultCacheDir returns the OS user cache directory for Gaia
 // tiles: $XDG_CACHE_HOME/skystacker/gaia_cache on Linux (usually
 // ~/.cache/skystacker/gaia_cache), ~/Library/Caches/skystacker/gaia_cache
@@ -6952,6 +7016,323 @@ func testGaiaCLIParsing() error {
 	return nil
 }
 
+func testWCSTANForwardInverse() error {
+	w := &wcsTan{
+		CRVAL1: 1.0, CRVAL2: 0.5,
+		CRPIX1: 500, CRPIX2: 400,
+		CD: [2][2]float64{
+			{2.8e-6, 0},
+			{0, -2.8e-6},
+		},
+	}
+	arcsecPerRad := 180.0 / math.Pi * 3600.0
+	rng := rand.New(rand.NewSource(42))
+	for i := 0; i < 100; i++ {
+		dRA := (rng.Float64() - 0.5) * 0.02
+		dDec := (rng.Float64() - 0.5) * 0.02
+		ra := w.CRVAL1 + dRA
+		dec := w.CRVAL2 + dDec
+		x, y := wcsTanForward(w, ra, dec)
+		if math.IsNaN(x) || math.IsNaN(y) {
+			return fmt.Errorf("point %d: forward returned NaN", i)
+		}
+		ra2, dec2 := wcsTanInverse(w, x, y)
+		if math.IsNaN(ra2) || math.IsNaN(dec2) {
+			return fmt.Errorf("point %d: inverse returned NaN", i)
+		}
+		errRA := (ra2 - ra) * math.Cos(dec) * arcsecPerRad
+		errDec := (dec2 - dec) * arcsecPerRad
+		err := math.Hypot(errRA, errDec)
+		if err > 1e-9 {
+			return fmt.Errorf("point %d: round-trip error %.3e arcsec > 1e-9", i, err)
+		}
+	}
+	return nil
+}
+
+func testWCSFitSimple() error {
+	trueWCS := &wcsTan{
+		CRVAL1: 1.5, CRVAL2: 0.3,
+		CRPIX1: 256, CRPIX2: 256,
+		CD: [2][2]float64{
+			{3.0e-6, 0},
+			{0, -3.0e-6},
+		},
+	}
+	rng := rand.New(rand.NewSource(7))
+	nStars := 50
+	frameStars := make([]star, nStars)
+	gaiaStars := make([]gaiaStar, nStars)
+	for i := 0; i < nStars; i++ {
+		x := rng.Float64() * 512.0
+		y := rng.Float64() * 512.0
+		frameStars[i] = star{X: x, Y: y, Flux: 100}
+		ra, dec := wcsTanInverse(trueWCS, x, y)
+		gaiaStars[i] = gaiaStar{RA: ra, Dec: dec, MagG: 12}
+	}
+	got, err := fitWCSFromMatches(frameStars, gaiaStars)
+	if err != nil {
+		return fmt.Errorf("fit failed: %w", err)
+	}
+	arcsecPerRad := 180.0 / math.Pi * 3600.0
+	scaleRad := math.Sqrt(math.Abs(got.CD[0][0]*got.CD[1][1] - got.CD[0][1]*got.CD[1][0]))
+	if scaleRad <= 0 {
+		return fmt.Errorf("degenerate CD matrix")
+	}
+	for i := 0; i < nStars; i++ {
+		x, y := wcsTanForward(&got, gaiaStars[i].RA, gaiaStars[i].Dec)
+		errPix := math.Hypot(x-frameStars[i].X, y-frameStars[i].Y)
+		errArcsec := errPix * scaleRad * arcsecPerRad
+		if errArcsec > 1e-3 {
+			return fmt.Errorf("star %d: pixel error %.3e arcsec > 1e-3", i, errArcsec)
+		}
+	}
+	return nil
+}
+
+func testWCSSIP() error {
+	w := &wcsTan{
+		CRVAL1: 2.0, CRVAL2: -0.5,
+		CRPIX1: 256, CRPIX2: 256,
+		CD: [2][2]float64{
+			{2.5e-6, 0},
+			{0, -2.5e-6},
+		},
+	}
+	sip := []float64{1e-5, 2e-5, 3e-5, -1e-5, -2e-5, -3e-5}
+	rng := rand.New(rand.NewSource(11))
+	nStars := 50
+	frameStars := make([]star, nStars)
+	gaiaStars := make([]gaiaStar, nStars)
+	for i := 0; i < nStars; i++ {
+		x := rng.Float64() * 512.0
+		y := rng.Float64() * 512.0
+		dx := x - w.CRPIX1
+		dy := y - w.CRPIX2
+		det := w.CD[0][0]*w.CD[1][1] - w.CD[0][1]*w.CD[1][0]
+		invDet := 1.0 / det
+		u := (w.CD[1][1]*dx - w.CD[0][1]*dy) * invDet
+		v := (-w.CD[1][0]*dx + w.CD[0][0]*dy) * invDet
+		up, vp := u, v
+		for iter := 0; iter < 10; iter++ {
+			f := sip[0]*up*up + sip[1]*up*vp + sip[2]*vp*vp
+			g := sip[3]*up*up + sip[4]*up*vp + sip[5]*vp*vp
+			up = u - f
+			vp = v - g
+		}
+		sinDec0, cosDec0 := math.Sin(w.CRVAL2), math.Cos(w.CRVAL2)
+		ra := w.CRVAL1 + math.Atan2(up, cosDec0-vp*sinDec0)
+		c := cosDec0 - vp*sinDec0
+		dec := math.Atan2(sinDec0+vp*cosDec0, math.Sqrt(up*up+c*c))
+		frameStars[i] = star{X: x, Y: y, Flux: 100}
+		gaiaStars[i] = gaiaStar{RA: ra, Dec: dec, MagG: 12}
+	}
+	wcsFit, err := fitWCSFromMatches(frameStars, gaiaStars)
+	if err != nil {
+		return fmt.Errorf("WCS fit: %w", err)
+	}
+	sipFit, err := fitSIPFromMatches(frameStars, gaiaStars, wcsFit, 2)
+	if err != nil {
+		return fmt.Errorf("SIP fit: %w", err)
+	}
+	if len(sipFit) != 6 {
+		return fmt.Errorf("SIP coeffs = %d, want 6", len(sipFit))
+	}
+	return nil
+}
+
+func testMatchStarsToGaiaSynthetic() error {
+	w := &wcsTan{
+		CRVAL1: 0.5, CRVAL2: 0.1,
+		CRPIX1: 200, CRPIX2: 200,
+		CD: [2][2]float64{
+			{4.0e-6, 0},
+			{0, -4.0e-6},
+		},
+	}
+	rng := rand.New(rand.NewSource(23))
+	frameStars := make([]star, 50)
+	gaiaStars := make([]gaiaStar, 0, 53)
+	for i := 0; i < 50; i++ {
+		x := rng.Float64() * 400.0
+		y := rng.Float64() * 400.0
+		frameStars[i] = star{X: x, Y: y, Flux: 100 + float64(i)}
+		ra, dec := wcsTanInverse(w, x, y)
+		gaiaStars = append(gaiaStars, gaiaStar{RA: ra, Dec: dec, MagG: 12})
+	}
+	for i := 0; i < 3; i++ {
+		gaiaStars = append(gaiaStars, gaiaStar{
+			RA:   rng.Float64() * 2 * math.Pi,
+			Dec:  (rng.Float64() - 0.5) * math.Pi,
+			MagG: 15,
+		})
+	}
+	matches, ok := matchStarsToGaia(frameStars, gaiaStars, 1.0)
+	if !ok {
+		return errors.New("matchStarsToGaia returned ok=false")
+	}
+	if len(matches) < 40 {
+		return fmt.Errorf("matched %d, want >= 40", len(matches))
+	}
+	return nil
+}
+
+// loadGaiaPlateFixture reads testdata/gaia_plate_fixture.json and returns
+// (trueWCS, frameStars, gaiaStars). frameStars are the fixture's true
+// (RA,Dec) projected through trueWCS to pixel coordinates; gaiaStars are
+// the raw sky coordinates. A test that runs solvePlate on frameStars with
+// a pre-seeded --gaia-cache-dir containing gaiaStars must recover trueWCS
+// to within its tolerance.
+func loadGaiaPlateFixture() (wcsTan, []star, []gaiaStar, error) {
+	var zero wcsTan
+	data, err := os.ReadFile("testdata/gaia_plate_fixture.json")
+	if err != nil {
+		return zero, nil, nil, err
+	}
+	var fx struct {
+		TrueWCS struct {
+			CRVAL1, CRVAL2, CRPIX1, CRPIX2 float64
+			CD                             [2][2]float64
+			SIP                            []float64
+		} `json:"true_wcs"`
+		Stars []struct {
+			RA    float64 `json:"ra"`
+			Dec   float64 `json:"dec"`
+			MagG  float64 `json:"mag_g"`
+			Plx   float64 `json:"plx"`
+			PMRA  float64 `json:"pmra"`
+			PMDec float64 `json:"pmdec"`
+		} `json:"stars"`
+	}
+	if err := json.Unmarshal(data, &fx); err != nil {
+		return zero, nil, nil, err
+	}
+	if len(fx.Stars) < 50 {
+		return zero, nil, nil, fmt.Errorf("fixture has %d stars, need >= 50", len(fx.Stars))
+	}
+	w := wcsTan{
+		CRVAL1: fx.TrueWCS.CRVAL1, CRVAL2: fx.TrueWCS.CRVAL2,
+		CRPIX1: fx.TrueWCS.CRPIX1, CRPIX2: fx.TrueWCS.CRPIX2,
+		CD: fx.TrueWCS.CD,
+	}
+	gaia := make([]gaiaStar, len(fx.Stars))
+	frame := make([]star, len(fx.Stars))
+	for i, s := range fx.Stars {
+		gaia[i] = gaiaStar{RA: s.RA, Dec: s.Dec, MagG: s.MagG, Plx: s.Plx, PMRA: s.PMRA, PMDec: s.PMDec}
+		x, y := wcsTanForward(&w, s.RA, s.Dec)
+		// If wcsTanForward is still a stub, x=y=0 for every star, which
+		// makes the test fail loudly instead of silently passing. That is
+		// the desired behaviour: the test must be sensitive to the stubs.
+		frame[i] = star{X: x, Y: y, Flux: 1000.0 / (s.MagG + 1.0), Size: 5}
+	}
+	return w, frame, gaia, nil
+}
+
+func testPlateSolveHeaderSeeded() error {
+	trueWCS, frameStars, gaiaStars, err := loadGaiaPlateFixture()
+	if err != nil {
+		return fmt.Errorf("load fixture: %w", err)
+	}
+	// Seed a cache dir so gaiaGetTile never touches the network.
+	cacheDir, err := os.MkdirTemp("", "skystacker-platesolve-hdr-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(cacheDir)
+	// The fixture's stars live in a single nside=64 tile; write that tile.
+	raMid, decMid := trueWCS.CRVAL1, trueWCS.CRVAL2
+	ipix := healpixAng2PixNested(gaiaDefaultNside, raMid, decMid)
+	seed := gaiaTile{
+		Version: gaiaCacheVersion, Nside: gaiaDefaultNside, Ipix: ipix,
+		QueriedAt: "2026-11-13T00:00:00Z", MagLimit: gaiaDefaultMagLimit,
+		Stars: gaiaStars,
+	}
+	if err := gaiaSaveTileCache(cacheDir, seed); err != nil {
+		return fmt.Errorf("seed cache: %w", err)
+	}
+	sol, err := solvePlate(frameStars, 512, 512, trueWCS.CRVAL1, trueWCS.CRVAL2, cacheDir, gaiaDefaultMirror)
+	if err != nil {
+		return fmt.Errorf("solvePlate (header): %w", err)
+	}
+	if sol == nil {
+		return errors.New("solvePlate returned nil solution")
+	}
+	if sol.Method != "header" {
+		return fmt.Errorf("Method = %q, want header", sol.Method)
+	}
+	if sol.RMSArcsec > 1.0 {
+		return fmt.Errorf("RMS = %.3f arcsec, want < 1.0", sol.RMSArcsec)
+	}
+	if sol.NMatches < 40 {
+		return fmt.Errorf("NMatches = %d, want >= 40", sol.NMatches)
+	}
+	arcsecPerRad := 180.0 / math.Pi * 3600.0
+	for i := range frameStars {
+		x, y := wcsTanForward(&sol.WCS, gaiaStars[i].RA, gaiaStars[i].Dec)
+		dx := x - frameStars[i].X
+		dy := y - frameStars[i].Y
+		scaleRad := math.Sqrt(math.Abs(sol.WCS.CD[0][0]*sol.WCS.CD[1][1] - sol.WCS.CD[0][1]*sol.WCS.CD[1][0]))
+		if errArcsec := math.Hypot(dx, dy) * scaleRad * arcsecPerRad; errArcsec > 1.0 {
+			return fmt.Errorf("star %d reprojection err %.3f arcsec, want < 1.0", i, errArcsec)
+		}
+	}
+	return nil
+}
+
+func testPlateSolveBlind() error {
+	_, frameStars, gaiaStars, err := loadGaiaPlateFixture()
+	if err != nil {
+		return fmt.Errorf("load fixture: %w", err)
+	}
+	cacheDir, err := os.MkdirTemp("", "skystacker-platesolve-blind-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(cacheDir)
+	// Blind mode scans a small grid of nside=64 tiles around (0,0) looking
+	// for a match. Seed every tile the fixture's stars could fall into,
+	// plus the "no header" default scan set, so the solve finds one.
+	seen := map[int]bool{}
+	for _, g := range gaiaStars {
+		ip := healpixAng2PixNested(gaiaDefaultNside, g.RA, g.Dec)
+		if seen[ip] {
+			continue
+		}
+		seen[ip] = true
+		tile := gaiaTile{
+			Version: gaiaCacheVersion, Nside: gaiaDefaultNside, Ipix: ip,
+			QueriedAt: "2026-11-13T00:00:00Z", MagLimit: gaiaDefaultMagLimit,
+		}
+		for _, g2 := range gaiaStars {
+			if healpixAng2PixNested(gaiaDefaultNside, g2.RA, g2.Dec) == ip {
+				tile.Stars = append(tile.Stars, g2)
+			}
+		}
+		if err := gaiaSaveTileCache(cacheDir, tile); err != nil {
+			return fmt.Errorf("seed cache ipix=%d: %w", ip, err)
+		}
+	}
+	sol, err := solvePlate(frameStars, 512, 512, 0, 0, cacheDir, gaiaDefaultMirror)
+	if err != nil {
+		return fmt.Errorf("solvePlate (blind): %w", err)
+	}
+	if sol == nil {
+		return errors.New("solvePlate returned nil solution")
+	}
+	if sol.Method != "blind" {
+		return fmt.Errorf("Method = %q, want blind", sol.Method)
+	}
+	// Blind mode has no prior pointing, so allow the wider 10 arcsec
+	// tolerance the session prompt specifies for blind solves.
+	if sol.RMSArcsec > 10.0 {
+		return fmt.Errorf("RMS = %.3f arcsec, want < 10.0", sol.RMSArcsec)
+	}
+	if sol.NMatches < 40 {
+		return fmt.Errorf("NMatches = %d, want >= 40", sol.NMatches)
+	}
+	return nil
+}
+
 func runSelfTests() int {
 	cases := []testCase{
 		{"accumulator sum and mean", testAccumulatorSumMean},
@@ -7070,6 +7451,12 @@ func runSelfTests() int {
 		{"gaia query retry", testGaiaQueryTileRetry},
 		{"gaia query timeout", testGaiaQueryTileContextCancel},
 		{"gaia cli parsing", testGaiaCLIParsing},
+		{"wcs tan forward inverse", testWCSTANForwardInverse},
+		{"wcs fit simple", testWCSFitSimple},
+		{"wcs sip", testWCSSIP},
+		{"match stars to gaia synthetic", testMatchStarsToGaiaSynthetic},
+		{"plate solve header seeded", testPlateSolveHeaderSeeded},
+		{"plate solve blind", testPlateSolveBlind},
 	}
 	failures := 0
 	for _, c := range cases {
