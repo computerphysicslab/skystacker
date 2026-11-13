@@ -65,6 +65,9 @@ import (
 	"io/fs"
 	"math"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -6128,6 +6131,336 @@ func testHealpixNested() error {
 	return nil
 }
 
+const (
+	gaiaCacheVersion    = 1
+	gaiaDefaultMirror   = "https://gea.esac.esa.int/tap-server/tap"
+	gaiaDefaultNside    = 256
+	gaiaDefaultMagLimit = 14.0
+	gaiaMaxStarsPerTile = 200000
+)
+
+// gaiaStar is one star as returned by the TAP query and stored in the
+// cache. Coordinates are ICRS J2016.0; magnitudes are Gaia G-band.
+type gaiaStar struct {
+	RA    float64 `json:"ra"`
+	Dec   float64 `json:"dec"`
+	MagG  float64 `json:"mag_g"`
+	Plx   float64 `json:"plx"`
+	PMRA  float64 `json:"pmra"`
+	PMDec float64 `json:"pmdec"`
+}
+
+// gaiaTile is the on-disk cache format for one HEALPix tile.
+type gaiaTile struct {
+	Version   int        `json:"version"`
+	Nside     int        `json:"nside"`
+	Ipix      int        `json:"ipix"`
+	QueriedAt string     `json:"queried_at"`
+	Mirror    string     `json:"mirror"`
+	MagLimit  float64    `json:"mag_limit"`
+	Stars     []gaiaStar `json:"stars"`
+}
+
+// gaiaTileCachePath returns the cache filename for (nside, ipix).
+func gaiaTileCachePath(cacheDir string, nside, ipix int) string {
+	return filepath.Join(cacheDir, fmt.Sprintf("healpix_n%d_p%d.json", nside, ipix))
+}
+
+// gaiaLoadTileCache reads a cached tile. Returns (tile, true) on a hit,
+// (zero, false) on a miss or version mismatch.
+func gaiaLoadTileCache(cacheDir string, nside, ipix int) (gaiaTile, bool) {
+	var t gaiaTile
+	p := gaiaTileCachePath(cacheDir, nside, ipix)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return t, false
+	}
+	if err := json.Unmarshal(b, &t); err != nil {
+		logf("WARNING: gaia cache %s is not valid JSON: %v", p, err)
+		return t, false
+	}
+	if t.Version != gaiaCacheVersion {
+		logf("WARNING: gaia cache %s has version %d (want %d), ignoring",
+			p, t.Version, gaiaCacheVersion)
+		return t, false
+	}
+	return t, true
+}
+
+// gaiaSaveTileCache writes a tile to disk atomically.
+func gaiaSaveTileCache(cacheDir string, t gaiaTile) error {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(t, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(gaiaTileCachePath(cacheDir, t.Nside, t.Ipix),
+		func(w io.Writer) error {
+			_, err := w.Write(b)
+			return err
+		})
+}
+
+// gaiaBuildADQL constructs a single-line TAP ADQL query for (nside, ipix).
+func gaiaBuildADQL(nside, ipix int, magLimit float64) string {
+	corners := healpixTileCorners(nside, ipix)
+	var b strings.Builder
+	b.WriteString("SELECT ra, dec, phot_g_mean_mag, parallax, pmra, pmdec ")
+	b.WriteString("FROM gaiadr3.gaia_source ")
+	b.WriteString("WHERE CONTAINS(POINT('ICRS',ra,dec),POLYGON('ICRS',")
+	for i, c := range corners {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(fmt.Sprintf("%.6f,%.6f",
+			c.X*180.0/math.Pi, c.Y*180.0/math.Pi))
+	}
+	b.WriteString(fmt.Sprintf(",%0.6f,%.6f",
+		corners[0].X*180.0/math.Pi, corners[0].Y*180.0/math.Pi))
+	b.WriteString("))=1 AND phot_g_mean_mag <= ")
+	b.WriteString(fmt.Sprintf("%.6f", magLimit))
+	return b.String()
+}
+
+var (
+	gaiaHTTPClient = &http.Client{Timeout: 30 * time.Second}
+	gaiaRateMu     sync.Mutex
+	gaiaLastQuery  time.Time
+)
+
+// gaiaRateLimit sleeps if the previous TAP call was <1s ago.
+func gaiaRateLimit() {
+	gaiaRateMu.Lock()
+	defer gaiaRateMu.Unlock()
+	now := time.Now()
+	if !gaiaLastQuery.IsZero() {
+		if elapsed := now.Sub(gaiaLastQuery); elapsed < time.Second {
+			time.Sleep(time.Second - elapsed)
+		}
+	}
+	gaiaLastQuery = time.Now()
+}
+
+// gaiaQueryTile posts the ADQL query to mirror and parses the response.
+// Retries up to 3 times (4 attempts total) with 1s/2s/4s backoff on
+// 5xx / timeout / connection error. Does NOT retry on 4xx or malformed
+// JSON.
+func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar, error) {
+	adql := gaiaBuildADQL(nside, ipix, magLimit)
+	backoff := []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < len(backoff); attempt++ {
+		if attempt > 0 {
+			time.Sleep(backoff[attempt])
+		}
+		gaiaRateLimit()
+		form := url.Values{}
+		form.Set("REQUEST", "doQuery")
+		form.Set("LANG", "ADQL")
+		form.Set("FORMAT", "json")
+		form.Set("QUERY", adql)
+		req, err := http.NewRequest("POST", mirror, strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := gaiaHTTPClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("attempt %d: %w", attempt+1, err)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("attempt %d: HTTP %d", attempt+1, resp.StatusCode)
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		}
+		var parsed struct {
+			Metadata []struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Data [][]float64 `json:"data"`
+		}
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return nil, fmt.Errorf("malformed JSON: %w", err)
+		}
+		if len(parsed.Data) > gaiaMaxStarsPerTile {
+			return nil, fmt.Errorf("too many stars: %d (max %d)",
+				len(parsed.Data), gaiaMaxStarsPerTile)
+		}
+		stars := make([]gaiaStar, 0, len(parsed.Data))
+		for _, row := range parsed.Data {
+			if len(row) < 6 {
+				continue
+			}
+			stars = append(stars, gaiaStar{
+				RA:    row[0] * math.Pi / 180.0,
+				Dec:   row[1] * math.Pi / 180.0,
+				MagG:  row[2],
+				Plx:   row[3],
+				PMRA:  row[4],
+				PMDec: row[5],
+			})
+		}
+		return stars, nil
+	}
+	return nil, lastErr
+}
+
+// gaiaGetTile orchestrates cache-first read, optional refresh, and
+// atomic write.
+func gaiaGetTile(cacheDir, mirror string, nside, ipix int, magLimit float64, offline, forceRefresh bool) (gaiaTile, error) {
+	if !forceRefresh {
+		if t, ok := gaiaLoadTileCache(cacheDir, nside, ipix); ok {
+			logf("  gaia: tile nside=%d ipix=%d [cache hit]", nside, ipix)
+			return t, nil
+		}
+	}
+	if offline {
+		return gaiaTile{}, fmt.Errorf(
+			"gaia: cache miss for nside=%d ipix=%d in offline mode", nside, ipix)
+	}
+	start := time.Now()
+	stars, err := gaiaQueryTile(mirror, nside, ipix, magLimit)
+	if err != nil {
+		return gaiaTile{}, err
+	}
+	t := gaiaTile{
+		Version:   gaiaCacheVersion,
+		Nside:     nside,
+		Ipix:      ipix,
+		QueriedAt: time.Now().UTC().Format(time.RFC3339),
+		Mirror:    mirror,
+		MagLimit:  magLimit,
+		Stars:     stars,
+	}
+	if err := gaiaSaveTileCache(cacheDir, t); err != nil {
+		logf("WARNING: failed to save gaia cache: %v", err)
+	}
+	logf("  gaia: tile nside=%d ipix=%d [fetched %d stars in %v]",
+		nside, ipix, len(stars), time.Since(start).Round(time.Millisecond))
+	return t, nil
+}
+
+func testGaiaCache() error {
+	dir, err := os.MkdirTemp("", "skystacker-gaia-cache-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	got := gaiaTileCachePath(dir, 256, 12345)
+	want := filepath.Join(dir, "healpix_n256_p12345.json")
+	if got != want {
+		return fmt.Errorf("path = %q, want %q", got, want)
+	}
+
+	t := gaiaTile{
+		Version: gaiaCacheVersion, Nside: 256, Ipix: 12345,
+		QueriedAt: "2026-11-13T00:00:00Z",
+		Mirror:    "https://example.org/tap", MagLimit: 14.0,
+		Stars: []gaiaStar{
+			{RA: 1.5, Dec: 0.5, MagG: 11.2, Plx: 3.4, PMRA: -1.2, PMDec: 0.5},
+			{RA: 2.0, Dec: -0.5, MagG: 13.1},
+		},
+	}
+	if err := gaiaSaveTileCache(dir, t); err != nil {
+		return err
+	}
+	loaded, ok := gaiaLoadTileCache(dir, 256, 12345)
+	if !ok {
+		return errors.New("load miss after save")
+	}
+	if len(loaded.Stars) != 2 {
+		return fmt.Errorf("stars = %d", len(loaded.Stars))
+	}
+	if loaded.Stars[0].RA != 1.5 {
+		return fmt.Errorf("star[0].RA = %v", loaded.Stars[0].RA)
+	}
+
+	t.Version = 0
+	if err := gaiaSaveTileCache(dir, t); err != nil {
+		return err
+	}
+	if _, ok := gaiaLoadTileCache(dir, 256, 12345); ok {
+		return errors.New("version-0 cache accepted, want rejection")
+	}
+
+	if _, ok := gaiaLoadTileCache(dir, 256, 99999); ok {
+		return errors.New("missing cache reported as hit")
+	}
+	return nil
+}
+
+func testGaiaADQL() error {
+	q := gaiaBuildADQL(256, 12345, 14.0)
+	for _, want := range []string{
+		"gaiadr3.gaia_source",
+		"POINT('ICRS'",
+		"POLYGON('ICRS'",
+		"phot_g_mean_mag",
+		"<= 14.000000",
+	} {
+		if !strings.Contains(q, want) {
+			return fmt.Errorf("ADQL missing %q: %s", want, q)
+		}
+	}
+	if strings.Contains(q, "\n") {
+		return errors.New("ADQL must be single-line (urlencoded POST body)")
+	}
+	if n := strings.Count(q, ","); n < 4 {
+		return fmt.Errorf("POLYGON has %d commas, want >= 4", n)
+	}
+	return nil
+}
+
+func testGaiaQueryTileRetry() error {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			http.Error(w, "transient", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"metadata":[],"data":[[1.5,0.5,11.2,3.4,-1.2,0.5],[2.0,-0.5,13.1,0,0,0]]}`)
+	}))
+	defer srv.Close()
+
+	stars, err := gaiaQueryTile(srv.URL, 256, 12345, 14.0)
+	if err != nil {
+		return fmt.Errorf("query after retry: %w", err)
+	}
+	if len(stars) != 2 {
+		return fmt.Errorf("stars = %d, want 2", len(stars))
+	}
+	if stars[0].MagG != 11.2 {
+		return fmt.Errorf("star[0].MagG = %v", stars[0].MagG)
+	}
+	if calls != 2 {
+		return fmt.Errorf("calls = %d, want 2 (1 fail + 1 retry)", calls)
+	}
+
+	calls = 0
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		io.WriteString(w, `not json`)
+	}))
+	defer srv2.Close()
+	if _, err := gaiaQueryTile(srv2.URL, 256, 12345, 14.0); err == nil {
+		return errors.New("malformed JSON should have errored")
+	}
+	if calls != 1 {
+		return fmt.Errorf("malformed JSON retried %d times, want 1", calls)
+	}
+	return nil
+}
+
 func runSelfTests() int {
 	cases := []testCase{
 		{"accumulator sum and mean", testAccumulatorSumMean},
@@ -6237,6 +6570,9 @@ func runSelfTests() int {
 		{"fits debayer", testFITSDebayer},
 		{"fits debayer CLI", testDebayerCLI},
 		{"healpix nested", testHealpixNested},
+		{"gaia cache", testGaiaCache},
+		{"gaia adql", testGaiaADQL},
+		{"gaia query retry", testGaiaQueryTileRetry},
 	}
 	failures := 0
 	for _, c := range cases {
