@@ -1248,6 +1248,30 @@ func (a affine) scale() float64 {
 	return math.Sqrt(det)
 }
 
+// shear returns the cosine of the angle between the transformed x and y
+// axes. 0 is perpendicular (pure rotation/scale), 1 is collinear.
+func (a affine) shear() float64 {
+	len1 := math.Hypot(a.A, a.D)
+	len2 := math.Hypot(a.B, a.E)
+	if len1 < 1e-9 || len2 < 1e-9 {
+		return 1.0
+	}
+	return math.Abs(a.A*a.B+a.D*a.E) / (len1 * len2)
+}
+
+// anisotropy returns the ratio of column lengths. Real optics are ~1.0.
+func (a affine) anisotropy() float64 {
+	len1 := math.Hypot(a.A, a.D)
+	len2 := math.Hypot(a.B, a.E)
+	if len1 < 1e-9 || len2 < 1e-9 {
+		return 100.0
+	}
+	if len1 > len2 {
+		return len1 / len2
+	}
+	return len2 / len1
+}
+
 // rotation returns an approximate rotation angle in radians. For a pure
 // rotation this is exactly the rotation; for a general affine it is a
 // best-effort estimate suitable for the quality diagnostic.
@@ -2694,7 +2718,7 @@ func (r *processingReport) writeTo(w io.Writer) error {
 			return sorted[i].Quality > sorted[j].Quality
 		})
 		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %7s %7s %22s %7s %s\n",
-			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "IntrQ", "Weight", "Box(x,y,w,h)", "Box%", "Note")
+			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "IntrQ", "Weight", "Box(x,y,w,h)", "Box%", "Foot%", "Note")
 		for i, d := range sorted {
 			ratioStr := "-"
 			if d.Stars > 0 {
@@ -2704,11 +2728,11 @@ func (r *processingReport) writeTo(w io.Writer) error {
 			if d.Stars == 0 {
 				boxStr = "-"
 			}
-			ew.printf("  %-3d %-22s %5d %4d %6s %8.4f %8.2f %16s %7.1f %7.1f %7.2f %22s %6.1f%% %s\n",
+			ew.printf("  %-3d %-22s %5d %4d %6s %8.4f %8.2f %16s %7.1f %7.1f %7.2f %22s %6.1f%% %6.1f%% %s\n",
 				i+1, filepath.Base(d.Path), d.Stars, d.Inliers, ratioStr,
 				d.Scale, d.RotationDeg,
 				fmt.Sprintf("(%.1f,%.1f)", d.OffsetX, d.OffsetY),
-				d.Quality, d.IntrinsicQ, d.Weight, boxStr, d.BoxPct, d.Note)
+				d.Quality, d.IntrinsicQ, d.Weight, boxStr, d.BoxPct, d.FootprintPct, d.Note)
 		}
 		ew.printf("\n")
 	}
@@ -3481,6 +3505,9 @@ func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 	if d.BoxPct < 50 {
 		flags = append(flags, "LOW BOX%")
 	}
+	if d.FootprintPct > 0 && d.FootprintPct < 50.0 {
+		flags = append(flags, "LOW FOOTPRINT")
+	}
 	// The raw OffsetX/Y is where the frame's top-left corner lands after
 	// the similarity. On a rotation-only similarity about the frame
 	// center, that corner inevitably moves even when there is no real
@@ -3509,6 +3536,34 @@ func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 	return flags
 }
 
+// computeFootprintPct returns the actual area of the transformed frame
+// as a percentage of the reference. Unlike frameBoxInReference, which
+// returns the axis-aligned bounding box (huge for sheared transforms),
+// this returns the true parallelogram area via the shoelace formula.
+func computeFootprintPct(refW, refH int, apply func(point2D) point2D) float64 {
+	pts := []point2D{
+		{0, 0},
+		{float64(refW - 1), 0},
+		{float64(refW - 1), float64(refH - 1)},
+		{0, float64(refH - 1)},
+	}
+	var mapped [4]point2D
+	for i, p := range pts {
+		mapped[i] = apply(p)
+	}
+	var area float64
+	for i := 0; i < 4; i++ {
+		j := (i + 1) % 4
+		area += mapped[i].X*mapped[j].Y - mapped[j].X*mapped[i].Y
+	}
+	area = math.Abs(area) / 2.0
+	pct := 100.0 * area / float64(refW*refH)
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
+}
+
 // frameDiag carries per-frame diagnostics for the report: detected stars,
 // matched inliers, the estimated transform (scale/rotation/offset), a
 // combined quality score (0-100), the transformed bounding box in
@@ -3516,24 +3571,25 @@ func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 // covers (Box%). Used to explain the crop rectangle and to spot frames
 // that should be removed.
 type frameDiag struct {
-	Path        string
-	Stars       int
-	Inliers     int
-	Scale       float64
-	RotationDeg float64
-	OffsetX     float64
-	OffsetY     float64
-	Quality     float64
-	BoxMinX     int
-	BoxMinY     int
-	BoxMaxX     int
-	BoxMaxY     int
-	BoxPct      float64 // 100 * box area / reference area
-	BgNoise     float64
-	MedianBlob  float64
-	IntrinsicQ  float64
-	Weight      float64
-	Note        string
+	Path         string
+	Stars        int
+	Inliers      int
+	Scale        float64
+	RotationDeg  float64
+	OffsetX      float64
+	OffsetY      float64
+	Quality      float64
+	BoxMinX      int
+	BoxMinY      int
+	BoxMaxX      int
+	BoxMaxY      int
+	BoxPct       float64 // 100 * box area / reference area
+	FootprintPct float64 // 100 * actual transformed parallelogram area / reference area
+	BgNoise      float64
+	MedianBlob   float64
+	IntrinsicQ   float64
+	Weight       float64
+	Note         string
 }
 
 // computeFrameQuality returns a 0-100 score combining inlier ratio, a
@@ -4881,7 +4937,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					srcPts, dstPts := collectInliers(sim, starLists[i], refStars, 3.0)
 					if len(srcPts) >= 15 {
 						if aff, aok := estimateAffine(srcPts, dstPts); aok {
-							if sc := aff.scale(); sc > 0.5 && sc < 2.0 {
+							if sc := aff.scale(); sc > 0.5 && sc < 2.0 && aff.shear() <= 0.10 && aff.anisotropy() <= 1.10 {
 								var simRes, affRes float64
 								for j := range srcPts {
 									pS := sim.apply(srcPts[j])
@@ -4889,7 +4945,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 									simRes += math.Hypot(pS.X-dstPts[j].X, pS.Y-dstPts[j].Y)
 									affRes += math.Hypot(pA.X-dstPts[j].X, pA.Y-dstPts[j].Y)
 								}
-								if simRes > 1e-6 && affRes < 0.90*simRes {
+								if simRes > 1e-6 && affRes < 0.75*simRes {
 									affCopy := aff
 									affRef = &affCopy
 									logf("  register %s: scale=%.4f rot=%.2f° inliers=%d [affine %.1f%% residual]",
@@ -5159,8 +5215,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 			if transforms[i].aff != nil {
 				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReferenceAffine(refW, refH, *transforms[i].aff)
+				td.FootprintPct = computeFootprintPct(refW, refH, func(p point2D) point2D { return transforms[i].aff.apply(p) })
 			} else {
 				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReference(refW, refH, transforms[i].sim)
+				td.FootprintPct = computeFootprintPct(refW, refH, func(p point2D) point2D { return transforms[i].sim.apply(p) })
 			}
 			bx0, by0 := td.BoxMinX, td.BoxMinY
 			bx1, by1 := td.BoxMaxX, td.BoxMaxY
@@ -5791,6 +5849,7 @@ func runSelfTests() int {
 		{"spikes min count", testSpikesMinCount},
 		{"estimate affine", testEstimateAffine},
 		{"affine inverse round trip", testAffineInverseRoundTrip},
+		{"affine quality and footprint", testAffineQuality},
 		{"high pass radius adaptive", testHighPassRadiusAdaptive},
 		{"disk space guard", testDiskSpaceGuard},
 		{"intrinsic quality zero stars", testIntrinsicQualityZeroStars},
@@ -8207,6 +8266,55 @@ func testEstimateAffine() error {
 	return nil
 }
 
+func testAffineQuality() error {
+	// Pure rotation: shear = 0, anisotropy = 1.
+	rot := affine{A: math.Cos(0.3), B: -math.Sin(0.3), D: math.Sin(0.3), E: math.Cos(0.3)}
+	if rot.shear() > 1e-9 {
+		return fmt.Errorf("rotation shear = %v, want 0", rot.shear())
+	}
+	if math.Abs(rot.anisotropy()-1.0) > 1e-9 {
+		return fmt.Errorf("rotation anisotropy = %v, want 1", rot.anisotropy())
+	}
+
+	// Pure uniform scale: shear = 0.
+	sc := affine{A: 2, B: 0, D: 0, E: 2}
+	if sc.shear() > 1e-9 {
+		return fmt.Errorf("scale shear = %v, want 0", sc.shear())
+	}
+
+	// Shear (A=1, B=0.5, D=0, E=1). col1=(1,0), col2=(0.5,1).
+	// dot=0.5, |col1|=1, |col2|~1.118, cos~0.447.
+	sh := affine{A: 1, B: 0.5, D: 0, E: 1}
+	if sh.shear() < 0.4 {
+		return fmt.Errorf("shear = %v, want >= 0.4", sh.shear())
+	}
+
+	// Anisotropy (A=2, E=1): ratio = 2.
+	an := affine{A: 2, B: 0, D: 0, E: 1}
+	if math.Abs(an.anisotropy()-2.0) > 1e-9 {
+		return fmt.Errorf("anisotropy = %v, want 2", an.anisotropy())
+	}
+
+	// computeFootprintPct maps (0,0)..(W-1,H-1), so identity covers
+	// (W-1)*(H-1) / (W*H) of the reference, not 100%. For 100x50 that is
+	// 99*49/5000 = 97.02%.
+	pct := computeFootprintPct(100, 50, func(p point2D) point2D { return p })
+	want := 100.0 * 99.0 * 49.0 / (100.0 * 50.0)
+	if math.Abs(pct-want) > 0.5 {
+		return fmt.Errorf("identity footprint = %v, want ~%.2f", pct, want)
+	}
+
+	// Half-size uniform scale: footprint is 0.25x the identity footprint.
+	half := affine{A: 0.5, B: 0, D: 0, E: 0.5}
+	pctHalf := computeFootprintPct(100, 50, func(p point2D) point2D { return half.apply(p) })
+	wantHalf := 0.25 * want
+	if math.Abs(pctHalf-wantHalf) > 0.5 {
+		return fmt.Errorf("half-scale footprint = %v, want ~%.2f", pctHalf, wantHalf)
+	}
+
+	return nil
+}
+
 func testAffineInverseRoundTrip() error {
 	a := affine{A: 1.1, B: -0.2, C: 5, D: 0.3, E: 0.9, F: -3}
 	inv := a.inverse()
@@ -8463,12 +8571,25 @@ func testIntrinsicQualityZeroStars() error {
 func testFrameLimiterFlags() error {
 	const refW, refH = 2400, 1600
 	// Normal frame: no flags.
-	normal := frameDiag{Quality: 80, BoxPct: 95, OffsetX: 5, OffsetY: -8}
+	normal := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: 5, OffsetY: -8}
 	if flags := frameLimiterFlags(normal, refW, refH); len(flags) != 0 {
 		return fmt.Errorf("normal frame got flags: %v", flags)
 	}
+
+	// LOW FOOTPRINT fires when the actual footprint < 50%.
+	lowFoot := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 40}
+	flagsLF := frameLimiterFlags(lowFoot, refW, refH)
+	hasLF := false
+	for _, f := range flagsLF {
+		if f == "LOW FOOTPRINT" {
+			hasLF = true
+		}
+	}
+	if !hasLF {
+		return fmt.Errorf("LOW FOOTPRINT flag missing: %v", flagsLF)
+	}
 	// M42-style 677 px horizontal drift on a 2400 px wide reference.
-	drifted := frameDiag{Quality: 80, BoxPct: 95, OffsetX: -677, OffsetY: 10}
+	drifted := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: -677, OffsetY: 10}
 	flags := frameLimiterFlags(drifted, refW, refH)
 	found := false
 	for _, f := range flags {
@@ -8480,7 +8601,7 @@ func testFrameLimiterFlags() error {
 		return fmt.Errorf("677 px horizontal drift missing LARGE OFFSET: %v", flags)
 	}
 	// Vertical drift > 10% of refH.
-	vertical := frameDiag{Quality: 80, BoxPct: 95, OffsetX: 0, OffsetY: 200}
+	vertical := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: 0, OffsetY: 200}
 	flags = frameLimiterFlags(vertical, refW, refH)
 	found = false
 	for _, f := range flags {
@@ -8492,7 +8613,7 @@ func testFrameLimiterFlags() error {
 		return fmt.Errorf("200 px vertical drift missing LARGE OFFSET: %v", flags)
 	}
 	// Under threshold must not fire.
-	under := frameDiag{Quality: 80, BoxPct: 95, OffsetX: 220, OffsetY: 100}
+	under := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: 220, OffsetY: 100}
 	flags = frameLimiterFlags(under, refW, refH)
 	for _, f := range flags {
 		if f == "LARGE OFFSET" {
@@ -8500,7 +8621,7 @@ func testFrameLimiterFlags() error {
 		}
 	}
 	// LOW QUALITY still works.
-	lowQ := frameDiag{Quality: 20, BoxPct: 95, OffsetX: 0, OffsetY: 0}
+	lowQ := frameDiag{Quality: 20, BoxPct: 95, FootprintPct: 95, OffsetX: 0, OffsetY: 0}
 	flags = frameLimiterFlags(lowQ, refW, refH)
 	hasLowQ := false
 	for _, f := range flags {
@@ -8512,7 +8633,7 @@ func testFrameLimiterFlags() error {
 		return fmt.Errorf("LOW QUALITY flag missing: %v", flags)
 	}
 	// LOW BOX%% still works.
-	lowBox := frameDiag{Quality: 80, BoxPct: 40, OffsetX: 0, OffsetY: 0}
+	lowBox := frameDiag{Quality: 80, BoxPct: 40, FootprintPct: 95, OffsetX: 0, OffsetY: 0}
 	flags = frameLimiterFlags(lowBox, refW, refH)
 	hasLowBox := false
 	for _, f := range flags {
@@ -8532,7 +8653,7 @@ func testFrameLimiterFlagsRotationAware() error {
 	// (74-95 inliers); the old rotation-blind code fired LARGE
 	// OFFSET here. Must NOT be flagged.
 	polaris := frameDiag{
-		Quality: 80, BoxPct: 95,
+		Quality: 80, BoxPct: 95, FootprintPct: 95,
 		Scale:       1.0007,
 		RotationDeg: 25.77,
 		OffsetX:     440.2,
@@ -8545,7 +8666,7 @@ func testFrameLimiterFlagsRotationAware() error {
 	// Case 2: same rotation, plus 300 px of added horizontal drift.
 	// Must fire LARGE OFFSET.
 	drifted := frameDiag{
-		Quality: 80, BoxPct: 95,
+		Quality: 80, BoxPct: 95, FootprintPct: 95,
 		Scale:       1.0007,
 		RotationDeg: 25.77,
 		OffsetX:     740.0,
@@ -8565,7 +8686,7 @@ func testFrameLimiterFlagsRotationAware() error {
 	// Case 3: M42-style 677 px horizontal drift on a 2400 px wide
 	// reference (rotation 0, so the fix must not suppress it).
 	m42 := frameDiag{
-		Quality: 80, BoxPct: 95,
+		Quality: 80, BoxPct: 95, FootprintPct: 95,
 		Scale:       1.0,
 		RotationDeg: 0.0,
 		OffsetX:     677.0,
@@ -8584,7 +8705,7 @@ func testFrameLimiterFlagsRotationAware() error {
 
 	// Case 4: under-threshold, no rotation. Must NOT fire.
 	under := frameDiag{
-		Quality: 80, BoxPct: 95,
+		Quality: 80, BoxPct: 95, FootprintPct: 95,
 		Scale:       1.0,
 		RotationDeg: 0.0,
 		OffsetX:     220.0,
@@ -9069,7 +9190,7 @@ func testReportShowsWeightColumns() error {
 				Path:  "/tmp/frame_001.jpg",
 				Stars: 100, Inliers: 80, Scale: 1.0, RotationDeg: 0.0,
 				OffsetX: 0.5, OffsetY: 0.5,
-				Quality: 80, BoxPct: 95,
+				Quality: 80, BoxPct: 95, FootprintPct: 95,
 				BgNoise: 0.02, MedianBlob: 4.5,
 				IntrinsicQ: 75, Weight: 0.6,
 			},
