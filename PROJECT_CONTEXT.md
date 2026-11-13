@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 103 passing.** Update this number after any test change.
+**Self-test count: 104 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -178,6 +178,29 @@ simply omits the exposure summary.
 - Normalization requires registration and the reference frame's background to be measurable. Both are opt-in (`--normalize` / `--local-normalize`). Global scale is clamped to [0.5, 2.0] to prevent runaway corrections on nearly-uniform tiles.
 
 ## Recent decisions / caveats
+
+- **Calibration-subdir detection plural- and case-insensitive APPLIED**:
+  `detectCalibrationSubdirs` previously listed only specific case
+  variants of each folder name ("Light", "Lights", "LIGHT", "LIGHTS")
+  even though its doc comment promised case-insensitivity. A dataset
+  with the standard Linux all-lowercase layout (`lights/`, `darks/`,
+  `flats/`, `biases/`) returned an empty `calibLayout`, discovery fell
+  back to the parent directory (which contains only subfolders), and
+  the run died with `no image files (JPG/PNG/RAW/FITS) found` on a
+  directory full of `.CR2` subs. Confirmed against
+  `/home/jips/datos/Astro/datasets/OrionNebula`. Fix reads the
+  directory once into a case-insensitive map of lowercased-name ->
+  actual absolute path, then resolves each alias by lowercasing it
+  first. Both sides are lowercased, so `pick("Dark", "Darks")` matches
+  any case of either singular or plural (`dark`, `DARK`, `Dark`,
+  `darks`, `DARKS`, `Darks`). Adding a new convention (e.g.
+  `"Dark_frames"`) is a one-word edit to the `pick` argument list.
+  Singular wins over plural by argument order, preserving the Case 4
+  contract. `testDetectCalibrationSubdirs` extended in place with
+  sub-cases 6-9 (plural-lower, singular-lower, mixed-case,
+  singular+plural coexistence). Top-level test count unchanged
+  (extended an existing test function).
+
 
 - **post_step_0-stretched.jpg APPLIED**: alongside every `stacked_sum.jpg`,
   the pipeline now also writes `post_step_0-stretched.jpg`, a per-channel
@@ -420,7 +443,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 103 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 104 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
