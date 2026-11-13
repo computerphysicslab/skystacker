@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 104 passing.** Update this number after any test change.
+**Self-test count: 105 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -178,6 +178,22 @@ simply omits the exposure summary.
 - Normalization requires registration and the reference frame's background to be measurable. Both are opt-in (`--normalize` / `--local-normalize`). Global scale is clamped to [0.5, 2.0] to prevent runaway corrections on nearly-uniform tiles.
 
 ## Recent decisions / caveats
+
+- **Affine refinement guards APPLIED**: Affine was overfitting to noise.
+  128 of 134 frames "used" affine with residual drops of 55-85%, impossible
+  for a stack with scale ~1.000 and rotation <=0.6deg. Bounding boxes
+  stayed ~100% wide so no flag fired, but the actual parallelograms
+  covered only a thin wedge. `findSafeCrop` correctly intersected them,
+  collapsing the crop to 169x136 (2% of the 867x1302 reference). Fix:
+  (1) inline gate in the affine acceptance condition rejects shear > 0.10
+  or anisotropy > 1.10 (real optics are <5%); (2) residual threshold
+  tightened from 10% to 25%; (3) `computeFootprintPct` returns the true
+  parallelogram area via the shoelace formula; (4) `frameDiag.FootprintPct`
+  is surfaced as a `Foot%` column in `report.txt`; (5) `frameLimiterFlags`
+  fires `LOW FOOTPRINT` when the actual footprint < 50%, so this failure
+  mode is named directly instead of silently shrinking the crop. New test:
+  `testAffineQuality`. Test count 104 -> 105.
+
 
 - **Calibration-subdir detection plural- and case-insensitive APPLIED**:
   `detectCalibrationSubdirs` previously listed only specific case
@@ -443,7 +459,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 104 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 105 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
