@@ -262,7 +262,9 @@ fewer tiles per image.
 
 ## Recent decisions / caveats
 
-- **Gaia TAP client validated against ESA** (2026-11-13): live
+- **Gaia TAP client validated against ESA**
+- **A1a.5 geometry discrepancy confirmed live** (2026-11-13): `--test-gaia 87.5,-45.0` (ipix=589120) returns 13 stars, not the 4 the earlier `curl` returned. Star values/columns are correct; the polygon emitted by `healpixTileCorners` is centred ~0.15 deg west of the true healpy tile at nside=256. Round-trip consistency holds but tile geometry is approximate. Not a parser bug. Fix in A1a.5 before the plate solver relies on tile centres.
+ (2026-11-13): live
   `--test-gaia 87.5,-45.0` returns the 4 stars that a direct
   `curl` to `/tap/sync` returns. Fixes: `/sync` endpoint suffix,
   project User-Agent, context-cancel ordering (cancel after
