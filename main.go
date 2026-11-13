@@ -256,7 +256,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
-	fs.IntVar(&o.GaiaNside, "gaia-nside", 256, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
+	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
 	fs.Float64Var(&o.GaiaMagLimit, "gaia-mag-limit", 14.0, "Gaia G-band magnitude limit for tile queries (0-20)")
 	fs.BoolVar(&o.GaiaOffline, "gaia-offline", false, "never query the Gaia mirror; cache misses are a hard error")
 	fs.BoolVar(&o.GaiaCacheRefresh, "gaia-cache-refresh", false, "re-download tiles even if cached (still updates the cache)")
@@ -482,7 +482,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
-	fmt.Fprintln(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default 256)")
+	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
 	fmt.Fprintln(w, "  --gaia-mag-limit M Gaia G-band magnitude limit (0-20, default 14.0)")
 	fmt.Fprintln(w, "  --gaia-offline     never query the Gaia mirror; cache misses are a hard error")
 	fmt.Fprintln(w, "  --gaia-cache-refresh  re-download tiles even if cached (still updates the cache)")
@@ -6165,7 +6165,7 @@ func testHealpixNested() error {
 const (
 	gaiaCacheVersion    = 1
 	gaiaDefaultMirror   = "https://gea.esac.esa.int/tap-server/tap"
-	gaiaDefaultNside    = 256
+	gaiaDefaultNside    = 64
 	gaiaDefaultMagLimit = 14.0
 	gaiaMaxStarsPerTile = 200000
 )
@@ -7605,6 +7605,14 @@ func testParseArgs() error {
 			return fmt.Errorf("case %d (%v): wantErr=%v, got err=%v",
 				i, c.args, c.wantErr, err)
 		}
+	}
+	// The default nside must be 64 so a single plate-solver session
+	// queries 1-3 tiles per typical image, not 20-100. Asserted here
+	// (not just against the const) so a bad const value fails the test.
+	if opts, err := parseArgs(nil); err != nil {
+		return fmt.Errorf("default parse: %w", err)
+	} else if opts.GaiaNside != 64 {
+		return fmt.Errorf("GaiaNside default = %d, want 64", opts.GaiaNside)
 	}
 	return nil
 }
