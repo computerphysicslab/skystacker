@@ -196,7 +196,7 @@ limited to 1 req/sec between calls within a single run.
 `gaiaBuildADQL` emits a single-line query safe for
 `application/x-www-form-urlencoded` POST.
 
-**Disk cache** — `<output>/_work/gaia_cache/healpix_n<nside>_p<ipix>.json`.
+**Disk cache** — `$XDG_CACHE_HOME/skystacker/gaia_cache/healpix_n<nside>_p<ipix>.json` on Linux (usually `~/.cache/skystacker/gaia_cache/`), `~/Library/Caches/skystacker/gaia_cache/` on macOS, `%LocalAppData%\skystacker\gaia_cache\` on Windows. Overridable with `--gaia-cache-dir`. The old `<output>/_work/gaia_cache` default was tied to a single stacking session, which is the wrong lifetime for a frozen catalog.
 `gaiaCacheVersion = 1` (distinct from `cacheVersion`). Atomic writes
 via the existing `writeFileAtomic(path, func(io.Writer) error)`
 helper. Empty star lists (barren tiles) are valid and cached.
@@ -234,7 +234,7 @@ fewer tiles per image.
 |---|---|---|
 | `--test-gaia RA,DEC` | (unset) | One-shot diagnostic: query one tile, print first 5 stars, exit. |
 | `--gaia-mirror URL` | `https://gea.esac.esa.int/tap-server/tap` | Gaia TAP mirror. |
-| `--gaia-cache-dir D` | `<output>/_work/gaia_cache` | Tile cache directory. |
+| `--gaia-cache-dir D` | OS user cache dir | Tile cache directory (see "Disk cache" above). |
 | `--gaia-nside N` | `256` | HEALPix nside (power of 2, 2-8192). |
 | `--gaia-mag-limit M` | `14.0` | Gaia G-band magnitude limit (0-20). |
 | `--gaia-offline` | `false` | Cache misses are a hard error; no network access. |

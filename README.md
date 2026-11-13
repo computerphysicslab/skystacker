@@ -395,7 +395,7 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query (diagnostic; no pipeline consumer yet) | — |
 | `--test-debayer PATH` | One-shot FITS debayer diagnostic | — |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
-| `--gaia-cache-dir D` | Gaia tile cache directory | `<output>/_work/gaia_cache` |
+| `--gaia-cache-dir D` | Gaia tile cache directory | OS user cache dir (e.g. `~/.cache/skystacker/gaia_cache`) |
 | `--gaia-nside N` | HEALPix nside (power of 2, 2-8192) | `256` |
 | `--gaia-mag-limit M` | Gaia G-band magnitude limit | `14.0` |
 | `--gaia-offline` | Cache misses are a hard error; no network access | `false` |
@@ -495,7 +495,9 @@ The following items from the original roadmap have been implemented in 0.5.0:
 - **Gaia DR3 data-access layer (scaffolding)** — HEALPix nested math,
   a TAP client to the ESA Gaia archive with a 180 s per-attempt timeout and
   a 5 s progress heartbeat, and a per-tile JSON disk cache under
-  `<output>/_work/gaia_cache/`. No pipeline consumer yet; run
+  the OS user cache dir (`~/.cache/skystacker/gaia_cache/` on Linux,
+  `~/Library/Caches/skystacker/gaia_cache/` on macOS). No pipeline
+  consumer yet; run
   `./skystacker --test-gaia RA,DEC` to exercise it end-to-end.
   See `PROJECT_CONTEXT.md` for the tile-geometry follow-up.
 
