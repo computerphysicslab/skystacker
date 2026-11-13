@@ -106,6 +106,7 @@ type cliOptions struct {
 	Help                 bool
 	SelfTest             bool
 	Register             bool
+	NoAffine             bool
 	Method               string
 	MaskBG               bool
 	DarkFile             string
@@ -192,6 +193,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.BiasFile, "bias", "", "path to bias frame or folder for calibration")
 	fs.StringVar(&o.CalibRoot, "calib-root", "", "auto-detect Bias/Darks/Flats inside this root folder")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
+	var noAffine bool
+	fs.BoolVar(&noAffine, "no-affine", false, "disable full-affine refinement (similarity-only registration)")
 	var noSpikes bool
 	fs.BoolVar(&noSpikes, "no-spikes", false, "disable diffraction spikes (overrides --spikes)")
 	var noPostProcess bool
@@ -285,6 +288,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, err
 	}
 	o.Register = !noRegister
+	o.NoAffine = noAffine
 	if noSpikes {
 		o.AddSpikes = false
 	}
@@ -399,6 +403,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --recursive       search subdirectories")
 	fmt.Fprintln(w, "  --overwrite       permit replacing files in the output directory")
 	fmt.Fprintln(w, "  --no-register     disable star registration (v0.2 behaviour)")
+	fmt.Fprintln(w, "  --no-affine       disable full-affine refinement (similarity-only registration)")
 	fmt.Fprintln(w, "  --method string   stacking method: mean, median, sigma (default \"mean\")")
 	fmt.Fprintln(w, "  --dark string     path to dark frame for calibration")
 	fmt.Fprintln(w, "  --flat string     path to flat frame for calibration")
@@ -2746,7 +2751,7 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		sort.Slice(sorted, func(i, j int) bool {
 			return sorted[i].Quality > sorted[j].Quality
 		})
-		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %7s %7s %22s %7s %s\n",
+		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %7s %7s %22s %7s %7s %s\n",
 			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "IntrQ", "Weight", "Box(x,y,w,h)", "Box%", "Foot%", "Note")
 		for i, d := range sorted {
 			ratioStr := "-"
@@ -2835,6 +2840,7 @@ type runOptions struct {
 	Recursive            bool
 	Overwrite            bool
 	Register             bool
+	NoAffine             bool
 	DarkFile             string
 	FlatFile             string
 	BiasFile             string
@@ -5021,7 +5027,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 							sim: xc.Sim, valid: true,
 							starCount: len(starLists[i]), inliers: xc.Inliers,
 						}
-						if xc.HasAffine {
+						if xc.HasAffine && !opts.NoAffine {
 							affCopy := xc.Affine
 							tf.aff = &affCopy
 						}
@@ -5038,7 +5044,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 						filepath.Base(accepted[i].path), inliers)
 					regFailures = append(regFailures, reason)
 					transforms[i].valid = false
-					writeXfCacheFail(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, reason)
+					if !opts.NoAffine {
+						writeXfCacheFail(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, reason)
+					}
 					continue
 				}
 				scale := sim.scale()
@@ -5048,7 +5056,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				// enough inliers to make a 6-DOF fit well-conditioned, and
 				// only keep it when it measurably reduces the residual.
 				var affRef *affine
-				if inliers >= 15 {
+				if !opts.NoAffine && inliers >= 15 {
 					srcPts, dstPts := collectInliers(sim, starLists[i], refStars, 3.0)
 					if len(srcPts) >= 15 {
 						if aff, aok := estimateAffine(srcPts, dstPts); aok {
@@ -5075,7 +5083,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					logf("  register %s: scale=%.4f rot=%.2f° inliers=%d",
 						filepath.Base(accepted[i].path), scale, rotDeg, inliers)
 				}
-				writeXfCacheOK(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, sim, affRef, inliers)
+				if !opts.NoAffine {
+					writeXfCacheOK(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, sim, affRef, inliers)
+				}
 				transforms[i] = frameTransform{
 					sim:       sim,
 					aff:       affRef,
@@ -12237,6 +12247,7 @@ func main() {
 		Recursive:            opts.Recursive,
 		Overwrite:            opts.Overwrite,
 		Register:             opts.Register,
+		NoAffine:             opts.NoAffine,
 		DarkFile:             opts.DarkFile,
 		FlatFile:             opts.FlatFile,
 		BiasFile:             opts.BiasFile,
