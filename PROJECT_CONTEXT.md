@@ -82,6 +82,11 @@ Outputs: `post_step1_background_removed.jpg` … `post_step8_4.jpg`.
 ### Registration (implicit, no new flags)
 Automatic. Disable with `--no-register`.
 
+### Affine refinement
+- `--no-affine` — diagnostic only: forces similarity-only registration.
+  The transform cache is bypassed entirely in this mode so a default-mode
+  cached affine cannot leak into the diagnostic run.
+
 ### Curves (step 6)
 - `--curves-black F` (default 0.03) — shadow crush point, [0, 0.5)
 - `--curves-gamma F` (default 1.20) — midtone darkening, [0.1, 4.0]
@@ -238,6 +243,15 @@ simply omits the exposure summary.
   `report.txt` under "Output files". `stacked_sum.jpg` itself is
   unchanged. New self-test: `testMinMaxStretchedPreviewJPEG`. Test
   count 102 -> 103.
+
+- **go vet: report header printf FIXED** (2026-11-13): the frame-diagnostics
+  header string had 14 format verbs but 15 arguments — the `Foot%` column
+  was added by the affine-footprint patch without updating the format
+  string. `go build` and `--selftest` passed (runtime `printf` silently
+  appends `%!(EXTRA string=Foot%)`), but `go vet`, which CI runs before
+  tests, rejected it, turning all three CI jobs red since that patch.
+  Fixed by inserting the missing `%7s` before the final `%s`. Also adds
+  `--no-affine` for diagnostic runs.
 
 - **Advanced frame weighting APPLIED** (2026-11-13): frame weights now use
   `computeAdvancedQuality` (0-100), implementing
