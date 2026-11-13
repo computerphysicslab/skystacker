@@ -175,6 +175,14 @@ type cliOptions struct {
 	CacheDir    string
 	KeepCache   bool
 	TestDebayer string
+
+	GaiaTest         string
+	GaiaMirror       string
+	GaiaCacheDir     string
+	GaiaNside        int
+	GaiaMagLimit     float64
+	GaiaOffline      bool
+	GaiaCacheRefresh bool
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -245,6 +253,13 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.CacheDir, "cache-dir", "", "cache directory (default: <output>/_work/cache)")
 	fs.BoolVar(&o.KeepCache, "keep-cache", false, "keep the star/transform cache after a successful run (default: remove it)")
 	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
+	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
+	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
+	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: <output>/_work/gaia_cache)")
+	fs.IntVar(&o.GaiaNside, "gaia-nside", 256, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
+	fs.Float64Var(&o.GaiaMagLimit, "gaia-mag-limit", 14.0, "Gaia G-band magnitude limit for tile queries (0-20)")
+	fs.BoolVar(&o.GaiaOffline, "gaia-offline", false, "never query the Gaia mirror; cache misses are a hard error")
+	fs.BoolVar(&o.GaiaCacheRefresh, "gaia-cache-refresh", false, "re-download tiles even if cached (still updates the cache)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
@@ -274,7 +289,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -373,6 +388,15 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.LocalNormalize {
 		o.Normalize = true
 	}
+	if !healpixNsideValid(o.GaiaNside) {
+		return nil, fmt.Errorf("--gaia-nside must be a power of 2 in [2, 8192], got %d", o.GaiaNside)
+	}
+	if o.GaiaMagLimit < 0 || o.GaiaMagLimit > 20 {
+		return nil, fmt.Errorf("--gaia-mag-limit must be in [0, 20], got %g", o.GaiaMagLimit)
+	}
+	if o.GaiaOffline && o.GaiaCacheRefresh {
+		return nil, fmt.Errorf("--gaia-offline and --gaia-cache-refresh are mutually exclusive")
+	}
 	rest := fs.Args()
 	if len(rest) > 1 {
 		return nil, fmt.Errorf("unexpected arguments: %v", rest[1:])
@@ -455,6 +479,13 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --keep-cache       keep the star/transform cache after a successful run (default: remove it)")
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
 	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
+	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
+	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
+	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: <output>/_work/gaia_cache)")
+	fmt.Fprintln(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default 256)")
+	fmt.Fprintln(w, "  --gaia-mag-limit M Gaia G-band magnitude limit (0-20, default 14.0)")
+	fmt.Fprintln(w, "  --gaia-offline     never query the Gaia mirror; cache misses are a hard error")
+	fmt.Fprintln(w, "  --gaia-cache-refresh  re-download tiles even if cached (still updates the cache)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
 	fmt.Fprintln(w, "  --help            print help")
@@ -6461,6 +6492,108 @@ func testGaiaQueryTileRetry() error {
 	return nil
 }
 
+// testGaiaCLI is the --test-gaia backend: parse "RA,DEC" from the flag,
+// resolve the cache dir, fetch the tile, and print diagnostics.
+func testGaiaCLI(opts *cliOptions) error {
+	parts := strings.Split(opts.GaiaTest, ",")
+	if len(parts) != 2 {
+		return fmt.Errorf("--test-gaia expects RA,DEC in decimal degrees, got %q", opts.GaiaTest)
+	}
+	raDeg, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil {
+		return fmt.Errorf("--test-gaia: bad RA: %w", err)
+	}
+	decDeg, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil {
+		return fmt.Errorf("--test-gaia: bad Dec: %w", err)
+	}
+	if raDeg < 0 || raDeg >= 360 {
+		return fmt.Errorf("--test-gaia: RA must be in [0, 360), got %g", raDeg)
+	}
+	if decDeg < -90 || decDeg > 90 {
+		return fmt.Errorf("--test-gaia: Dec must be in [-90, 90], got %g", decDeg)
+	}
+	ra := raDeg * math.Pi / 180
+	dec := decDeg * math.Pi / 180
+	ipix := healpixAng2PixNested(opts.GaiaNside, ra, dec)
+	cacheDir := opts.GaiaCacheDir
+	if cacheDir == "" {
+		cacheDir = filepath.Join("_work", "gaia_cache")
+		os.MkdirAll(cacheDir, 0o755)
+	}
+	logf("Gaia query: nside=%d ipix=%d (tile area \u2248 %.2f deg\u00b2)",
+		opts.GaiaNside, ipix, healpixTileSizeDeg2(opts.GaiaNside))
+	logf("  mirror: %s", opts.GaiaMirror)
+	logf("  cache:  %s", cacheDir)
+	logf("  mag limit: %.1f", opts.GaiaMagLimit)
+	logf("  offline: %v  refresh: %v", opts.GaiaOffline, opts.GaiaCacheRefresh)
+	tile, err := gaiaGetTile(cacheDir, opts.GaiaMirror, opts.GaiaNside, ipix,
+		opts.GaiaMagLimit, opts.GaiaOffline, opts.GaiaCacheRefresh)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Tile nside=%d ipix=%d: %d stars (mag_G \u2264 %.1f)\n",
+		tile.Nside, tile.Ipix, len(tile.Stars), tile.MagLimit)
+	n := len(tile.Stars)
+	if n > 5 {
+		n = 5
+	}
+	for i := 0; i < n; i++ {
+		s := tile.Stars[i]
+		fmt.Printf("  %d: RA=%9.5f\u00b0  Dec=%9.5f\u00b0  G=%5.2f  plx=%6.2f mas  pm=(%6.2f,%6.2f) mas/yr\n",
+			i+1, s.RA*180/math.Pi, s.Dec*180/math.Pi, s.MagG, s.Plx, s.PMRA, s.PMDec)
+	}
+	if len(tile.Stars) > 5 {
+		fmt.Printf("  \u2026 and %d more\n", len(tile.Stars)-5)
+	}
+	return nil
+}
+
+// testGaiaCLIParsing exercises testGaiaCLI in offline mode against a
+// pre-seeded cache, so no network is required.
+func testGaiaCLIParsing() error {
+	dir, err := os.MkdirTemp("", "skystacker-gaia-cli-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	ra := 0.0
+	dec := 0.0
+	ipix := healpixAng2PixNested(256, ra, dec)
+	seed := gaiaTile{
+		Version: gaiaCacheVersion, Nside: 256, Ipix: ipix,
+		QueriedAt: "2026-11-13T00:00:00Z", MagLimit: 14.0,
+		Stars: []gaiaStar{{RA: 0, Dec: 0, MagG: 10.0}},
+	}
+	if err := gaiaSaveTileCache(dir, seed); err != nil {
+		return err
+	}
+
+	opts := &cliOptions{
+		GaiaTest: "0.0,0.0", GaiaMirror: gaiaDefaultMirror,
+		GaiaCacheDir: dir, GaiaNside: 256, GaiaMagLimit: 14.0,
+		GaiaOffline: true,
+	}
+	if err := testGaiaCLI(opts); err != nil {
+		return fmt.Errorf("seeded offline run: %w", err)
+	}
+
+	bad := &cliOptions{GaiaTest: "not-a-pos", GaiaNside: 256}
+	if err := testGaiaCLI(bad); err == nil {
+		return errors.New("expected error for bad parse")
+	}
+
+	empty := &cliOptions{
+		GaiaTest: "180.0,-45.0", GaiaCacheDir: dir,
+		GaiaNside: 256, GaiaMagLimit: 14.0, GaiaOffline: true,
+	}
+	if err := testGaiaCLI(empty); err == nil {
+		return errors.New("offline + cache miss should error")
+	}
+	return nil
+}
+
 func runSelfTests() int {
 	cases := []testCase{
 		{"accumulator sum and mean", testAccumulatorSumMean},
@@ -6573,6 +6706,7 @@ func runSelfTests() int {
 		{"gaia cache", testGaiaCache},
 		{"gaia adql", testGaiaADQL},
 		{"gaia query retry", testGaiaQueryTileRetry},
+		{"gaia cli parsing", testGaiaCLIParsing},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -12781,6 +12915,13 @@ func main() {
 	}
 	if opts.Version {
 		fmt.Println(version)
+		return
+	}
+	if opts.GaiaTest != "" {
+		if err := testGaiaCLI(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if opts.TestDebayer != "" {
