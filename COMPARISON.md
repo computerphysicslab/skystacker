@@ -97,7 +97,7 @@ limited or workflow-dependent.
 **Gaps vs mature tools**
 
 - No GUI.
-- No mosaic, no drizzle, no plate solving / WCS / SIP.
+- No mosaic, no drizzle, no plate solving / WCS / SIP — Gaia DR3 data-access scaffolding (HEALPix + TAP client + on-disk tile cache) is in place; pipeline consumer pending.
 - No deconvolution or PSF modelling.
 - No dedicated comet / moving-object stacking.
 - No scripting beyond flags.

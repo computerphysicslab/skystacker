@@ -392,6 +392,14 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--no-cache` | Disable the star/transform cache | `false` |
 | `--clean` | Remove `_work` directory after successful run | `false` |
 | `--cache-dir string` | Cache directory (default `<output>/_work/cache`) | — |
+| `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query (diagnostic; no pipeline consumer yet) | — |
+| `--test-debayer PATH` | One-shot FITS debayer diagnostic | — |
+| `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
+| `--gaia-cache-dir D` | Gaia tile cache directory | `<output>/_work/gaia_cache` |
+| `--gaia-nside N` | HEALPix nside (power of 2, 2-8192) | `256` |
+| `--gaia-mag-limit M` | Gaia G-band magnitude limit | `14.0` |
+| `--gaia-offline` | Cache misses are a hard error; no network access | `false` |
+| `--gaia-cache-refresh` | Re-download even if cached; exclusive with `--gaia-offline` | `false` |
 | `--selftest` | Run internal self-tests and exit | — |
 | `--version` | Print version and exit | — |
 | `--help` | Print command-line help | — |
@@ -483,6 +491,13 @@ The following items from the original roadmap have been implemented in 0.5.0:
   The rejection map is the frame's cosmic-ray / hot-pixel candidate map: sigma
   clipping rejects exactly the extreme outliers, so bright spots there are
   cosmic-ray or hot-pixel hits.
+
+- **Gaia DR3 data-access layer (scaffolding)** — HEALPix nested math,
+  a TAP client to the ESA Gaia archive with a 180 s per-attempt timeout and
+  a 5 s progress heartbeat, and a per-tile JSON disk cache under
+  `<output>/_work/gaia_cache/`. No pipeline consumer yet; run
+  `./skystacker --test-gaia RA,DEC` to exercise it end-to-end.
+  See `PROJECT_CONTEXT.md` for the tile-geometry follow-up.
 
 ## Planned Potential Features and Technologies Roadmap
 
