@@ -84,7 +84,7 @@ Flags are accepted before or after the positional input directory. Default input
 ### Gaia DR3 data-access layer (no pipeline consumer yet)
 - `--gaia-mirror URL` (default `https://gea.esac.esa.int/tap-server/tap`).
 - `--gaia-cache-dir D` (default: OS user cache dir, e.g. `~/.cache/skystacker/gaia_cache` on Linux).
-- `--gaia-nside N` (default 256; power of 2, 2-8192).
+- `--gaia-nside N` (default 64; power of 2, 2-8192).
 - `--gaia-mag-limit M` (default 14.0; 0-20).
 - `--gaia-offline` (cache miss = hard error; no network access).
 - `--gaia-cache-refresh` (re-download even if cached; mutually exclusive with `--gaia-offline`).
@@ -124,7 +124,7 @@ Optional steps gated by flags: `--post-ca`, `--post-color`, `--post-flatten`, `-
 
 No pipeline consumer yet; reachable only via `--test-gaia`.
 
-- **HEALPix nested scheme** — `healpixAng2PixNested`, `healpixPix2AngNested`, `healpixTileCorners`. nside=1 matches healpy 1.16.5 exactly; nside>1 is round-trip-consistent but tile geometry is approximate (follow-up A1a.5).
+- **HEALPix nested scheme** — `healpixAng2PixNested`, `healpixPix2AngNested`, `healpixTileCorners`. nside=1 matches healpy 1.16.5 exactly; nside>1 is round-trip-consistent but tile geometry is approximate (follow-up A1a.5). Default query nside is 64 (~0.84 deg² per tile); override with `--gaia-nside 256` (~0.052 deg²) when finer tiles are needed.
 - **TAP client** — `gaiaQueryTile` posts an ADQL `POLYGON` query to `/sync` on the configured mirror. Per-attempt `context.WithTimeout(180s)`; 5 s heartbeat via `gaiaWaitWithProgress`; 3 attempts with 2 s / 4 s backoff on 5xx / connection error. Timeouts are fatal and not retried. Custom User-Agent; `MAXREC=2000`.
 - **Error extraction** — `gaiaExtractTAPError` pulls VOTable `<INFO>` text out of a non-JSON body; JSON with no `data` array is an error, not an empty star list.
 - **Disk cache** — `os.UserCacheDir()/skystacker/gaia_cache/healpix_n<nside>_p<ipix>.json` (on Linux `$XDG_CACHE_HOME` or `~/.cache`), atomic writes, `gaiaCacheVersion = 1` (distinct from `cacheVersion`). Overridable with `--gaia-cache-dir`. Gaia DR3 is frozen, so tiles never expire; the OS user cache is the right lifetime.

@@ -396,7 +396,7 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--test-debayer PATH` | One-shot FITS debayer diagnostic | — |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
 | `--gaia-cache-dir D` | Gaia tile cache directory | OS user cache dir (e.g. `~/.cache/skystacker/gaia_cache`) |
-| `--gaia-nside N` | HEALPix nside (power of 2, 2-8192) | `256` |
+| `--gaia-nside N` | HEALPix nside (power of 2, 2-8192) | `64` |
 | `--gaia-mag-limit M` | Gaia G-band magnitude limit | `14.0` |
 | `--gaia-offline` | Cache misses are a hard error; no network access | `false` |
 | `--gaia-cache-refresh` | Re-download even if cached; exclusive with `--gaia-offline` | `false` |

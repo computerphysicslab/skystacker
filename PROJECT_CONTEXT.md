@@ -196,15 +196,15 @@ limited to 1 req/sec between calls within a single run.
 `gaiaBuildADQL` emits a single-line query safe for
 `application/x-www-form-urlencoded` POST.
 
-**Disk cache** — `$XDG_CACHE_HOME/skystacker/gaia_cache/healpix_n<nside>_p<ipix>.json` on Linux (usually `~/.cache/skystacker/gaia_cache/`), `~/Library/Caches/skystacker/gaia_cache/` on macOS, `%LocalAppData%\skystacker\gaia_cache\` on Windows. Overridable with `--gaia-cache-dir`. The old `<output>/_work/gaia_cache` default was tied to a single stacking session, which is the wrong lifetime for a frozen catalog.
+**Disk cache** — `$XDG_CACHE_HOME/skystacker/gaia_cache/healpix_n<nside>_p<ipix>.json` on Linux (usually `~/.cache/skystacker/gaia_cache/`), `~/Library/Caches/skystacker/gaia_cache/` on macOS, `%LocalAppData%\skystacker\gaia_cache\` on Windows. Overridable with `--gaia-cache-dir`. The previous per-output-directory default was tied to a single stacking session, which is the wrong lifetime for a frozen catalog.
 `gaiaCacheVersion = 1` (distinct from `cacheVersion`). Atomic writes
 via the existing `writeFileAtomic(path, func(io.Writer) error)`
 helper. Empty star lists (barren tiles) are valid and cached.
 Version mismatches are rejected with a WARNING log line.
 
 **CLI** — `--test-gaia RA,DEC` runs a one-shot diagnostic.
-`--gaia-mirror`, `--gaia-cache-dir`, `--gaia-nside` (default 256 =
-bit-depth 8, approx **0.052 deg²**/tile), `--gaia-mag-limit` (default
+`--gaia-mirror`, `--gaia-cache-dir`, `--gaia-nside` (default 64 =
+bit-depth 6, approx **0.84 deg²**/tile; `--gaia-nside 256` = bit-depth 8, approx 0.052 deg²/tile), `--gaia-mag-limit` (default
 14.0), `--gaia-offline`, `--gaia-cache-refresh`. `--gaia-offline`
 and `--gaia-cache-refresh` are mutually exclusive.
 
@@ -235,7 +235,7 @@ fewer tiles per image.
 | `--test-gaia RA,DEC` | (unset) | One-shot diagnostic: query one tile, print first 5 stars, exit. |
 | `--gaia-mirror URL` | `https://gea.esac.esa.int/tap-server/tap` | Gaia TAP mirror. |
 | `--gaia-cache-dir D` | OS user cache dir | Tile cache directory (see "Disk cache" above). |
-| `--gaia-nside N` | `256` | HEALPix nside (power of 2, 2-8192). |
+| `--gaia-nside N` | `64` | HEALPix nside (power of 2, 2-8192). |
 | `--gaia-mag-limit M` | `14.0` | Gaia G-band magnitude limit (0-20). |
 | `--gaia-offline` | `false` | Cache misses are a hard error; no network access. |
 | `--gaia-cache-refresh` | `false` | Re-download even if cached. Mutually exclusive with `--gaia-offline`. |
@@ -541,12 +541,12 @@ TAN WCS with SIP distortion coefficients. Requires knowing the
 approximate pointing — either from FITS headers (`RA`, `DEC` in the
 reference frame) or from a brute-force all-sky scan (expensive).
 
-**Open question for that session**: reconsider `gaiaDefaultNside`
-before building on it. The current default (256) yields 20-100 tiles
-per amateur image, which is 20-100x more TAP queries per solve than
-the design intent (1-5 tiles). Changing to nside=64 is a one-line
-constant change plus a test update; land it as its own commit
-before starting the solver.
+**nside default APPLIED** (2026-11-13): `gaiaDefaultNside` is now 64
+(0.84 deg²/tile), so a 1-5 deg² image needs 1-3 tiles, not 20-100.
+`parseArgs` and `printUsage` now derive from the const so the two
+cannot drift; `testParseArgs` asserts the default reaches the parsed
+struct. `--gaia-nside 256` still works as an override. The plate
+solver session inherits nside=64 as its working resolution.
 
 **Do not start** until the A1a/A1b/A1c/A2 sequence is green in CI.
 
