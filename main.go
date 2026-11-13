@@ -5974,47 +5974,70 @@ func healpixTileSizeDeg2(nside int) float64 {
 // healpixAng2PixNested returns the nested-scheme HEALPix pixel number
 // [0, 12*nside*nside) containing (ra, dec) in radians.
 func healpixAng2PixNested(nside int, ra, dec float64) int {
-	twopi := 2 * math.Pi
-	halfpi := math.Pi / 2
-
-	ra = math.Mod(ra, twopi)
-	if ra < 0 {
-		ra += twopi
-	}
-	if dec > halfpi {
-		dec = halfpi
-	} else if dec < -halfpi {
-		dec = -halfpi
-	}
-
+	// A1a.5: ported from healpy 1.16.5 healpix_base.cc loc2pix (NEST)
 	z := math.Sin(dec)
-	za := math.Abs(z)
+	phi := ra
+	sth := math.Cos(dec)
+	haveSth := math.Abs(dec) > (math.Pi/2 - 0.01)
 
-	tt := ra / halfpi
-	if tt >= 4 {
-		tt = 0
+	za := math.Abs(z)
+	tt := math.Mod(phi*2/math.Pi, 4.0)
+	if tt < 0 {
+		tt += 4.0
 	}
-	faceQ := int(tt)
-	if faceQ > 3 {
-		faceQ = 3
-	}
-	ttl := tt - float64(faceQ)
 
 	fn := float64(nside)
-	var face, ix, iy int
+	order := 0
+	for t := nside; t > 1; t >>= 1 {
+		order++
+	}
 
+	var face, ix, iy int
 	if za <= 2.0/3.0 {
-		face = 4 + faceQ
-		ix = int(fn * ttl)
-		iy = int(fn * ((3.0*z + 2.0) / 4.0))
-	} else if z > 0 {
-		face = faceQ
-		ix = int(fn * ttl)
-		iy = int(fn * ((1.0 - z) * 3.0))
+		temp1 := fn * (0.5 + tt)
+		temp2 := fn * (z * 0.75)
+		jp := int(temp1 - temp2)
+		jm := int(temp1 + temp2)
+		ifp := jp >> order
+		ifm := jm >> order
+		if ifp == ifm {
+			face = ifp | 4
+		} else if ifp < ifm {
+			face = ifp
+		} else {
+			face = ifm + 8
+		}
+		ix = jm & (nside - 1)
+		iy = nside - (jp & (nside - 1)) - 1
 	} else {
-		face = 8 + faceQ
-		ix = int(fn * ttl)
-		iy = int(fn * ((1.0 + z) * 3.0))
+		ntt := int(tt)
+		if ntt > 3 {
+			ntt = 3
+		}
+		tp := tt - float64(ntt)
+		var tmp float64
+		if za < 0.99 || !haveSth {
+			tmp = fn * math.Sqrt(3*(1-za))
+		} else {
+			tmp = fn * sth / math.Sqrt((1.0+za)/3.0)
+		}
+		jp := int(tp * tmp)
+		jm := int((1.0 - tp) * tmp)
+		if jp > nside-1 {
+			jp = nside - 1
+		}
+		if jm > nside-1 {
+			jm = nside - 1
+		}
+		if z >= 0 {
+			ix = nside - jm - 1
+			iy = nside - jp - 1
+			face = ntt
+		} else {
+			ix = jp
+			iy = jm
+			face = ntt + 8
+		}
 	}
 
 	if ix < 0 {
@@ -6031,7 +6054,7 @@ func healpixAng2PixNested(nside int, ra, dec float64) int {
 	}
 
 	pixelInFace := 0
-	for b := 0; b < 16; b++ {
+	for b := 0; b < order; b++ {
 		pixelInFace |= ((ix >> b) & 1) << (2 * b)
 		pixelInFace |= ((iy >> b) & 1) << (2*b + 1)
 	}
@@ -6040,42 +6063,71 @@ func healpixAng2PixNested(nside int, ra, dec float64) int {
 
 // healpixPix2AngNested returns the (ra, dec) centre of nested pixel ipix.
 func healpixPix2AngNested(nside, ipix int) (ra, dec float64) {
+	// A1a.5: ported from healpy 1.16.5 healpix_base.cc pix2loc (NEST)
+	order := 0
+	for t := nside; t > 1; t >>= 1 {
+		order++
+	}
+
 	face := ipix / (nside * nside)
 	within := ipix % (nside * nside)
 
-	nbit := 0
-	for t := nside; t > 1; t >>= 1 {
-		nbit++
-	}
-
-	ix, iy := 0, 0
-	for b := 0; b < nbit; b++ {
+	ix := 0
+	iy := 0
+	for b := 0; b < order; b++ {
 		ix |= ((within >> (2 * b)) & 1) << b
 		iy |= ((within >> (2*b + 1)) & 1) << b
 	}
 
-	u := (float64(ix) + 0.5) / float64(nside)
-	v := (float64(iy) + 0.5) / float64(nside)
+	jrll := [12]int{2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4}
+	jpll := [12]int{1, 3, 5, 7, 0, 2, 4, 6, 1, 3, 5, 7}
 
-	var faceQ int
-	var z float64
-	if face < 4 {
-		faceQ = face
-		z = 1 - v/3
-	} else if face < 8 {
-		faceQ = face - 4
-		z = (v - 0.5) * 4 / 3
+	jr := jrll[face]*nside - ix - iy - 1
+
+	var z, sth float64
+	haveSth := false
+	var nr int
+	fact1 := 2.0 / (3.0 * float64(nside))
+	fact2 := 1.0 / (3.0 * float64(nside) * float64(nside))
+
+	if jr < nside {
+		nr = jr
+		tmp := float64(nr*nr) * fact2
+		z = 1 - tmp
+		if z > 0.99 {
+			sth = math.Sqrt(tmp * (2 - tmp))
+			haveSth = true
+		}
+	} else if jr > 3*nside {
+		nr = 4*nside - jr
+		tmp := float64(nr*nr) * fact2
+		z = tmp - 1
+		if z < -0.99 {
+			sth = math.Sqrt(tmp * (2 - tmp))
+			haveSth = true
+		}
 	} else {
-		faceQ = face - 8
-		z = -1 + v/3
+		nr = nside
+		z = float64(2*nside-jr) * fact1
 	}
-	ra = u*math.Pi/2 + float64(faceQ)*math.Pi/2
-	if z > 1 {
-		z = 1
-	} else if z < -1 {
-		z = -1
+
+	tmp := jpll[face]*nr + ix - iy
+	if tmp < 0 {
+		tmp += 8 * nr
 	}
-	dec = math.Asin(z)
+	var phi float64
+	if nr == nside {
+		phi = 0.75 * (math.Pi / 2) * float64(tmp) * fact1
+	} else {
+		phi = (0.5 * (math.Pi / 2) * float64(tmp)) / float64(nr)
+	}
+
+	if haveSth {
+		dec = math.Atan2(z, sth)
+	} else {
+		dec = math.Asin(z)
+	}
+	ra = phi
 	return
 }
 
@@ -6110,9 +6162,8 @@ func testHealpixNested() error {
 	// nside=1 cases match healpy exactly. The nside=256 case is
 	// round-trip-only (want = -1) until the within-face interleave
 	// discrepancy against healpy is resolved (follow-up A1a.5).
-	// Healpy reported 18344 for the nside=256 case; our code
-	// currently disagrees and it is not yet clear which side is
-	// wrong. Do not fill in 18344 here until A1a.5.
+	// Reference from healpy 1.16.5 ang2pix(256, pi/2-dec, ra, nest=True),
+	// cross-checked against testdata/healpix_reference.json.
 	cases := []struct {
 		nside   int
 		ra, dec float64
@@ -6121,7 +6172,7 @@ func testHealpixNested() error {
 		{1, 0.0, 0.0, 4},
 		{1, math.Pi / 2, 0.0, 5},
 		{1, 0.0, math.Pi / 2, 0},
-		{256, 1.234, 0.567, -1},
+		{256, 1.234, 0.567, 18344},
 	}
 	for i, c := range cases {
 		got := healpixAng2PixNested(c.nside, c.ra, c.dec)
@@ -6157,6 +6208,131 @@ func testHealpixNested() error {
 	for _, good := range []int{2, 4, 8, 256, 4096, 8192} {
 		if !healpixNsideValid(good) {
 			return fmt.Errorf("healpixNsideValid(%d) = false, want true", good)
+		}
+	}
+	return nil
+}
+
+// healpixRefAng2Pix is one entry in the "ang2pix" array of
+// testdata/healpix_reference.json.
+type healpixRefAng2Pix struct {
+	Nside int     `json:"nside"`
+	RA    float64 `json:"ra"`
+	Dec   float64 `json:"dec"`
+	Ipix  int     `json:"ipix"`
+}
+
+// healpixRefPix2Ang is one entry in the "pix2ang" array.
+type healpixRefPix2Ang struct {
+	Nside int     `json:"nside"`
+	Ipix  int     `json:"ipix"`
+	RA    float64 `json:"ra"`
+	Dec   float64 `json:"dec"`
+}
+
+type healpixFixture struct {
+	Ang2Pix []healpixRefAng2Pix `json:"ang2pix"`
+	Pix2Ang []healpixRefPix2Ang `json:"pix2ang"`
+}
+
+func loadHealpixFixture() (*healpixFixture, error) {
+	data, err := os.ReadFile("testdata/healpix_reference.json")
+	if err != nil {
+		return nil, err
+	}
+	var f healpixFixture
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, err
+	}
+	if len(f.Ang2Pix) == 0 {
+		return nil, errors.New("fixture has no ang2pix entries")
+	}
+	if len(f.Pix2Ang) == 0 {
+		return nil, errors.New("fixture has no pix2ang entries")
+	}
+	return &f, nil
+}
+
+func testHealpixNside16MatchAng2Pix() error {
+	f, err := loadHealpixFixture()
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, p := range f.Ang2Pix {
+		if p.Nside != 16 {
+			continue
+		}
+		n++
+		got := healpixAng2PixNested(16, p.RA, p.Dec)
+		if got != p.Ipix {
+			return fmt.Errorf("nside=16 ra=%.4f dec=%.4f: got %d want %d",
+				p.RA*180/math.Pi, p.Dec*180/math.Pi, got, p.Ipix)
+		}
+	}
+	if n == 0 {
+		return errors.New("no nside=16 ang2pix points in fixture")
+	}
+	return nil
+}
+
+func testHealpixNside256MatchAng2Pix() error {
+	f, err := loadHealpixFixture()
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, p := range f.Ang2Pix {
+		if p.Nside != 256 {
+			continue
+		}
+		n++
+		got := healpixAng2PixNested(256, p.RA, p.Dec)
+		if got != p.Ipix {
+			return fmt.Errorf("nside=256 ra=%.4f dec=%.4f: got %d want %d",
+				p.RA*180/math.Pi, p.Dec*180/math.Pi, got, p.Ipix)
+		}
+	}
+	if n == 0 {
+		return errors.New("no nside=256 ang2pix points in fixture")
+	}
+	return nil
+}
+
+func testHealpixPix2AngMatchesHealpy() error {
+	f, err := loadHealpixFixture()
+	if err != nil {
+		return err
+	}
+	angDiff := func(a, b float64) float64 {
+		d := math.Abs(a - b)
+		if d > math.Pi {
+			d = 2*math.Pi - d
+		}
+		return d
+	}
+	for _, p := range f.Pix2Ang {
+		gotRA, gotDec := healpixPix2AngNested(p.Nside, p.Ipix)
+		if angDiff(gotRA, p.RA) > 1e-6 || math.Abs(gotDec-p.Dec) > 1e-6 {
+			return fmt.Errorf("pix2ang nside=%d ipix=%d: got (%.6f, %.6f) want (%.6f, %.6f)",
+				p.Nside, p.Ipix, gotRA, gotDec, p.RA, p.Dec)
+		}
+	}
+	return nil
+}
+
+func testHealpixAngPixRoundTrip() error {
+	f, err := loadHealpixFixture()
+	if err != nil {
+		return err
+	}
+	for _, p := range f.Ang2Pix {
+		ipix := healpixAng2PixNested(p.Nside, p.RA, p.Dec)
+		ra0, dec0 := healpixPix2AngNested(p.Nside, ipix)
+		got := healpixAng2PixNested(p.Nside, ra0, dec0)
+		if got != ipix {
+			return fmt.Errorf("round-trip nside=%d (%.6f,%.6f) -> %d -> (%.6f,%.6f) -> %d",
+				p.Nside, p.RA, p.Dec, ipix, ra0, dec0, got)
 		}
 	}
 	return nil
@@ -6885,6 +7061,10 @@ func runSelfTests() int {
 		{"fits debayer", testFITSDebayer},
 		{"fits debayer CLI", testDebayerCLI},
 		{"healpix nested", testHealpixNested},
+		{"healpix nside16 ang2pix", testHealpixNside16MatchAng2Pix},
+		{"healpix nside256 ang2pix", testHealpixNside256MatchAng2Pix},
+		{"healpix pix2ang", testHealpixPix2AngMatchesHealpy},
+		{"healpix ang-pix roundtrip", testHealpixAngPixRoundTrip},
 		{"gaia cache", testGaiaCache},
 		{"gaia adql", testGaiaADQL},
 		{"gaia query retry", testGaiaQueryTileRetry},
