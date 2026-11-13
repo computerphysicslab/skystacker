@@ -50,3 +50,24 @@ changed.
 
 [three-line nside=1 output, verbatim]
 [face-scan output showing dec → face at ra=0°, and ra → face at dec=32.6°]
+## Face-boundary finding (Phase 2 diagnostic, 2026-11-13)
+
+The face containing a sky position is **not** determined by a constant-dec
+threshold. Empirical results from healpy 1.16.5:
+
+    pix2ang(256,     0) = (ra=45.00°, dec= 0.15°)   face 0, equatorial vertex
+    pix2ang(256, 65535) = (ra=45.00°, dec=89.82°)   face 0, polar vertex
+    pix2ang(256, 18344) = (ra=70.66°, dec=32.62°)   face 0, mid-diamond
+
+    dec=32.6° at ra=10°..80°  -> face 0
+    dec=32.6° at ra= 0°       -> face 4
+    dec=32.6° at ra=85°..90°  -> face 5
+
+Face 0 spans a diamond from (45°, 0.15°) to the pole, but its boundary with
+faces 4 and 5 is a great circle, not a constant-dec line. This refutes the
+naive model "|dec| > 41.81° = polar face". The current `za <= 2/3 →
+equatorial` branch structure is therefore wrong for points in the equatorial
+vertices of the polar faces.
+
+The fix is in the face-assignment logic, not the within-face interleave as
+originally hypothesised. **The A1a.5 code fix is still pending.**

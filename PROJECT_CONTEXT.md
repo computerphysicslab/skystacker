@@ -179,6 +179,14 @@ The plate solver (a future session) will consume these helpers. This
 session lands only the data access layer; nothing in the stacking
 pipeline calls it yet.
 
+**A1a.5 diagnosis (Phase 2, 2026-11-13)**: the `--test-gaia` 13-vs-4-star
+discrepancy is a **face-assignment bug**, not a within-face interleave
+bug. Empirical healpy 1.16.5 data: `pix2ang(256, 0) = (ra=45°, dec=0.15°)`,
+i.e. face 0 extends to the equator at ra≈45°, and the boundary with face 4
+at dec=32.6° is at ra=0° but with face 5 it is at ra=85°. The current
+`za <= 2/3` branch is therefore wrong for equatorial vertices of polar
+faces. The interleave is correct. **Fix pending.**
+
 **HEALPix nested scheme** — `healpixAng2PixNested`,
 `healpixPix2AngNested`, `healpixTileCorners`, `healpixNsideValid`,
 `healpixTileSizeDeg2`. Implemented fresh from Gorski et al. 2005,
