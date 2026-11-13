@@ -6267,6 +6267,10 @@ var (
 	}
 	gaiaRateMu    sync.Mutex
 	gaiaLastQuery time.Time
+	// gaiaQueryTimeout is the per-attempt TAP timeout. A package var
+	// (rather than a const) so tests can shrink it; production uses
+	// the default.
+	gaiaQueryTimeout = 180 * time.Second
 )
 
 // gaiaRateLimit sleeps if the previous TAP call was <1s ago.
@@ -6361,10 +6365,10 @@ func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar
 		req.Header.Set("User-Agent",
 			"skystacker/0.5.0 (+https://github.com/computerphysicslab/skystacker)")
 		endpoint := gaiaSyncEndpoint(mirror)
-		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), gaiaQueryTimeout)
 		startAttempt := time.Now()
-		logf("  gaia: POST %s (attempt %d/%d, timeout 180s)",
-			endpoint, attempt+1, len(backoff))
+		logf("  gaia: POST %s (attempt %d/%d, timeout %v)",
+			endpoint, attempt+1, len(backoff), gaiaQueryTimeout)
 		go gaiaWaitWithProgress(ctx, startAttempt)
 		resp, err := gaiaHTTPClient.Do(req.WithContext(ctx))
 		if err != nil {
@@ -6601,6 +6605,60 @@ func testGaiaQueryTileRetry() error {
 	return nil
 }
 
+// testGaiaQueryTileContextCancel is a regression test for the bug where
+// cancel() was called before io.ReadAll, propagating context.Canceled into
+// resp.Body.Read() and causing the client to retry a stalled body as if
+// it were a connection error. With the fix, a mid-body context deadline is
+// detected and reported as a timeout, not retried.
+//
+// The test shrinks gaiaQueryTimeout to 200ms and points gaiaQueryTile at a
+// server that sends headers immediately but stalls the body. If the fix
+// regresses, the error message will be 'context canceled' and the elapsed
+// time will include the retry backoff, failing both assertions.
+func testGaiaQueryTileContextCancel() error {
+	// Reset the rate limiter so a preceding test cannot sleep us 1s.
+	gaiaRateMu.Lock()
+	gaiaLastQuery = time.Time{}
+	gaiaRateMu.Unlock()
+
+	oldTimeout := gaiaQueryTimeout
+	gaiaQueryTimeout = 200 * time.Millisecond
+	defer func() { gaiaQueryTimeout = oldTimeout }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Wait past the 200ms timeout, or return early when the
+		// client gives up (Go propagates the cancelled request
+		// context to r.Context()). The 2s cap is a safety net only.
+		select {
+		case <-time.After(2 * time.Second):
+			io.WriteString(w, `{"metadata":[],"data":[]}`)
+		case <-r.Context().Done():
+			return
+		}
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	_, err := gaiaQueryTile(srv.URL, 256, 12345, 14.0)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		return errors.New("expected timeout error, got nil (cancel-before-ReadAll regressed?)")
+	}
+	if !strings.Contains(err.Error(), "timed out") && !strings.Contains(err.Error(), "deadline") {
+		return fmt.Errorf("error does not mention timeout (likely cancel-before-ReadAll regression): %v", err)
+	}
+	if elapsed > 1500*time.Millisecond {
+		return fmt.Errorf("took %v, expected ~%v (timeout not honoured; retried?)", elapsed, gaiaQueryTimeout)
+	}
+	return nil
+}
+
 // testGaiaCLI is the --test-gaia backend: parse "RA,DEC" from the flag,
 // resolve the cache dir, fetch the tile, and print diagnostics.
 func testGaiaCLI(opts *cliOptions) error {
@@ -6815,6 +6873,7 @@ func runSelfTests() int {
 		{"gaia cache", testGaiaCache},
 		{"gaia adql", testGaiaADQL},
 		{"gaia query retry", testGaiaQueryTileRetry},
+		{"gaia query timeout", testGaiaQueryTileContextCancel},
 		{"gaia cli parsing", testGaiaCLIParsing},
 	}
 	failures := 0
