@@ -6256,9 +6256,17 @@ func gaiaBuildADQL(nside, ipix int, magLimit float64) string {
 }
 
 var (
-	gaiaHTTPClient = &http.Client{Timeout: 30 * time.Second}
-	gaiaRateMu     sync.Mutex
-	gaiaLastQuery  time.Time
+	// gaiaHTTPClient deliberately has no Timeout: per-request deadlines
+	// are set via context in gaiaQueryTile, so timeouts are distinguished
+	// from connection errors and never retried.
+	gaiaHTTPClient = &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			logf("  gaia: redirect hop %d -> %s", len(via), req.URL)
+			return nil
+		},
+	}
+	gaiaRateMu    sync.Mutex
+	gaiaLastQuery time.Time
 )
 
 // gaiaRateLimit sleeps if the previous TAP call was <1s ago.
@@ -6274,13 +6282,65 @@ func gaiaRateLimit() {
 	gaiaLastQuery = time.Now()
 }
 
+// gaiaSyncEndpoint returns mirror with "/sync" appended if it does
+// not already end in it. ESA's TAP root (/tap) serves a capability
+// document, not a query endpoint; the synchronous query endpoint is
+// /tap/sync. Posting to /tap returns HTML, which is what makes the
+// first byte of the response body '<'.
+func gaiaSyncEndpoint(mirror string) string {
+	mirror = strings.TrimRight(mirror, "/")
+	if strings.HasSuffix(mirror, "/sync") {
+		return mirror
+	}
+	return mirror + "/sync"
+}
+
+// gaiaExtractTAPError tries to pull a human-readable message out of a
+// non-JSON TAP response. ESA returns HTTP 200 with a VOTable <INFO>
+// element when it rejects a query; this finds the first one.
+func gaiaExtractTAPError(body []byte) string {
+	s := string(body)
+	// Match: <INFO name="QUERY_STATUS" value="ERROR">message</INFO>
+	// and the common variant where the message is in an attribute.
+	if m := regexp.MustCompile(`(?s)<INFO[^>]*value="ERROR"[^>]*>(.*?)</INFO>`).FindStringSubmatch(s); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	if m := regexp.MustCompile(`(?s)<INFO[^>]*>(.*?)</INFO>`).FindStringSubmatch(s); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	// Fall back: first 200 chars of the HTML, stripped of tags.
+	plain := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(s, " ")
+	plain = strings.Join(strings.Fields(plain), " ")
+	if len(plain) > 200 {
+		plain = plain[:200] + "…"
+	}
+	return plain
+}
+
+// gaiaWaitWithProgress logs "still waiting" every 5s until ctx is
+// cancelled. Call it via `go gaiaWaitWithProgress(...)` and cancel the
+// context (or close a done channel) when the HTTP call returns.
+func gaiaWaitWithProgress(ctx context.Context, start time.Time) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			logf("  gaia: still waiting on TAP, elapsed %v…",
+				time.Since(start).Round(time.Second))
+		}
+	}
+}
+
 // gaiaQueryTile posts the ADQL query to mirror and parses the response.
 // Retries up to 3 times (4 attempts total) with 1s/2s/4s backoff on
 // 5xx / timeout / connection error. Does NOT retry on 4xx or malformed
 // JSON.
 func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar, error) {
 	adql := gaiaBuildADQL(nside, ipix, magLimit)
-	backoff := []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second}
+	backoff := []time.Duration{0, 2 * time.Second, 4 * time.Second}
 	var lastErr error
 	for attempt := 0; attempt < len(backoff); attempt++ {
 		if attempt > 0 {
@@ -6292,18 +6352,54 @@ func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar
 		form.Set("LANG", "ADQL")
 		form.Set("FORMAT", "json")
 		form.Set("QUERY", adql)
-		req, err := http.NewRequest("POST", mirror, strings.NewReader(form.Encode()))
+		form.Set("MAXREC", "2000")
+		req, err := http.NewRequest("POST", gaiaSyncEndpoint(mirror), strings.NewReader(form.Encode()))
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := gaiaHTTPClient.Do(req)
+		req.Header.Set("User-Agent",
+			"skystacker/0.5.0 (+https://github.com/computerphysicslab/skystacker)")
+		endpoint := gaiaSyncEndpoint(mirror)
+		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+		startAttempt := time.Now()
+		logf("  gaia: POST %s (attempt %d/%d, timeout 180s)",
+			endpoint, attempt+1, len(backoff))
+		go gaiaWaitWithProgress(ctx, startAttempt)
+		resp, err := gaiaHTTPClient.Do(req.WithContext(ctx))
 		if err != nil {
+			cancel()
+			if os.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, fmt.Errorf(
+					"TAP query timed out after %v; ESA was too slow. Rerun with --gaia-nside 64 for a coarser (and faster) tile, or retry later.",
+					time.Since(startAttempt).Round(time.Second))
+			}
 			lastErr = fmt.Errorf("attempt %d: %w", attempt+1, err)
+			logf("  gaia: attempt %d failed: %v (retrying)", attempt+1, err)
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		cancel()
+		logf("  gaia: HTTP %d, %d body bytes, content-type=%q, content-length=%d",
+			resp.StatusCode, len(body),
+			resp.Header.Get("Content-Type"), resp.ContentLength)
+		if readErr != nil {
+			if os.IsTimeout(readErr) || errors.Is(readErr, context.DeadlineExceeded) {
+				return nil, fmt.Errorf(
+					"TAP query timed out after %v while reading body; ESA was too slow. Rerun with --gaia-nside 64 for a coarser (and faster) tile, or retry later.",
+					time.Since(startAttempt).Round(time.Second))
+			}
+			lastErr = fmt.Errorf("attempt %d: read body: %w (got %d bytes)",
+				attempt+1, readErr, len(body))
+			logf("  gaia: attempt %d read error: %v (retrying)", attempt+1, readErr)
+			continue
+		}
+		if len(body) > 0 && len(body) < 200 {
+			logf("  gaia: body preview: %q", string(body))
+		} else if len(body) >= 200 {
+			logf("  gaia: body preview: %q...", string(body[:200]))
+		}
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("attempt %d: HTTP %d", attempt+1, resp.StatusCode)
 			continue
@@ -6317,8 +6413,21 @@ func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar
 			} `json:"metadata"`
 			Data [][]float64 `json:"data"`
 		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && len(body) == 0 {
+			lastErr = fmt.Errorf("attempt %d: HTTP %d with empty body", attempt+1, resp.StatusCode)
+			logf("  gaia: attempt %d: empty body (retrying)", attempt+1)
+			continue
+		}
+		if len(body) > 0 && body[0] == '<' {
+			return nil, fmt.Errorf("TAP returned non-JSON (likely an error page): %s",
+				gaiaExtractTAPError(body))
+		}
 		if err := json.Unmarshal(body, &parsed); err != nil {
 			return nil, fmt.Errorf("malformed JSON: %w", err)
+		}
+		if parsed.Data == nil {
+			return nil, fmt.Errorf("TAP response has no data array: %s",
+				gaiaExtractTAPError(body))
 		}
 		if len(parsed.Data) > gaiaMaxStarsPerTile {
 			return nil, fmt.Errorf("too many stars: %d (max %d)",
