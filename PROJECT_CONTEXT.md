@@ -1,7 +1,7 @@
 # SkyStacker — project context (last updated 2026-11-11)
 
 ## Version
-v0.5.0 (single-file Go program, `main.go`)
+v0.5.1 (single-file Go program, `main.go`)
 
 ## Build, test, install
 ```
@@ -794,3 +794,20 @@ Tier 0 is closed. The next actionable roadmap items are **Tier 1 weighted median
 ### "Plate solve blind" note (carried forward, unchanged by Tier 0)
 
 The `plate solve blind` self-test remains hermetic (forces `plateGaiaOffline = true`, fixture's sky position moved into the blind-scan patch, cache pre-seeded). Tier 0 changed no code in that path. The bigger caveat — that "blind" mode is a 3x3 nside=64 local scan, not a whole-sky solve — is now stated in `TECHNICAL_SPEC §2 Excluded` and in `COMPARISON.md` Gaps; it was previously only in the 2026-11-14 session log and in `printUsage`'s `--plate-center` description.
+## Session log: v0.5.1 docs cleanup (2026-11-14)
+
+- **Version bump 0.5.0 -> 0.5.1** in `main.go` (`var version`) and the
+  Gaia `User-Agent` string. The release workflow passes
+  `-X main.version=${TAG}`, so tagged builds override this; the bump
+  is for the `--version` / banner output of untagged builds only.
+  `cacheVersion`, `gaiaCacheVersion` and `buildDate` are unchanged.
+- **README Tier 1 roadmap cleanup.** Removed the shipped
+  `--png`/`--bmp` and weighted-median bullets from
+  `### Tier 1 — Small, self-contained (S)`; both items now live
+  under "Recently implemented". This is the second half of the
+  Tier 0 follow-up item #2 ("re-audit Tier 1 against `main.go`").
+- **Recently implemented**: added an explicit
+  "Extra output formats — PNG and BMP (v0.5.1)" bullet; the
+  weighted-median bullet is unchanged.
+- No code behaviour change beyond the version string. Self-test
+  count remains **156**; gofmt and go vet stay clean.

@@ -81,7 +81,7 @@ import (
 	"time"
 )
 
-var version = "0.5.0"
+var version = "0.5.1"
 
 // repoURL is printed in the startup banner and in --version output.
 const repoURL = "https://github.com/computerphysicslab/skystacker"
@@ -7864,7 +7864,7 @@ func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("User-Agent",
-			"skystacker/0.5.0 (+https://github.com/computerphysicslab/skystacker)")
+			"skystacker/0.5.1 (+https://github.com/computerphysicslab/skystacker)")
 		endpoint := gaiaSyncEndpoint(mirror)
 		ctx, cancel := context.WithTimeout(context.Background(), gaiaQueryTimeout)
 		startAttempt := time.Now()

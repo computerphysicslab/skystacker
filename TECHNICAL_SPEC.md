@@ -1,6 +1,6 @@
 # SkyStacker — Technical Specification
 
-**Current version:** 0.5.0
+**Current version:** 0.5.1
 **Implementation language:** Go (single-file, standard library only)
 **Status:** Active Development
 

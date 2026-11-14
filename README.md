@@ -202,7 +202,7 @@ Print the version or command-line help:
 On every run SkyStacker prints a one-line banner to standard error:
 
 ```text
-SkyStacker 0.5.0 | https://github.com/computerphysicslab/skystacker | built 2026-11-12T12:00:00Z
+SkyStacker 0.5.1 | https://github.com/computerphysicslab/skystacker | built 2026-11-12T12:00:00Z
 ```
 
 To embed the real build time:
@@ -468,10 +468,10 @@ Astrophotography session
 
 ## Development status
 
-SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.5.0**.
+SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.5.1**.
 
 The feature set, output names and command-line interface may change between development revisions. Treat the source code and `--help` output from the checked-out commit as authoritative.
-## Recently implemented (v0.5.0)
+## Recently implemented (v0.5.1)
 
 The following items from the original roadmap have been implemented in 0.5.0:
 
@@ -510,17 +510,7 @@ The following items from the original roadmap have been implemented in 0.5.0:
 
 ### Tier 1 — Small, self-contained (`S`)
 
-- **Explicit extra output formats — PNG and BMP**: `--png` and `--bmp`
-  write `stacked_mean.png` / `stacked_mean.bmp` alongside the JPEGs.
-  PNG is lossless and uses the already-imported `image/png`; BMP is a
-  ~40-line hand-written encoder to stay stdlib-only.
-  Test: `testPNGBMPSnapshot`.
-- **Weighted median**: `--method median` still ignores `frameWeights`.
-  Implement `weightedMedian(vals, weights)` (sort by value, walk the
-  cumulative weight to 0.5) and wire it into `reduceTile`'s
-  `case "median":`, gated on `frameWeights != nil` exactly like the
-  sigma path. Closes a documented limitation.
-  Test: `testWeightedMedian`.
+
 - **SER video input**: add `.ser` to `discoverFiles`; `decodeSER` reads
   the header (width, height, pixel depth, frame count) and yields frames
   one at a time, pairing with the existing streaming/tiled path.
