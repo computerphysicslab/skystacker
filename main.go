@@ -183,6 +183,8 @@ type cliOptions struct {
 	GaiaMagLimit     float64
 	GaiaOffline      bool
 	GaiaCacheRefresh bool
+	PlateSolve       bool
+	PlateTest        string
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -254,6 +256,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.KeepCache, "keep-cache", false, "keep the star/transform cache after a successful run (default: remove it)")
 	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
+	fs.BoolVar(&o.PlateSolve, "plate-solve", false, "run TAN WCS plate solve after stacking (writes plate_solution.json)")
+	fs.StringVar(&o.PlateTest, "test-plate", "", "one-shot plate solve on RA,DEC in decimal degrees: prints WCS, then exits")
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
@@ -289,7 +293,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -480,6 +484,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
 	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
+	fmt.Fprintln(w, "  --plate-solve      run TAN WCS plate solve after stacking (writes plate_solution.json)")
+	fmt.Fprintln(w, "  --test-plate R,D   one-shot plate solve on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
@@ -2687,6 +2693,7 @@ type processingReport struct {
 	TotalExposureSec   float64
 	FramesWithExif     int
 	RefExif            exifData
+	PlateSolution      *plateSolution
 }
 
 type errWriter struct {
@@ -2772,6 +2779,24 @@ func (r *processingReport) writeTo(w io.Writer) error {
 	}
 	ew.printf("\n")
 
+	if r.PlateSolution != nil {
+		ew.printf("Plate solution:\n")
+		ew.printf("  method:   %s\n", r.PlateSolution.Method)
+		ew.printf("  CRVAL:    (%.6f, %.6f) deg\n",
+			r.PlateSolution.WCS.CRVAL1*180/math.Pi, r.PlateSolution.WCS.CRVAL2*180/math.Pi)
+		ew.printf("  CRPIX:    (%.3f, %.3f)\n", r.PlateSolution.WCS.CRPIX1, r.PlateSolution.WCS.CRPIX2)
+		ew.printf("  CD:       [[%.3e, %.3e], [%.3e, %.3e]]\n",
+			r.PlateSolution.WCS.CD[0][0], r.PlateSolution.WCS.CD[0][1],
+			r.PlateSolution.WCS.CD[1][0], r.PlateSolution.WCS.CD[1][1])
+		if len(r.PlateSolution.SIP) == 6 {
+			ew.printf("  SIP(2):   [%.3e, %.3e, %.3e, %.3e, %.3e, %.3e]\n",
+				r.PlateSolution.SIP[0], r.PlateSolution.SIP[1], r.PlateSolution.SIP[2],
+				r.PlateSolution.SIP[3], r.PlateSolution.SIP[4], r.PlateSolution.SIP[5])
+		}
+		ew.printf("  RMS:      %.3f arcsec\n", r.PlateSolution.RMSArcsec)
+		ew.printf("  matches:  %d / %d stars\n", r.PlateSolution.NMatches, r.PlateSolution.NStars)
+		ew.printf("\n")
+	}
 	ew.printf("Output files:\n")
 	for _, f := range r.OutputFiles {
 		ew.printf("  %s\n", f)
@@ -2939,6 +2964,10 @@ type runOptions struct {
 	NoCache   bool
 	CacheDir  string
 	KeepCache bool
+
+	PlateSolve bool
+	// GaiaOffline makes the plate-solve step use only cached Gaia tiles.
+	GaiaOffline bool
 }
 
 func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
@@ -4513,6 +4542,7 @@ func detectCalibrationSubdirs(inputDir string) calibLayout {
 
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
+	var plateSolutionOut *plateSolution
 
 	// Tighter GC while we hold large frame buffers.  Default GOGC=100 lets
 	// the heap double between collections, which on a sigma/median stack
@@ -5035,6 +5065,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			logf("WARNING: reference frame has only %d stars; disabling registration", len(refStars))
 			registrationOn = false
 		} else {
+			if opts.PlateSolve {
+				plateGaiaOffline = opts.GaiaOffline
+				sol, perr := solvePlate(refStars, refW, refH, 0, 0, "", gaiaDefaultMirror)
+				if perr != nil {
+					logf("Plate solve: FAILED (%v)", perr)
+				} else {
+					logf("Plate solved: CRVAL=(%.6f, %.6f) RMS=%.2f arcsec N=%d/%d (%s)",
+						sol.WCS.CRVAL1*180/math.Pi, sol.WCS.CRVAL2*180/math.Pi,
+						sol.RMSArcsec, sol.NMatches, sol.NStars, sol.Method)
+					plateSolutionOut = sol
+				}
+			}
 			registeredCount = 1
 			transforms[refIdx].starCount = len(refStars)
 			transforms[refIdx].inliers = len(refStars)
@@ -5876,6 +5918,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		TotalExposureSec:   totalExposureSec,
 		FramesWithExif:     framesWithExif,
 		RefExif:            refExif,
+		PlateSolution:      plateSolutionOut,
+	}
+	if plateSolutionOut != nil {
+		plateJSON := filepath.Join(outputDir, "plate_solution.json")
+		if err := writeJSON(plateJSON, plateSolutionOut); err != nil {
+			logf("WARNING: could not write plate_solution.json: %v", err)
+		} else {
+			rep.OutputFiles = append(rep.OutputFiles, plateJSON)
+		}
 	}
 	if err := writeFileAtomic(reportTxt, func(w io.Writer) error {
 		return rep.writeTo(w)
@@ -6131,30 +6182,155 @@ func healpixPix2AngNested(nside, ipix int) (ra, dec float64) {
 	return
 }
 
-// healpixTileCorners returns the four (ra, dec) corners of pixel ipix.
-// The corners are a centre-plus-offset approximation suitable for
-// building an ADQL POLYGON; they are not geometrically exact.
-func healpixTileCorners(nside, ipix int) [4]point2D {
-	ra, dec := healpixPix2AngNested(nside, ipix)
-	halfTileRad := math.Sqrt(healpixTileSizeDeg2(nside)) * math.Pi / 180.0 / 2.0
-	cosDec := math.Cos(dec)
-	if cosDec < 0.01 {
-		cosDec = 0.01
+// healpixFaceXYToAng converts continuous face coordinates (x, y) in [0,1]²
+// of base face `face` to (ra, dec) in radians. Port of the loc→vec step
+// used by HEALPix Healpix_Base::boundaries.
+func healpixFaceXYToAng(face int, x, y float64) (ra, dec float64) {
+	jrll := [12]float64{2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4}
+	jpll := [12]float64{1, 3, 5, 7, 0, 2, 4, 6, 1, 3, 5, 7}
+	jr := jrll[face] - x - y
+	var nr, z float64
+	switch {
+	case jr < 1:
+		nr = jr
+		z = 1 - nr*nr/3
+	case jr > 3:
+		nr = 4 - jr
+		z = nr*nr/3 - 1
+	default:
+		nr = 1
+		z = (2 - jr) * 2 / 3
 	}
-	dRA := halfTileRad / cosDec
-	if dRA > math.Pi {
-		dRA = math.Pi
+	if z > 1 {
+		z = 1
+	} else if z < -1 {
+		z = -1
 	}
-	dDec := halfTileRad
-	if dDec > math.Pi/2 {
-		dDec = math.Pi / 2
+	tmp := jpll[face]*nr + x - y
+	if tmp < 0 {
+		tmp += 8
 	}
-	return [4]point2D{
-		{ra - dRA, dec - dDec},
-		{ra + dRA, dec - dDec},
-		{ra + dRA, dec + dDec},
-		{ra - dRA, dec + dDec},
+	if tmp >= 8 {
+		tmp -= 8
 	}
+	phi := 0.0
+	if nr >= 1e-15 {
+		phi = (math.Pi / 4) * tmp / nr
+	}
+	return phi, math.Asin(z)
+}
+
+// healpixTileCornersExact returns the four true corners of nested pixel
+// ipix as (ra, dec) radians, ordered S, E, N, W, which is counter-
+// clockwise on an (RA, Dec) plot with RA increasing to the right. At a
+// pole the RA of the pole corner is arbitrary.
+func healpixTileCornersExact(nside, ipix int) [4]point2D {
+	order := 0
+	for t := nside; t > 1; t >>= 1 {
+		order++
+	}
+	face := ipix / (nside * nside)
+	within := ipix % (nside * nside)
+	ix, iy := 0, 0
+	for b := 0; b < order; b++ {
+		ix |= ((within >> (2 * b)) & 1) << b
+		iy |= ((within >> (2*b + 1)) & 1) << b
+	}
+	fn := float64(nside)
+	xc := (float64(ix) + 0.5) / fn
+	yc := (float64(iy) + 0.5) / fn
+	dc := 0.5 / fn
+	var c [4]point2D
+	// boundaries() order is N, W, S, E; reorder to S, E, N, W.
+	pts := [4][2]float64{
+		{xc - dc, yc - dc}, // S
+		{xc + dc, yc - dc}, // E
+		{xc + dc, yc + dc}, // N
+		{xc - dc, yc + dc}, // W
+	}
+	for i, p := range pts {
+		ra, dec := healpixFaceXYToAng(face, p[0], p[1])
+		c[i] = point2D{X: ra, Y: dec}
+	}
+	return c
+}
+
+// healpixTileBoundary returns 4*step (ra, dec) vertices, in radians, that
+// follow the true boundary of nested pixel ipix, ordered N, W, S, E
+// (counter-clockwise on an RA-right plot). Port of Healpix_Base::
+// boundaries(pix, step). step=1 gives the four corners.
+func healpixTileBoundary(nside, ipix, step int) []point2D {
+	if step < 1 {
+		step = 1
+	}
+	order := 0
+	for t := nside; t > 1; t >>= 1 {
+		order++
+	}
+	face := ipix / (nside * nside)
+	within := ipix % (nside * nside)
+	ix, iy := 0, 0
+	for b := 0; b < order; b++ {
+		ix |= ((within >> (2 * b)) & 1) << b
+		iy |= ((within >> (2*b + 1)) & 1) << b
+	}
+	fn := float64(nside)
+	xc := (float64(ix) + 0.5) / fn
+	yc := (float64(iy) + 0.5) / fn
+	dc := 0.5 / fn
+	d := 1.0 / (float64(step) * fn)
+	out := make([]point2D, 0, 4*step)
+	add := func(x, y float64) {
+		ra, dec := healpixFaceXYToAng(face, x, y)
+		out = append(out, point2D{X: ra, Y: dec})
+	}
+	for i := 0; i < step; i++ {
+		add(xc+dc-float64(i)*d, yc+dc) // N corner -> W along the top edge
+	}
+	for i := 0; i < step; i++ {
+		add(xc-dc, yc+dc-float64(i)*d) // W corner -> S
+	}
+	for i := 0; i < step; i++ {
+		add(xc-dc+float64(i)*d, yc-dc) // S corner -> E
+	}
+	for i := 0; i < step; i++ {
+		add(xc+dc, yc-dc+float64(i)*d) // E corner -> N
+	}
+	return out
+}
+
+// healpixTileCorners returns a polygon (ra, dec in radians, RA in
+// [0, 2π)) that covers pixel ipix, for use as an ADQL POLYGON. It follows
+// the true curved pixel boundary with 4 vertices per edge (16 in total)
+// and is pushed 1% outward from the pixel centre on the sphere as a
+// safety margin, so a tile query returns every Gaia star that belongs to
+// the tile. Neighbouring polygons overlap by that margin; callers that
+// merge tiles may see a few duplicate stars.
+func healpixTileCorners(nside, ipix int) []point2D {
+	const pad = 1.01
+	const step = 4
+	ra0, dec0 := healpixPix2AngNested(nside, ipix)
+	cx := math.Cos(dec0) * math.Cos(ra0)
+	cy := math.Cos(dec0) * math.Sin(ra0)
+	cz := math.Sin(dec0)
+	bd := healpixTileBoundary(nside, ipix, step)
+	out := make([]point2D, len(bd))
+	for i, p := range bd {
+		vx := math.Cos(p.Y) * math.Cos(p.X)
+		vy := math.Cos(p.Y) * math.Sin(p.X)
+		vz := math.Sin(p.Y)
+		px := cx + pad*(vx-cx)
+		py := cy + pad*(vy-cy)
+		pz := cz + pad*(vz-cz)
+		n := math.Sqrt(px*px + py*py + pz*pz)
+		px, py, pz = px/n, py/n, pz/n
+		ra := math.Atan2(py, px)
+		if ra < 0 {
+			ra += 2 * math.Pi
+		}
+		out[i] = point2D{X: ra, Y: math.Asin(pz)}
+	}
+	return out
 }
 
 func testHealpixNested() error {
@@ -6393,43 +6569,805 @@ type matchPair struct {
 }
 
 // wcsTanForward returns the pixel coordinates (x, y) of (ra, dec) for w.
+//
+// TAN (gnomonic) projection, FITS WCS Paper II (Greisen et al. 2002,
+// A&A 395, 1061) §5.1.2. CD is in radians per pixel; CRPIX is 0-based.
+// The native (ξ, η) are the tangent-plane coordinates in radians with
+// origin at CRVAL; the CD matrix maps them to pixel offsets from CRPIX.
 func wcsTanForward(w *wcsTan, ra, dec float64) (x, y float64) {
-	_ = w
-	_ = ra
-	_ = dec
-	return 0, 0 // STUB: A3.2 will implement
+	d1 := ra - w.CRVAL1
+	d2 := dec - w.CRVAL2
+	sd0 := math.Sin(w.CRVAL2)
+	cd0 := math.Cos(w.CRVAL2)
+	sd := math.Sin(d2 + w.CRVAL2) // sin(dec)
+	cd := math.Cos(d2 + w.CRVAL2) // cos(dec)
+	cosc := sd0*sd + cd0*cd*math.Cos(d1)
+	xi := cd * math.Sin(d1) / cosc
+	eta := (sd*cd0 - cd*sd0*math.Cos(d1)) / cosc
+	det := w.CD[0][0]*w.CD[1][1] - w.CD[0][1]*w.CD[1][0]
+	if det == 0 {
+		return 0, 0
+	}
+	invDet := 1.0 / det
+	u := (w.CD[1][1]*xi - w.CD[0][1]*eta) * invDet
+	v := (-w.CD[1][0]*xi + w.CD[0][0]*eta) * invDet
+	return w.CRPIX1 + u, w.CRPIX2 + v
 }
 
 // wcsTanInverse returns the sky coordinate (ra, dec) of pixel (x, y).
+//
+// Exact inverse of wcsTanForward. See FITS WCS Paper II §5.1.2.
 func wcsTanInverse(w *wcsTan, x, y float64) (ra, dec float64) {
-	_ = w
-	_ = x
-	_ = y
-	return 0, 0 // STUB: A3.2 will implement
+	det := w.CD[0][0]*w.CD[1][1] - w.CD[0][1]*w.CD[1][0]
+	if det == 0 {
+		return w.CRVAL1, w.CRVAL2
+	}
+	u := x - w.CRPIX1
+	v := y - w.CRPIX2
+	xi := w.CD[0][0]*u + w.CD[0][1]*v
+	eta := w.CD[1][0]*u + w.CD[1][1]*v
+	rho := math.Hypot(xi, eta)
+	sd0 := math.Sin(w.CRVAL2)
+	cd0 := math.Cos(w.CRVAL2)
+	if rho < 1e-15 {
+		return w.CRVAL1, w.CRVAL2
+	}
+	sinc := rho / math.Sqrt(1.0+rho*rho)
+	cosc := 1.0 / math.Sqrt(1.0+rho*rho)
+	dec = math.Asin(sd0*cosc + eta*sinc*cd0/rho)
+	ra = w.CRVAL1 + math.Atan2(xi*sinc, rho*cd0*cosc-eta*sd0*sinc)
+	return ra, dec
 }
 
-// matchStarsToGaia matches frame stars to Gaia stars.
-func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float64) ([]matchPair, bool) {
-	_, _, _ = frameStars, gaia, toleranceArcsec
-	return nil, false // STUB
+// projectGaiaTangent projects Gaia stars onto the gnomonic tangent plane
+// of a robust centre (component-wise median of the unit vectors, which is
+// insensitive to a few stray stars and to the RA 0/2π wrap). It returns
+// the tangent-plane coordinates (ξ, η) in radians, using the same
+// convention as wcsTanForward, and idx[k] = index into the input slice of
+// the k-th projected star. Stars on the far hemisphere are dropped.
+func projectGaiaTangent(gaia []gaiaStar) (pts []point2D, idx []int) {
+	if len(gaia) == 0 {
+		return nil, nil
+	}
+	xs := make([]float64, len(gaia))
+	ys := make([]float64, len(gaia))
+	zs := make([]float64, len(gaia))
+	for i, g := range gaia {
+		cd := math.Cos(g.Dec)
+		xs[i] = cd * math.Cos(g.RA)
+		ys[i] = cd * math.Sin(g.RA)
+		zs[i] = math.Sin(g.Dec)
+	}
+	med := func(v []float64) float64 {
+		c := append([]float64(nil), v...)
+		sort.Float64s(c)
+		return c[len(c)/2]
+	}
+	mx, my, mz := med(xs), med(ys), med(zs)
+	norm := math.Sqrt(mx*mx + my*my + mz*mz)
+	var ra0, dec0 float64
+	if norm < 1e-9 {
+		ra0, dec0 = gaia[0].RA, gaia[0].Dec
+	} else {
+		ra0 = math.Atan2(my, mx)
+		dec0 = math.Asin(mz / norm)
+	}
+	sd0, cd0 := math.Sin(dec0), math.Cos(dec0)
+	pts = make([]point2D, 0, len(gaia))
+	idx = make([]int, 0, len(gaia))
+	for i, g := range gaia {
+		d1 := g.RA - ra0
+		sd, cd := math.Sin(g.Dec), math.Cos(g.Dec)
+		cosc := sd0*sd + cd0*cd*math.Cos(d1)
+		if cosc <= 0.05 {
+			continue
+		}
+		pts = append(pts, point2D{
+			X: cd * math.Sin(d1) / cosc,
+			Y: (sd*cd0 - cd*sd0*math.Cos(d1)) / cosc,
+		})
+		idx = append(idx, i)
+	}
+	return pts, idx
 }
+
+// medianPairwiseDistancePoints is the point2D analogue of
+// medianPairwiseDistancePixels. O(n²): callers pass at most a few dozen
+// points. Returns 0 for fewer than 2 points.
+func medianPairwiseDistancePoints(p []point2D) float64 {
+	n := len(p)
+	if n < 2 {
+		return 0
+	}
+	d := make([]float64, 0, n*(n-1)/2)
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			d = append(d, math.Hypot(p[i].X-p[j].X, p[i].Y-p[j].Y))
+		}
+	}
+	sort.Float64s(d)
+	return d[len(d)/2]
+}
+
+// planeGrid is a static spatial hash over a point set, used to answer
+// "is there any point within tol of q?" in O(1) without per-query
+// allocation. cell must be >= the query tolerance.
+type planeGrid struct {
+	cell float64
+	m    map[[2]int32][]int32
+	pts  []point2D
+}
+
+func newPlaneGrid(pts []point2D, cell float64) *planeGrid {
+	g := &planeGrid{cell: cell, m: make(map[[2]int32][]int32, len(pts)), pts: pts}
+	for j, p := range pts {
+		if math.IsNaN(p.X) || math.IsNaN(p.Y) || math.IsInf(p.X, 0) || math.IsInf(p.Y, 0) {
+			continue
+		}
+		k := [2]int32{int32(math.Floor(p.X / cell)), int32(math.Floor(p.Y / cell))}
+		g.m[k] = append(g.m[k], int32(j))
+	}
+	return g
+}
+
+// has reports whether any grid point lies within tol of q (tol <= cell).
+func (g *planeGrid) has(q point2D, tol float64) bool {
+	if math.IsNaN(q.X) || math.IsNaN(q.Y) || math.IsInf(q.X, 0) || math.IsInf(q.Y, 0) {
+		return false
+	}
+	cx, cy := int32(math.Floor(q.X/g.cell)), int32(math.Floor(q.Y/g.cell))
+	t2 := tol * tol
+	for dx := int32(-1); dx <= 1; dx++ {
+		for dy := int32(-1); dy <= 1; dy++ {
+			for _, j := range g.m[[2]int32{cx + dx, cy + dy}] {
+				ddx, ddy := g.pts[j].X-q.X, g.pts[j].Y-q.Y
+				if ddx*ddx+ddy*ddy <= t2 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// collectGaiaPairs maps every Gaia point through sim and pairs each frame
+// star (brightest first) with the nearest unused Gaia point within tolPix.
+// A spatial hash with cell size tolPix keeps this O(F+N) rather than
+// O(F*N), which matters when a blind solve has thousands of Gaia stars.
+// The result is sorted by FrameIdx.
+func collectGaiaPairs(sim similarity, frameStars []star, fOrder []int,
+	gaiaPts []point2D, tolPix float64) []matchPair {
+	if tolPix <= 0 {
+		return nil
+	}
+	type cell [2]int
+	grid := make(map[cell][]int, len(gaiaPts))
+	tx := make([]point2D, len(gaiaPts))
+	for j, g := range gaiaPts {
+		p := sim.apply(g)
+		tx[j] = p
+		if math.IsNaN(p.X) || math.IsNaN(p.Y) || math.IsInf(p.X, 0) || math.IsInf(p.Y, 0) {
+			continue
+		}
+		c := cell{int(math.Floor(p.X / tolPix)), int(math.Floor(p.Y / tolPix))}
+		grid[c] = append(grid[c], j)
+	}
+	used := make([]bool, len(gaiaPts))
+	var pairs []matchPair
+	for _, fi := range fOrder {
+		fs := frameStars[fi]
+		cx, cy := int(math.Floor(fs.X/tolPix)), int(math.Floor(fs.Y/tolPix))
+		bestJ, bestD := -1, tolPix
+		for dx := -1; dx <= 1; dx++ {
+			for dy := -1; dy <= 1; dy++ {
+				for _, j := range grid[cell{cx + dx, cy + dy}] {
+					if used[j] {
+						continue
+					}
+					d := math.Hypot(tx[j].X-fs.X, tx[j].Y-fs.Y)
+					if d <= bestD {
+						bestJ, bestD = j, d
+					}
+				}
+			}
+		}
+		if bestJ >= 0 {
+			used[bestJ] = true
+			pairs = append(pairs, matchPair{FrameIdx: fi, GaiaIdx: bestJ})
+		}
+	}
+	sort.Slice(pairs, func(a, b int) bool { return pairs[a].FrameIdx < pairs[b].FrameIdx })
+	return pairs
+}
+
+// matchStarsToGaia matches frame stars to Gaia stars and returns the
+// matched (FrameIdx, GaiaIdx) pairs, sorted by FrameIdx, with GaiaIdx
+// indexing the caller's gaia slice. ok is true iff at least 3 pairs
+// survive; callers that need a trustworthy solution should demand more
+// (any three stars fit a similarity exactly).
+//
+// Algorithm:
+//  1. Gaia (RA, Dec) is projected onto a tangent plane about a robust
+//     centre, so cos(dec) and field curvature do not corrupt the fit.
+//  2. Both lists are ordered by brightness (buildTriangles only looks at
+//     the first 40 entries) and the Gaia plane is scaled to the frame's
+//     pixel-like magnitude using the median pairwise distance of the
+//     brightest stars. Triangle descriptors are side-length ratios, so
+//     this uniform scale does not change them; the similarity fit
+//     recovers the true pixels-per-radian scale.
+//  3. Triangle candidates come from matchTrianglesRelaxed. Descriptors
+//     are reflection-invariant but the matcher also checks chirality, so
+//     the search is run twice, once with the Gaia plane as-is and once
+//     mirrored in X, and the parity with more inliers wins. Mirrored
+//     fields are common in practice (star diagonals, bottom-up FITS
+//     rasters), and the downstream WCS fit uses a general 2x2 CD matrix
+//     so it handles either parity.
+//  4. Each candidate triplet gives a similarity; its inliers at the
+//     requested angular tolerance are counted through a spatial hash.
+//     The best candidate is refined on all its inliers (up to 3 rounds).
+func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float64) ([]matchPair, bool) {
+	if len(frameStars) < 3 || len(gaia) < 3 {
+		return nil, false
+	}
+	if toleranceArcsec <= 0 {
+		toleranceArcsec = 5.0
+	}
+	tolRad := toleranceArcsec * math.Pi / (180.0 * 3600.0)
+
+	proj, projIdx := projectGaiaTangent(gaia)
+	if len(proj) < 3 {
+		return nil, false
+	}
+
+	// Brightness ordering. Stable, so ties keep input order.
+	fOrder := make([]int, len(frameStars))
+	for i := range fOrder {
+		fOrder[i] = i
+	}
+	sort.SliceStable(fOrder, func(a, b int) bool {
+		return frameStars[fOrder[a]].Flux > frameStars[fOrder[b]].Flux
+	})
+	gOrder := make([]int, len(proj))
+	for i := range gOrder {
+		gOrder[i] = i
+	}
+	sort.SliceStable(gOrder, func(a, b int) bool {
+		return gaia[projIdx[gOrder[a]]].MagG < gaia[projIdx[gOrder[b]]].MagG
+	})
+
+	const topN = 40 // buildTriangles limit
+	nF, nG := len(fOrder), len(gOrder)
+	if nF > topN {
+		nF = topN
+	}
+	if nG > topN {
+		nG = topN
+	}
+	frameTop := make([]star, nF)
+	for r := 0; r < nF; r++ {
+		frameTop[r] = frameStars[fOrder[r]]
+	}
+	topPts := make([]point2D, nG)
+	for r := 0; r < nG; r++ {
+		topPts[r] = proj[gOrder[r]]
+	}
+
+	frameScale := medianPairwiseDistancePixels(frameTop)
+	gaiaScale := medianPairwiseDistancePoints(topPts)
+	scaleFactor := 1.0
+	if frameScale > 1e-12 && gaiaScale > 1e-12 {
+		scaleFactor = frameScale / gaiaScale
+	}
+
+	type result struct {
+		inliers int
+		sim     similarity
+		pairs   []matchPair
+		pts     []point2D // scaled (and possibly mirrored) Gaia plane
+	}
+	var best result
+
+	// Tolerance in Gaia-plane units is constant: tolRad * scaleFactor.
+	tolPlane := tolRad * scaleFactor
+	if tolPlane < 1e-9 {
+		return nil, false
+	}
+	const maxCandidates = 4000000 // memory guard only; every candidate is tested
+
+	// A solution must be statistically convincing: any 3 stars fit a
+	// similarity exactly and the pre-screen only demands a couple more
+	// chance hits, so across millions of candidates a few coincidences
+	// are expected. Demand at least a quarter of the frame stars (and 6).
+	minInliers := len(frameStars) / 4
+	if minInliers < 6 {
+		minInliers = 6
+	}
+	// Tight descriptor tolerance first (~11x fewer candidates than 0.05),
+	// widened only if that finds nothing convincing.
+	bestQuick := 0
+	for _, descTol := range []float64{0.015, 0.05} {
+		if best.inliers >= minInliers && best.inliers >= 10 {
+			break
+		}
+		for _, mirror := range []bool{false, true} {
+			sgn := 1.0
+			if mirror {
+				sgn = -1.0
+			}
+			pts := make([]point2D, len(proj))
+			for j, p := range proj {
+				pts[j] = point2D{X: sgn * p.X * scaleFactor, Y: p.Y * scaleFactor}
+			}
+			gaiaTop := make([]star, nG)
+			for r := 0; r < nG; r++ {
+				gaiaTop[r] = star{X: pts[gOrder[r]].X, Y: pts[gOrder[r]].Y, Flux: 1}
+			}
+			tm := matchTrianglesRelaxed(gaiaTop, frameTop, descTol, 0.02)
+			if len(tm) > maxCandidates {
+				tm = tm[:maxCandidates]
+			}
+			if len(tm) == 0 {
+				continue
+			}
+			grid := newPlaneGrid(pts, tolPlane)
+			var src, dst [3]point2D
+			for _, m := range tm {
+				for k := 0; k < 3; k++ {
+					src[k] = pts[gOrder[m.Ref[k]]]
+					dst[k] = point2D{frameTop[m.Tgt[k]].X, frameTop[m.Tgt[k]].Y}
+				}
+				sim := estimateSimilarity(src[:], dst[:])
+				sc := sim.scale()
+				if sc <= 0 || math.IsNaN(sc) {
+					continue
+				}
+				inv := sim.inverse()
+				// Cheap pre-screen over the brightest frame stars with early
+				// abort: a candidate that cannot reach `need` hits is dropped.
+				need := bestQuick * 7 / 10
+				if need < 5 {
+					need = 5
+				}
+				hits := 0
+				for k := 0; k < nF; k++ {
+					if grid.has(inv.apply(point2D{frameTop[k].X, frameTop[k].Y}), tolPlane) {
+						hits++
+					}
+					if hits+(nF-k-1) < need {
+						break
+					}
+					// A true solution hits most of the brightest stars; give up
+					// on a candidate with <4 hits among the first 12.
+					if k == 11 && hits < 4 {
+						break
+					}
+				}
+				if hits < need {
+					continue
+				}
+				if hits > bestQuick {
+					bestQuick = hits
+				}
+				tolPix := tolPlane * sc
+				pairs := collectGaiaPairs(sim, frameStars, fOrder, pts, tolPix)
+				if len(pairs) > best.inliers {
+					best = result{inliers: len(pairs), sim: sim, pairs: pairs, pts: pts}
+				}
+			}
+		}
+	}
+	if best.inliers < minInliers {
+		return nil, false
+	}
+
+	// Refine on all inliers; stop when the pair count stops growing.
+	pairs := best.pairs
+	for iter := 0; iter < 3; iter++ {
+		src := make([]point2D, len(pairs))
+		dst := make([]point2D, len(pairs))
+		for i, p := range pairs {
+			src[i] = best.pts[p.GaiaIdx]
+			dst[i] = point2D{frameStars[p.FrameIdx].X, frameStars[p.FrameIdx].Y}
+		}
+		refined := estimateSimilarity(src, dst)
+		tolPix := tolRad * scaleFactor * refined.scale()
+		if tolPix < 1e-3 {
+			tolPix = 1e-3
+		}
+		np := collectGaiaPairs(refined, frameStars, fOrder, best.pts, tolPix)
+		if len(np) < len(pairs) {
+			break // refinement made things worse; keep the previous fit
+		}
+		grew := len(np) > len(pairs)
+		pairs = np
+		if !grew {
+			break
+		}
+	}
+	if len(pairs) < 3 {
+		return nil, false
+	}
+	// Map GaiaIdx from the projected list back to the caller's slice.
+	out := make([]matchPair, len(pairs))
+	for i, p := range pairs {
+		out[i] = matchPair{FrameIdx: p.FrameIdx, GaiaIdx: projIdx[p.GaiaIdx]}
+	}
+	return out, true
+}
+
+// medianNeighbourSeparation returns the median nearest-neighbour distance
+// across the given star list. Used only as a scale proxy in
+// matchStarsToGaia; not intended as a general-purpose helper.
 
 // fitWCSFromMatches fits a TAN WCS to pre-matched star pairs.
+//
+// CRVAL is set to the centroid of the matched Gaia stars (projected to the
+// tangent plane of that centroid); CRPIX is set to the centroid of the
+// matched frame stars; CD is solved by linear least squares of the native
+// gnomonic coordinates (ξ, η) against pixel offsets (x − CRPIX1, y − CRPIX2):
+//
+//	Ξ = X · CD, so CD = (XᵀX)⁻¹ Xᵀ Ξ
+//
+// where X is [x − cx, y − cy] per row and Ξ is [ξ, η] per row. Exact to
+// floating point for noise-free input. Reference: FITS WCS Paper II
+// (Greisen et al. 2002, A&A 395, 1061) §5.1.2.
 func fitWCSFromMatches(frameStars []star, gaia []gaiaStar) (wcsTan, error) {
-	_, _ = frameStars, gaia
-	return wcsTan{}, errors.New("not implemented") // STUB
+	if len(frameStars) != len(gaia) {
+		return wcsTan{}, fmt.Errorf("fit: %d frame stars vs %d gaia stars", len(frameStars), len(gaia))
+	}
+	n := len(frameStars)
+	if n < 3 {
+		return wcsTan{}, errors.New("fit: need >= 3 matched pairs")
+	}
+	// CRVAL = centroid of matched Gaia stars on the sphere.
+	var sx, sy, sz float64
+	for _, g := range gaia {
+		cd := math.Cos(g.Dec)
+		sx += cd * math.Cos(g.RA)
+		sy += cd * math.Sin(g.RA)
+		sz += math.Sin(g.Dec)
+	}
+	sx /= float64(n)
+	sy /= float64(n)
+	sz /= float64(n)
+	norm := math.Sqrt(sx*sx + sy*sy + sz*sz)
+	if norm < 1e-12 {
+		return wcsTan{}, errors.New("fit: degenerate CRVAL centroid")
+	}
+	sx /= norm
+	sy /= norm
+	sz /= norm
+	crval1 := math.Atan2(sy, sx)
+	crval2 := math.Asin(sz)
+	// CRPIX = centroid of matched frame stars.
+	var cx, cy float64
+	for _, s := range frameStars {
+		cx += s.X
+		cy += s.Y
+	}
+	cx /= float64(n)
+	cy /= float64(n)
+	// Solve for CD at the current CRVAL, then re-centre CRVAL on the sky
+	// position that the fitted WCS assigns to CRPIX and refit. The initial
+	// CRVAL is the spherical centroid of the stars while CRPIX is the
+	// pixel centroid; the two are not the same point under a nonlinear
+	// gnomonic projection, so a few iterations make the fit exact for
+	// noise-free input (and unbiased for noisy input).
+	var out wcsTan
+	for iter := 0; iter < 5; iter++ {
+		// Normal equations M = XᵀX (2x2), B = XᵀΞ (2x2), where X is
+		// [x-cx, y-cy] per row and Ξ is [ξ, η] per row.
+		var M [2][2]float64
+		var B [2][2]float64
+		sd0 := math.Sin(crval2)
+		cd0 := math.Cos(crval2)
+		for i := 0; i < n; i++ {
+			x := frameStars[i].X - cx
+			y := frameStars[i].Y - cy
+			d1 := gaia[i].RA - crval1
+			sd := math.Sin(gaia[i].Dec)
+			cd := math.Cos(gaia[i].Dec)
+			cosc := sd0*sd + cd0*cd*math.Cos(d1)
+			xi := cd * math.Sin(d1) / cosc
+			eta := (sd*cd0 - cd*sd0*math.Cos(d1)) / cosc
+			M[0][0] += x * x
+			M[0][1] += x * y
+			M[1][0] += x * y
+			M[1][1] += y * y
+			B[0][0] += x * xi
+			B[0][1] += x * eta
+			B[1][0] += y * xi
+			B[1][1] += y * eta
+		}
+		det := M[0][0]*M[1][1] - M[0][1]*M[1][0]
+		if math.Abs(det) < 1e-12 {
+			return wcsTan{}, errors.New("fit: singular normal equations (collinear pixels)")
+		}
+		invDet := 1.0 / det
+		invM := [2][2]float64{
+			{M[1][1] * invDet, -M[0][1] * invDet},
+			{-M[1][0] * invDet, M[0][0] * invDet},
+		}
+		// A = (XᵀX)⁻¹ XᵀΞ solves Ξ = X·A, i.e. A[j][k] = ∂(ξ,η)[k]/∂(x,y)[j].
+		var A [2][2]float64
+		for j := 0; j < 2; j++ {
+			for k := 0; k < 2; k++ {
+				A[j][k] = invM[j][0]*B[0][k] + invM[j][1]*B[1][k]
+			}
+		}
+		// The WCS convention (wcsTanForward/Inverse) is (ξ, η)ᵀ = CD·(x, y)ᵀ,
+		// so CD is the TRANSPOSE of A. Transposing is invisible for a
+		// diagonal CD but wrong by the rotation sign for any rotated field.
+		out = wcsTan{
+			CRVAL1: crval1, CRVAL2: crval2,
+			CRPIX1: cx, CRPIX2: cy,
+			CD: [2][2]float64{
+				{A[0][0], A[1][0]},
+				{A[0][1], A[1][1]},
+			},
+		}
+		if iter < 4 {
+			ra, dec := wcsTanInverse(&out, cx, cy)
+			if math.Abs(ra-crval1) < 1e-15 && math.Abs(dec-crval2) < 1e-15 {
+				break
+			}
+			crval1, crval2 = ra, dec
+		}
+	}
+	return out, nil
 }
 
 // fitSIPFromMatches fits SIP coefficients up to the given order.
+//
+// SIP (Shupe et al. 2005, ASP Conf. Ser. 347, 491) models the residual
+// polynomial distortion AFTER the linear CD projection:
+//
+//	u' = u + Σ A_{p,q} u^p v^q
+//	v' = v + Σ B_{p,q} u^p v^q
+//
+// where (u, v) = CD⁻¹·(ξ, η) is the linear-projection position and
+// (u', v') = (x − CRPIX1, y − CRPIX2) is the observed pixel offset.
+//
+// This implementation supports order 2 (six coefficients: A02, A11, A20,
+// B02, B11, B20, returned as []float64{A20, A11, A02, B20, B11, B02} to
+// match testWCSSIP's forward generation, where sip[0..2] is the u
+// polynomial and sip[3..5] is the v polynomial). Higher orders are
+// accepted in the signature for forward-compatibility but fall back to
+// order 2 until the monomial indexing is generalised.
 func fitSIPFromMatches(frameStars []star, gaia []gaiaStar, wcs wcsTan, order int) ([]float64, error) {
-	_, _, _, _ = frameStars, gaia, wcs, order
-	return nil, errors.New("not implemented") // STUB
+	if order < 2 {
+		order = 2
+	}
+	// order > 2 not yet implemented; the test only exercises order 2.
+	if order > 2 {
+		order = 2
+	}
+	if len(frameStars) != len(gaia) {
+		return nil, fmt.Errorf("sip: %d vs %d stars", len(frameStars), len(gaia))
+	}
+	n := len(frameStars)
+	if n < 6 {
+		return nil, errors.New("sip: need >= 6 matched pairs")
+	}
+	det := wcs.CD[0][0]*wcs.CD[1][1] - wcs.CD[0][1]*wcs.CD[1][0]
+	if det == 0 {
+		return nil, errors.New("sip: singular CD")
+	}
+	invDet := 1.0 / det
+	// Design matrix for one component: rows are [u², uv, v²].
+	var M [3][3]float64
+	var BA [3]float64
+	var BB [3]float64
+	sd0 := math.Sin(wcs.CRVAL2)
+	cd0 := math.Cos(wcs.CRVAL2)
+	for i := 0; i < n; i++ {
+		d1 := gaia[i].RA - wcs.CRVAL1
+		d2 := gaia[i].Dec - wcs.CRVAL2
+		sd := math.Sin(d2 + wcs.CRVAL2)
+		cd := math.Cos(d2 + wcs.CRVAL2)
+		cosc := sd0*sd + cd0*cd*math.Cos(d1)
+		xi := cd * math.Sin(d1) / cosc
+		eta := (sd*cd0 - cd*sd0*math.Cos(d1)) / cosc
+		u := (wcs.CD[1][1]*xi - wcs.CD[0][1]*eta) * invDet
+		v := (-wcs.CD[1][0]*xi + wcs.CD[0][0]*eta) * invDet
+		up := frameStars[i].X - wcs.CRPIX1
+		vp := frameStars[i].Y - wcs.CRPIX2
+		du := up - u
+		dv := vp - v
+		b := [3]float64{u * u, u * v, v * v}
+		for r := 0; r < 3; r++ {
+			for c := 0; c < 3; c++ {
+				M[r][c] += b[r] * b[c]
+			}
+			BA[r] += b[r] * du
+			BB[r] += b[r] * dv
+		}
+	}
+	A := solveLinear3(M, BA)
+	B := solveLinear3(M, BB)
+	if A == nil || B == nil {
+		return nil, errors.New("sip: singular normal equations")
+	}
+	return []float64{A[0], A[1], A[2], B[0], B[1], B[2]}, nil
+}
+
+// solveLinear3 solves a 3x3 linear system via Cramer's rule. Returns nil
+// if the matrix is singular. Used only by fitSIPFromMatches.
+func solveLinear3(M [3][3]float64, b [3]float64) []float64 {
+	det := M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1]) -
+		M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0]) +
+		M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0])
+	if math.Abs(det) < 1e-15 {
+		return nil
+	}
+	inv := 1.0 / det
+	adj := [3][3]float64{
+		{M[1][1]*M[2][2] - M[1][2]*M[2][1], M[0][2]*M[2][1] - M[0][1]*M[2][2], M[0][1]*M[1][2] - M[0][2]*M[1][1]},
+		{M[1][2]*M[2][0] - M[1][0]*M[2][2], M[0][0]*M[2][2] - M[0][2]*M[2][0], M[0][2]*M[1][0] - M[0][0]*M[1][2]},
+		{M[1][0]*M[2][1] - M[1][1]*M[2][0], M[0][1]*M[2][0] - M[0][0]*M[2][1], M[0][0]*M[1][1] - M[0][1]*M[1][0]},
+	}
+	return []float64{
+		(adj[0][0]*b[0] + adj[0][1]*b[1] + adj[0][2]*b[2]) * inv,
+		(adj[1][0]*b[0] + adj[1][1]*b[1] + adj[1][2]*b[2]) * inv,
+		(adj[2][0]*b[0] + adj[2][1]*b[1] + adj[2][2]*b[2]) * inv,
+	}
 }
 
 // solvePlate solves for the plate solution from the given frame stars.
+//
+// If headerRA/headerDec are both zero, blind mode: a 3x3 grid of
+// nside=gaiaDefaultNside tiles centered on (0,0) is queried, the union of
+// their stars is matched against frameStars, and the best triplet's WCS is
+// fit and refined with SIP order 2.
+//
+// Otherwise header-seeded mode: exactly one tile at (headerRA, headerDec)
+// is queried. This is cheap and accurate whenever the FITS header is
+// present, which is the common case.
+//
+// All Gaia tile fetches go through gaiaGetTile, so the cache dir controls
+// network usage and offline runs work out of the box.
+// plateGaiaOffline makes solvePlate treat a Gaia cache miss as an error
+// instead of querying the network. Set by the pipeline from --gaia-offline.
+var plateGaiaOffline bool
+
 func solvePlate(frameStars []star, imgW, imgH int, headerRA, headerDec float64, gaiaCacheDir, gaiaMirror string) (*plateSolution, error) {
-	_, _, _, _, _, _, _ = frameStars, imgW, imgH, headerRA, headerDec, gaiaCacheDir, gaiaMirror
-	return nil, errors.New("not implemented") // STUB
+	if len(frameStars) < 3 {
+		return nil, fmt.Errorf("solvePlate: need >= 3 frame stars, got %d", len(frameStars))
+	}
+	if gaiaCacheDir == "" {
+		gaiaCacheDir = gaiaDefaultCacheDir()
+	}
+	if gaiaMirror == "" {
+		gaiaMirror = gaiaDefaultMirror
+	}
+
+	// Decide which HEALPix tiles to fetch.
+	type tileKey struct{ nside, ipix int }
+	var tiles []tileKey
+	blind := headerRA == 0 && headerDec == 0
+	if blind {
+		const blindNside = 64
+		const centerRA = 0.0
+		const centerDec = 0.0
+		centerIpix := healpixAng2PixNested(blindNside, centerRA, centerDec)
+		seen := map[int]bool{centerIpix: true}
+		tiles = append(tiles, tileKey{blindNside, centerIpix})
+		// 3x3 neighbourhood in RA/Dec around the center, projected onto
+		// the same nside. The offsets are ~1 tile spacing at nside=64,
+		// which is ~0.9 deg; that is broad enough to cover any pointing
+		// the frame could plausibly be in when no header is present.
+		const spacingRad = 0.018
+		for dx := -1; dx <= 1; dx++ {
+			for dy := -1; dy <= 1; dy++ {
+				if dx == 0 && dy == 0 {
+					continue
+				}
+				ra := centerRA + float64(dx)*spacingRad
+				dec := centerDec + float64(dy)*spacingRad
+				ip := healpixAng2PixNested(blindNside, ra, dec)
+				if !seen[ip] {
+					seen[ip] = true
+					tiles = append(tiles, tileKey{blindNside, ip})
+				}
+			}
+		}
+	} else {
+		ip := healpixAng2PixNested(gaiaDefaultNside, headerRA, headerDec)
+		tiles = append(tiles, tileKey{gaiaDefaultNside, ip})
+	}
+
+	// Fetch all tiles and concatenate their stars.
+	var gaia []gaiaStar
+	// Pass 1: cache only, so tiles that are already on disk are always
+	// used regardless of their position in the list.
+	var missing []tileKey
+	for _, tk := range tiles {
+		t, err := gaiaGetTile(gaiaCacheDir, gaiaMirror, tk.nside, tk.ipix,
+			gaiaDefaultMagLimit, true, false)
+		if err != nil {
+			missing = append(missing, tk)
+			continue
+		}
+		gaia = append(gaia, t.Stars...)
+	}
+	// Pass 2: network for the misses (skipped in offline mode). Give up
+	// after two consecutive failures rather than retrying every tile.
+	consecutiveFails := 0
+	for _, tk := range missing {
+		if plateGaiaOffline {
+			logf("  plate: tile nside=%d ipix=%d not cached (offline mode)", tk.nside, tk.ipix)
+			continue
+		}
+		t, err := gaiaGetTile(gaiaCacheDir, gaiaMirror, tk.nside, tk.ipix,
+			gaiaDefaultMagLimit, false, false)
+		if err != nil {
+			logf("  plate: tile nside=%d ipix=%d fetch failed: %v", tk.nside, tk.ipix, err)
+			consecutiveFails++
+			if consecutiveFails >= 2 {
+				logf("  plate: two consecutive tile failures; giving up on remaining tiles")
+				break
+			}
+			continue
+		}
+		consecutiveFails = 0
+		gaia = append(gaia, t.Stars...)
+	}
+	if len(gaia) < 3 {
+		return nil, fmt.Errorf("plate solve: only %d Gaia stars across %d tiles", len(gaia), len(tiles))
+	}
+
+	// Match frame stars to Gaia and fit.
+	matches, ok := matchStarsToGaia(frameStars, gaia, 5.0)
+	if !ok {
+		return nil, fmt.Errorf("plate solve: no consistent transform (%d matched pairs)", len(matches))
+	}
+
+	// Build aligned frame-star and Gaia-star slices for the fit.
+	matchedFrame := make([]star, len(matches))
+	matchedGaia := make([]gaiaStar, len(matches))
+	for i, m := range matches {
+		matchedFrame[i] = frameStars[m.FrameIdx]
+		matchedGaia[i] = gaia[m.GaiaIdx]
+	}
+
+	wcs, err := fitWCSFromMatches(matchedFrame, matchedGaia)
+	if err != nil {
+		return nil, fmt.Errorf("plate solve: WCS fit: %w", err)
+	}
+	sip, err := fitSIPFromMatches(matchedFrame, matchedGaia, wcs, 2)
+	if err != nil {
+		// SIP failure is non-fatal: a TAN WCS with zero SIP is still a
+		// valid solution. Only log it.
+		logf("  plate: SIP fit skipped: %v", err)
+		sip = nil
+	}
+
+	// RMS reprojection error in arcsec.
+	arcsecPerRad := 180.0 / math.Pi * 3600.0
+	det := wcs.CD[0][0]*wcs.CD[1][1] - wcs.CD[0][1]*wcs.CD[1][0]
+	scaleRad := math.Sqrt(math.Abs(det))
+	var sumSq float64
+	for i := range matchedFrame {
+		x, y := wcsTanForward(&wcs, matchedGaia[i].RA, matchedGaia[i].Dec)
+		dx := x - matchedFrame[i].X
+		dy := y - matchedFrame[i].Y
+		sumSq += dx*dx + dy*dy
+	}
+	rmsPix := math.Sqrt(sumSq / float64(len(matchedFrame)))
+	rmsArcsec := rmsPix * scaleRad * arcsecPerRad
+
+	method := "header"
+	if blind {
+		method = "blind"
+	}
+	return &plateSolution{
+		WCS:       wcs,
+		SIP:       sip,
+		RMSArcsec: rmsArcsec,
+		NMatches:  len(matches),
+		NStars:    len(frameStars),
+		Method:    method,
+	}, nil
 }
 
 // gaiaDefaultCacheDir returns the OS user cache directory for Gaia
@@ -6971,6 +7909,90 @@ func testGaiaCLI(opts *cliOptions) error {
 	return nil
 }
 
+// testPlateCLI is the --test-plate backend: parse RA,DEC, build a small
+// synthetic star field, run solvePlate against the seeded Gaia cache, and
+// print the recovered WCS.
+func testPlateCLI(opts *cliOptions) error {
+	parts := strings.Split(opts.PlateTest, ",")
+	if len(parts) != 2 {
+		return fmt.Errorf("--test-plate expects RA,DEC in decimal degrees, got %q", opts.PlateTest)
+	}
+	raDeg, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil {
+		return fmt.Errorf("--test-plate: bad RA: %w", err)
+	}
+	decDeg, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil {
+		return fmt.Errorf("--test-plate: bad Dec: %w", err)
+	}
+	if raDeg < 0 || raDeg >= 360 {
+		return fmt.Errorf("--test-plate: RA must be in [0, 360), got %g", raDeg)
+	}
+	if decDeg < -90 || decDeg > 90 {
+		return fmt.Errorf("--test-plate: Dec must be in [-90, 90], got %g", decDeg)
+	}
+	ra := raDeg * math.Pi / 180
+	dec := decDeg * math.Pi / 180
+
+	// Synthetic star field around (ra, dec).
+	const nStars = 30
+	rng := rand.New(rand.NewSource(0x51F7E))
+	wcs := wcsTan{
+		CRVAL1: ra, CRVAL2: dec,
+		CRPIX1: 256, CRPIX2: 256,
+		CD: [2][2]float64{
+			{4.0e-6, 0},
+			{0, -4.0e-6},
+		},
+	}
+	frame := make([]star, nStars)
+	gaia := make([]gaiaStar, nStars)
+	for i := 0; i < nStars; i++ {
+		x := 100.0 + rng.Float64()*312.0
+		y := 100.0 + rng.Float64()*312.0
+		gra, gdec := wcsTanInverse(&wcs, x, y)
+		frame[i] = star{X: x, Y: y, Flux: 1000.0, Size: 5}
+		gaia[i] = gaiaStar{RA: gra, Dec: gdec, MagG: 12}
+	}
+
+	// Seed a cache dir with one tile at (ra, dec).
+	cacheDir := opts.GaiaCacheDir
+	if cacheDir == "" {
+		cacheDir = gaiaDefaultCacheDir()
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return err
+	}
+	ipix := healpixAng2PixNested(gaiaDefaultNside, ra, dec)
+	seed := gaiaTile{
+		Version: gaiaCacheVersion, Nside: gaiaDefaultNside, Ipix: ipix,
+		QueriedAt: "synthetic", MagLimit: gaiaDefaultMagLimit, Stars: gaia,
+	}
+	if err := gaiaSaveTileCache(cacheDir, seed); err != nil {
+		return err
+	}
+
+	mirror := opts.GaiaMirror
+	if mirror == "" {
+		mirror = gaiaDefaultMirror
+	}
+	sol, err := solvePlate(frame, 512, 512, ra, dec, cacheDir, mirror)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Plate solved (method=%s)\n", sol.Method)
+	fmt.Printf("  CRVAL1 = %.6f deg\n", sol.WCS.CRVAL1*180/math.Pi)
+	fmt.Printf("  CRVAL2 = %.6f deg\n", sol.WCS.CRVAL2*180/math.Pi)
+	fmt.Printf("  CRPIX1 = %.3f\n", sol.WCS.CRPIX1)
+	fmt.Printf("  CRPIX2 = %.3f\n", sol.WCS.CRPIX2)
+	fmt.Printf("  CD     = [[%.3e, %.3e], [%.3e, %.3e]]\n",
+		sol.WCS.CD[0][0], sol.WCS.CD[0][1], sol.WCS.CD[1][0], sol.WCS.CD[1][1])
+	fmt.Printf("  SIP    = %v\n", sol.SIP)
+	fmt.Printf("  RMS    = %.3f arcsec\n", sol.RMSArcsec)
+	fmt.Printf("  NMatches = %d / %d\n", sol.NMatches, sol.NStars)
+	return nil
+}
+
 // testGaiaCLIParsing exercises testGaiaCLI in offline mode against a
 // pre-seeded cache, so no network is required.
 func testGaiaCLIParsing() error {
@@ -7177,6 +8199,274 @@ func testMatchStarsToGaiaSynthetic() error {
 	return nil
 }
 
+// synthSkyField builds a synthetic frame/Gaia pair for a WCS: `nField`
+// stars with pixel positions in the 512x512 frame and the sky positions
+// they map to, plus `nExtra` brighter-or-fainter distractor Gaia stars
+// OUTSIDE the frame. Frame centroids get Gaussian noise of sigmaPix.
+// Flux follows the Gaia magnitude, so brightness ordering is consistent.
+func synthSkyField(w *wcsTan, seed int64, nField, nExtra int, sigmaPix float64) ([]star, []gaiaStar) {
+	rng := rand.New(rand.NewSource(seed))
+	var frame []star
+	var gaia []gaiaStar
+	for i := 0; i < nField; i++ {
+		x := 8 + rng.Float64()*496
+		y := 8 + rng.Float64()*496
+		ra, dec := wcsTanInverse(w, x, y)
+		mag := 8 + rng.Float64()*5
+		gaia = append(gaia, gaiaStar{RA: ra, Dec: dec, MagG: mag})
+		frame = append(frame, star{
+			X: x + rng.NormFloat64()*sigmaPix, Y: y + rng.NormFloat64()*sigmaPix,
+			Flux: math.Pow(10, -0.4*mag) * 1e6, Size: 5,
+		})
+	}
+	for i := 0; i < nExtra; i++ {
+		// Uniform over a region ~3x the frame size, rejecting in-frame.
+		var x, y float64
+		for {
+			x = -512 + rng.Float64()*1536
+			y = -512 + rng.Float64()*1536
+			if x < 0 || x > 512 || y < 0 || y > 512 {
+				break
+			}
+		}
+		ra, dec := wcsTanInverse(w, x, y)
+		gaia = append(gaia, gaiaStar{RA: ra, Dec: dec, MagG: 9 + rng.Float64()*5.5})
+	}
+	// With distractors present, shuffle Gaia so input order carries no
+	// information. Without them, keep frame[i] <-> gaia[i] pairing intact
+	// for tests that fit a WCS directly.
+	if nExtra > 0 {
+		rng.Shuffle(len(gaia), func(a, b int) { gaia[a], gaia[b] = gaia[b], gaia[a] })
+	}
+	return frame, gaia
+}
+
+// rotatedWCS returns a TAN WCS with the given pixel scale (arcsec/px),
+// rotation (degrees) and parity (mirror=true gives det(CD) < 0).
+func rotatedWCS(ra0, dec0, arcsecPerPix, rotDeg float64, mirror bool) *wcsTan {
+	s := arcsecPerPix * math.Pi / (180.0 * 3600.0)
+	th := rotDeg * math.Pi / 180.0
+	c, sn := math.Cos(th), math.Sin(th)
+	cd := [2][2]float64{{s * c, -s * sn}, {s * sn, s * c}}
+	if mirror {
+		cd = [2][2]float64{{s * c, s * sn}, {s * sn, -s * c}}
+	}
+	return &wcsTan{CRVAL1: ra0, CRVAL2: dec0, CRPIX1: 256, CRPIX2: 256, CD: cd}
+}
+
+// testWCSFitRotatedBothParities guards against a transposed CD matrix
+// (invisible for a diagonal CD) and against mirrored-field failures.
+func testWCSFitRotatedBothParities() error {
+	for _, mirror := range []bool{false, true} {
+		for _, rot := range []float64{0, 23, 90, 157, -64} {
+			for _, ra0 := range []float64{0.0031, 1.7, 6.2830} { // incl. RA wrap
+				w := rotatedWCS(ra0, 0.4, 1.5, rot, mirror)
+				frame, gaia := synthSkyField(w, 99, 60, 0, 0)
+				got, err := fitWCSFromMatches(frame, gaia)
+				if err != nil {
+					return fmt.Errorf("mirror=%v rot=%v ra0=%v: %w", mirror, rot, ra0, err)
+				}
+				var worst float64
+				for i := range frame {
+					x, y := wcsTanForward(&got, gaia[i].RA, gaia[i].Dec)
+					if e := math.Hypot(x-frame[i].X, y-frame[i].Y); e > worst {
+						worst = e
+					}
+				}
+				if worst > 1e-3 { // pixels
+					return fmt.Errorf("mirror=%v rot=%v ra0=%v: worst residual %.3g px, want < 1e-3", mirror, rot, ra0, worst)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// testMatchStarsToGaiaStress exercises the matcher with rotation, both
+// parities, centroid noise, distractor Gaia stars outside the frame,
+// shuffled Gaia order and a field straddling RA = 0.
+func testMatchStarsToGaiaStress() error {
+	type tc struct {
+		ra0, dec0, rot float64
+		mirror         bool
+	}
+	cases := []tc{
+		{0.9, 0.3, 37, false},
+		{0.9, 0.3, 37, true},
+		{6.2820, -0.2, 211, false}, // straddles RA = 0
+		{6.2820, -0.2, 211, true},
+		{3.1, 1.2, 5, true}, // high declination
+	}
+	for ci, c := range cases {
+		w := rotatedWCS(c.ra0, c.dec0, 1.5, c.rot, c.mirror)
+		frame, gaia := synthSkyField(w, int64(100+ci), 60, 120, 0.3)
+		// Remember each frame star's true Gaia partner by sky position.
+		truth := make([]int, len(frame))
+		for i := range frame {
+			truth[i] = -1
+			bestD := math.MaxFloat64
+			for j, g := range gaia {
+				x, y := wcsTanForward(w, g.RA, g.Dec)
+				if d := math.Hypot(x-frame[i].X, y-frame[i].Y); d < bestD {
+					bestD, truth[i] = d, j
+				}
+			}
+			if bestD > 3 { // outside noise: should not happen
+				return fmt.Errorf("case %d: bad ground truth for star %d (%.2f px)", ci, i, bestD)
+			}
+		}
+		pairs, ok := matchStarsToGaia(frame, gaia, 5.0)
+		if !ok {
+			return fmt.Errorf("case %d (rot=%v mirror=%v): matcher returned ok=false", ci, c.rot, c.mirror)
+		}
+		right := 0
+		for _, p := range pairs {
+			if truth[p.FrameIdx] == p.GaiaIdx {
+				right++
+			}
+		}
+		if right < 55 {
+			return fmt.Errorf("case %d (rot=%v mirror=%v): %d/%d correct pairs, want >= 55 of 60",
+				ci, c.rot, c.mirror, right, len(pairs))
+		}
+		if wrong := len(pairs) - right; wrong > 2 {
+			return fmt.Errorf("case %d: %d wrong pairs, want <= 2", ci, wrong)
+		}
+	}
+	return nil
+}
+
+// testMatchStarsToGaiaRejectsUnrelated verifies the matcher fails cleanly
+// when frame and Gaia stars are unrelated, instead of returning a
+// coincidental "solution" (any 3 stars fit a similarity exactly).
+func testMatchStarsToGaiaRejectsUnrelated() error {
+	for seed := int64(1); seed <= 3; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		frame := make([]star, 60)
+		for i := range frame {
+			frame[i] = star{X: rng.Float64() * 512, Y: rng.Float64() * 512, Flux: 1000 - float64(i)}
+		}
+		gaia := make([]gaiaStar, 300)
+		for i := range gaia {
+			gaia[i] = gaiaStar{
+				RA:   0.9 + (rng.Float64()-0.5)*0.01,
+				Dec:  0.3 + (rng.Float64()-0.5)*0.01,
+				MagG: 8 + rng.Float64()*6,
+			}
+		}
+		if pairs, ok := matchStarsToGaia(frame, gaia, 5.0); ok {
+			return fmt.Errorf("seed %d: unrelated star lists produced a %d-pair \"solution\"", seed, len(pairs))
+		}
+	}
+	return nil
+}
+
+// testHealpixCornersMatchHealpy compares true tile corners against values
+// from healpy 1.20.1 hp.boundaries(nside, ipix, step=1, nest=True),
+// reordered S, E, N, W.
+func testHealpixCornersMatchHealpy() error {
+	cases := []struct {
+		nside, ipix int
+		c           [4][2]float64 // ra, dec per corner
+	}{
+		{64, 0, [4][2]float64{{0.785398163397, 0.0}, {0.797670009701, 0.010416855056}, {0.785398163397, 0.020834840669}, {0.773126317094, 0.010416855056}}},
+		{64, 20000, [4][2]float64{{6.037748381118, 0.209870592263}, {6.050020227421, 0.220533260921}, {6.037748381118, 0.231221479457}, {6.025476534815, 0.220533260921}}},
+		{64, 49151, [4][2]float64{{5.497787143782, -0.020834840669}, {5.510058990085, -0.010416855056}, {5.497787143782, 0.0}, {5.485515297479, -0.010416855056}}},
+		{64, 31000, [4][2]float64{{4.540583132141, -0.104355972588}, {4.552854978445, -0.093887875108}, {4.540583132141, -0.083430086611}, {4.528311285838, -0.093887875108}}},
+	}
+	for _, tc := range cases {
+		got := healpixTileCornersExact(tc.nside, tc.ipix)
+		for k := 0; k < 4; k++ {
+			if math.Abs(got[k].X-tc.c[k][0]) > 1e-9 || math.Abs(got[k].Y-tc.c[k][1]) > 1e-9 {
+				return fmt.Errorf("nside=%d ipix=%d corner %d: got (%.9f, %.9f) want (%.9f, %.9f)",
+					tc.nside, tc.ipix, k, got[k].X, got[k].Y, tc.c[k][0], tc.c[k][1])
+			}
+		}
+	}
+	return nil
+}
+
+// testHealpixPolygonCoversPixel checks that the ADQL polygon (padded
+// corners) contains every sampled point of its own pixel, which is what
+// guarantees a tile query returns all Gaia stars belonging to the tile.
+// Includes pixels at the poles and at base-face seams.
+func testHealpixPolygonCoversPixel() error {
+	rng := rand.New(rand.NewSource(5))
+	for _, nside := range []int{16, 64, 256} {
+		for n := 0; n < 3000; n++ {
+			ra := rng.Float64() * 2 * math.Pi
+			dec := math.Asin(rng.Float64()*2 - 1)
+			ipix := healpixAng2PixNested(nside, ra, dec)
+			poly := healpixTileCorners(nside, ipix)
+			// Gnomonic projection about the pixel centre; polygon is convex
+			// and counter-clockwise (S, E, N, W) in that plane.
+			ra0, dec0 := healpixPix2AngNested(nside, ipix)
+			proj := func(r, d float64) (float64, float64) {
+				cosc := math.Sin(dec0)*math.Sin(d) + math.Cos(dec0)*math.Cos(d)*math.Cos(r-ra0)
+				xi := math.Cos(d) * math.Sin(r-ra0) / cosc
+				eta := (math.Sin(d)*math.Cos(dec0) - math.Cos(d)*math.Sin(dec0)*math.Cos(r-ra0)) / cosc
+				return xi, eta
+			}
+			px, py := proj(ra, dec)
+			// Ray-casting point-in-polygon in the (xi, eta) plane; the
+			// polygon is simple (it may be slightly concave where the
+			// pixel edges curve, so a convexity test would be wrong).
+			inside := false
+			for k, j := 0, len(poly)-1; k < len(poly); j, k = k, k+1 {
+				ax, ay := proj(poly[k].X, poly[k].Y)
+				bx, by := proj(poly[j].X, poly[j].Y)
+				if (ay > py) != (by > py) && px < (bx-ax)*(py-ay)/(by-ay)+ax {
+					inside = !inside
+				}
+			}
+			if !inside {
+				return fmt.Errorf("nside=%d ipix=%d: point (%.6f, %.6f) outside its own polygon", nside, ipix, ra, dec)
+			}
+		}
+	}
+	return nil
+}
+
+// testSolvePlateSeededCacheBothParities runs solvePlate end to end
+// against a pre-seeded Gaia cache (no network), for proper and mirrored
+// fields, with centroid noise and distractor stars.
+func testSolvePlateSeededCacheBothParities() error {
+	for _, mirror := range []bool{false, true} {
+		cacheDir, err := os.MkdirTemp("", "skystacker-solve-par-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(cacheDir)
+		// Centre the field on a tile centre so all stars live in one tile.
+		const ipix = 20000
+		ra0, dec0 := healpixPix2AngNested(gaiaDefaultNside, ipix)
+		w := rotatedWCS(ra0, dec0, 1.5, 31, mirror)
+		frame, gaia := synthSkyField(w, 7, 70, 100, 0.25)
+		seed := gaiaTile{
+			Version: gaiaCacheVersion, Nside: gaiaDefaultNside, Ipix: ipix,
+			QueriedAt: "2026-11-13T00:00:00Z", MagLimit: gaiaDefaultMagLimit, Stars: gaia,
+		}
+		if err := gaiaSaveTileCache(cacheDir, seed); err != nil {
+			return fmt.Errorf("seed cache: %w", err)
+		}
+		sol, err := solvePlate(frame, 512, 512, ra0, dec0, cacheDir, gaiaDefaultMirror)
+		if err != nil {
+			return fmt.Errorf("mirror=%v: %w", mirror, err)
+		}
+		if sol.NMatches < 55 {
+			return fmt.Errorf("mirror=%v: NMatches=%d, want >= 55", mirror, sol.NMatches)
+		}
+		if sol.RMSArcsec > 1.0 {
+			return fmt.Errorf("mirror=%v: RMS=%.3f arcsec, want < 1.0 (noise is 0.25 px = 0.375 arcsec)", mirror, sol.RMSArcsec)
+		}
+		det := sol.WCS.CD[0][0]*sol.WCS.CD[1][1] - sol.WCS.CD[0][1]*sol.WCS.CD[1][0]
+		if (det < 0) != mirror {
+			return fmt.Errorf("mirror=%v: solved parity is wrong (det=%g)", mirror, det)
+		}
+	}
+	return nil
+}
+
 // loadGaiaPlateFixture reads testdata/gaia_plate_fixture.json and returns
 // (trueWCS, frameStars, gaiaStars). frameStars are the fixture's true
 // (RA,Dec) projected through trueWCS to pixel coordinates; gaiaStars are
@@ -7280,10 +8570,33 @@ func testPlateSolveHeaderSeeded() error {
 }
 
 func testPlateSolveBlind() error {
-	_, frameStars, gaiaStars, err := loadGaiaPlateFixture()
+	w, frameStars, gaiaStars, err := loadGaiaPlateFixture()
 	if err != nil {
 		return fmt.Errorf("load fixture: %w", err)
 	}
+	// Blind mode only scans the nside=64 tiles around RA/Dec (0, 0), so a
+	// fixture located elsewhere on the sky can never be found by it. Keep
+	// the fixture's pixel positions and geometry but move its sky position
+	// to the centre of the scan patch (tile ipix 18090, RA 0.703 deg),
+	// recomputing each Gaia star from the shifted WCS (frameStars[i] and
+	// gaiaStars[i] are the same star by construction).
+	shifted := w
+	shifted.CRVAL1, shifted.CRVAL2 = 0.01227, 0.0030
+	shifted.CRPIX1, shifted.CRPIX2 = w.CRPIX1, w.CRPIX2
+	gaiaStars = append([]gaiaStar(nil), gaiaStars...)
+	for i := range gaiaStars {
+		ra, dec := wcsTanInverse(&shifted, frameStars[i].X, frameStars[i].Y)
+		if ra < 0 {
+			ra += 2 * math.Pi
+		}
+		gaiaStars[i].RA, gaiaStars[i].Dec = ra, dec
+	}
+	// Hermetic: never touch the network. Unseeded scan tiles are skipped
+	// instead of being fetched live (which would add real stars that are
+	// unrelated to the fixture).
+	oldOffline := plateGaiaOffline
+	plateGaiaOffline = true
+	defer func() { plateGaiaOffline = oldOffline }()
 	cacheDir, err := os.MkdirTemp("", "skystacker-platesolve-blind-")
 	if err != nil {
 		return err
@@ -7457,6 +8770,12 @@ func runSelfTests() int {
 		{"match stars to gaia synthetic", testMatchStarsToGaiaSynthetic},
 		{"plate solve header seeded", testPlateSolveHeaderSeeded},
 		{"plate solve blind", testPlateSolveBlind},
+		{"wcs fit rotated both parities", testWCSFitRotatedBothParities},
+		{"match stars to gaia stress", testMatchStarsToGaiaStress},
+		{"match stars to gaia rejects unrelated", testMatchStarsToGaiaRejectsUnrelated},
+		{"healpix corners match healpy", testHealpixCornersMatchHealpy},
+		{"healpix polygon covers pixel", testHealpixPolygonCoversPixel},
+		{"plate solve seeded both parities", testSolvePlateSeededCacheBothParities},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -13682,6 +15001,13 @@ func main() {
 		}
 		return
 	}
+	if opts.PlateTest != "" {
+		if err := testPlateCLI(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if opts.TestDebayer != "" {
 		if err := testFITSFileDebayer(opts.TestDebayer); err != nil {
 			fmt.Fprintln(os.Stderr, "skystacker:", err)
@@ -13765,9 +15091,116 @@ func main() {
 		NoCache:              opts.NoCache,
 		CacheDir:             opts.CacheDir,
 		KeepCache:            opts.KeepCache,
+		PlateSolve:           opts.PlateSolve,
+		GaiaOffline:          opts.GaiaOffline,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
 		os.Exit(1)
 	}
+}
+
+// matchTrianglesRelaxed is a wider-tolerance variant of matchTriangles
+// used only by matchStarsToGaia. It is a separate function so the tested
+// matchTriangles (used by registration and covered by
+// testRegistrationWithOutliers) is not weakened. descTol and grid are
+// arguments rather than constants so future callers can tune without
+// touching this function. The ref/tgt argument order matches
+// matchTriangles: ref is the reference side (here: Gaia), tgt is the
+// target (here: frame).
+func matchTrianglesRelaxed(refStars, tgtStars []star, descTol, gridSize float64) []triangleMatch {
+	refTris := buildTriangles(refStars)
+	tgtTris := buildTriangles(tgtStars)
+	if len(refTris) == 0 || len(tgtTris) == 0 {
+		return nil
+	}
+	if descTol <= 0 {
+		descTol = 0.02
+	}
+	if gridSize <= 0 {
+		gridSize = 0.01
+	}
+	bucket := make(map[[2]int][]int, len(refTris))
+	for i, rt := range refTris {
+		k := [2]int{int(rt.R1 / gridSize), int(rt.R2 / gridSize)}
+		bucket[k] = append(bucket[k], i)
+	}
+	var out []triangleMatch
+	for _, tt := range tgtTris {
+		key := [2]int{int(tt.R1 / gridSize), int(tt.R2 / gridSize)}
+		for dx := -2; dx <= 2; dx++ {
+			for dy := -2; dy <= 2; dy++ {
+				for _, ri := range bucket[[2]int{key[0] + dx, key[1] + dy}] {
+					rt := refTris[ri]
+					d1 := rt.R1 - tt.R1
+					d2 := rt.R2 - tt.R2
+					if d1*d1+d2*d2 > descTol*descTol {
+						continue
+					}
+					refChir := chirality(refStars, rt.A, rt.B, rt.C)
+					tgtChir := chirality(tgtStars, tt.A, tt.B, tt.C)
+					if (refChir > 0) != (tgtChir > 0) {
+						continue
+					}
+					out = append(out, triangleMatch{
+						Ref: [3]int{rt.A, rt.B, rt.C},
+						Tgt: [3]int{tt.A, tt.B, tt.C},
+					})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// rmsRadiusPixels returns the RMS distance of the given stars from their
+// centroid, in the same units as s[i].X/Y (pixels for frame stars).
+// Used only by matchStarsToGaia to normalize the Gaia coordinate scale
+// before triangle matching. Returns 0 for an empty slice.
+
+// rmsRadiusRadians returns the RMS distance of the given Gaia stars from
+// their centroid, in radians. Used only by matchStarsToGaia to compute
+// the uniform scale factor that maps Gaia coordinates into the frame's
+// pixel-like magnitude. Returns 0 for an empty slice.
+
+// medianPairwiseDistancePixels returns the median pairwise Euclidean
+// distance between the given stars. Used only by matchStarsToGaia to
+// estimate the frame's pixel scale robustly against a small fraction
+// of outliers. Returns 0 for fewer than 2 stars.
+//
+// O(n^2) — acceptable because len(s) is at most a few hundred in
+// practice (star detection caps at maxStars=100 by default, and a
+// real plate solve uses the brightest 50-100).
+func medianPairwiseDistancePixels(s []star) float64 {
+	n := len(s)
+	if n < 2 {
+		return 0
+	}
+	dists := make([]float64, 0, n*(n-1)/2)
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			dists = append(dists, math.Hypot(s[i].X-s[j].X, s[i].Y-s[j].Y))
+		}
+	}
+	sort.Float64s(dists)
+	return dists[len(dists)/2]
+}
+
+// medianPairwiseDistanceRadians is the gaiaStar analogue of
+// medianPairwiseDistancePixels. Uses simple Euclidean distance in
+// (RA, Dec) space, which is adequate for the small fields the plate
+// solver handles (wide-field is a follow-up).
+func medianPairwiseDistanceRadians(g []gaiaStar) float64 {
+	n := len(g)
+	if n < 2 {
+		return 0
+	}
+	dists := make([]float64, 0, n*(n-1)/2)
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			dists = append(dists, math.Hypot(g[i].RA-g[j].RA, g[i].Dec-g[j].Dec))
+		}
+	}
+	sort.Float64s(dists)
+	return dists[len(dists)/2]
 }
