@@ -20,11 +20,13 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 154 embedded self-tests.
+- 154 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
-- Drizzle, Bayer drizzle, SIP distortion application to the resampler, and other higher-order distortion models (TAN WCS plate solving itself is included and wired via `--plate-solve`).
+- Drizzle, Bayer drizzle, and SIP distortion *application* to the resampler (the SIP fit is computed and stored, but the resampler still uses the linear TAN CD matrix).
+- Higher-order distortion models beyond SIP order 2.
+- Whole-sky blind plate solving. TAN WCS plate solving is included and wired via `--plate-solve`; blind mode is a 3x3 nside=64 local scan around (0,0) and will fail on a real field, so a pointing seed (`--plate-center` or the reference frame's FITS `RA`/`DEC`) is required in practice.
 - GUI.
 
 ## 3. CLI Contract
@@ -126,7 +128,7 @@ Optional steps gated by flags: `--post-ca`, `--post-color`, `--post-flatten`, `-
 
 ### 4.5 Gaia DR3 data-access layer
 
-Consumed by `--plate-solve` (seeded via `--plate-center` or the reference frame's FITS RA/DEC; blind mode scans only the 3x3 nside=64 neighbourhood around (0,0)). Still reachable standalone via `--test-gaia`.
+Consumed by `--plate-solve` (seeded via `--plate-center` or the reference frame's FITS RA/DEC; blind mode scans only the 3x3 nside=64 neighbourhood around (0,0)). Still reachable standalone via `--test-gaia`. The solved TAN WCS is written to `plate_solution.json` and the SIP order-2 coefficients are stored alongside it; applying SIP to the resampler is not yet wired (see §2 Excluded).
 
 - **HEALPix nested scheme** — `healpixAng2PixNested`, `healpixPix2AngNested`, `healpixTileCorners`. `ang2pix`/`pix2ang` match healpy 1.20.1 exactly (nside 1/16/64/256, ~3,600 reference points; exact pixel-corner points are float-noise ties). `healpixTileBoundary` ports `Healpix_Base::boundaries(step)` and matches `hp.boundaries` exactly; `healpixTileCorners` returns a 16-vertex polygon following the curved pixel edge, padded 1 % outward, RA in [0, 2π). Default query nside is 64 (~0.84 deg² per tile); override with `--gaia-nside 256` (~0.052 deg²) when finer tiles are needed.
 - **TAP client** — `gaiaQueryTile` posts an ADQL `POLYGON` query to `/sync` on the configured mirror. Per-attempt `context.WithTimeout(180s)`; 5 s heartbeat via `gaiaWaitWithProgress`; 3 attempts with 2 s / 4 s backoff on 5xx / connection error. Timeouts are fatal and not retried. Custom User-Agent; `MAXREC=2000`.

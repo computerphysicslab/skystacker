@@ -503,6 +503,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --no-curves           skip the background-darkening curves step (post_step6_curves.jpg)")
 	fmt.Fprintln(w, "  --curves-black F      curves: shadow crush point (0-0.5, default 0.03)")
 	fmt.Fprintln(w, "  --curves-gamma F      curves: midtone gamma (>1 darkens, <1 brightens, default 1.20)")
+	// NOTE: the numeric defaults below MUST match parseArgs; testParseArgs
+	// asserts (SpikesLength=10.0, SpikesIntensity=0.3, SpikesArms=4) so
+	// any future drift fails the self-test suite.
 	fmt.Fprintln(w, "  --spikes              add diffraction spikes (default: on; --no-spikes to disable)")
 	fmt.Fprintln(w, "  --no-spikes           disable diffraction spikes (overrides --spikes)")
 	fmt.Fprintln(w, "  --spikes-percent F    percent of detected stars to spike (default 0.2)")

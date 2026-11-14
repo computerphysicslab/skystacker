@@ -27,7 +27,7 @@ limited or workflow-dependent.
 
 | Tool | Dark / Flat / Bias | Bad-pixel map | Distortion corr. | Plate solving |
 |---|---|---|---|---|
-| **SkyStacker** | Yes | – | – | – |
+| **SkyStacker** | Yes | – | – | Partial (wired, seeded) |
 | **OriginStack** | Yes | – | – | Yes |
 | **DeepSkyStacker** | Yes | – | – | – |
 | **Siril** | Yes | Yes | Yes | Partial |
@@ -65,7 +65,7 @@ limited or workflow-dependent.
 
 | Tool | Built-in post | Scripting / CLI | Output formats | GPU |
 |---|---|---|---|---|
-| **SkyStacker** | Extensive | CLI only | TIFF / JPEG / raw | – |
+| **SkyStacker** | Extensive | CLI only | TIFF / JPEG / PNG / BMP / raw | – |
 | **OriginStack** | Extensive | CLI (Python) | FITS / JPG | Yes (CUDA) |
 | **DeepSkyStacker** | Minimal | CLI | TIFF / FITS | – |
 | **Siril** | Extensive | Scripts + CLI | FITS / TIFF / JPEG / SER | – |
@@ -97,7 +97,7 @@ limited or workflow-dependent.
 **Gaps vs mature tools**
 
 - No GUI.
-- No mosaic, no drizzle, no plate solving / WCS / SIP — Gaia DR3 data-access scaffolding (HEALPix + TAP client + on-disk tile cache) is in place; pipeline consumer pending.
+- No mosaic, no drizzle. TAN WCS plate solving is wired (`--plate-solve`, seeded via `--plate-center` or the reference frame's FITS `RA`/`DEC`, output in `plate_solution.json`), but SIP order-2 coefficients are only *fit* and *stored* — applying them to the resampler is still open, so `Distortion corr.` remains `–` above.
 - No deconvolution or PSF modelling.
 - No dedicated comet / moving-object stacking.
 - No scripting beyond flags.

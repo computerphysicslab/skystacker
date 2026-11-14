@@ -496,13 +496,14 @@ The following items from the original roadmap have been implemented in 0.5.0:
   clipping rejects exactly the extreme outliers, so bright spots there are
   cosmic-ray or hot-pixel hits.
 
-- **Gaia DR3 data-access layer (scaffolding)** — HEALPix nested math,
+- **Gaia DR3 data-access layer** — HEALPix nested math,
   a TAP client to the ESA Gaia archive with a 180 s per-attempt timeout and
   a 5 s progress heartbeat, and a per-tile JSON disk cache under
   the OS user cache dir (`~/.cache/skystacker/gaia_cache/` on Linux,
-  `~/Library/Caches/skystacker/gaia_cache/` on macOS). No pipeline
-  consumer yet; run
-  `./skystacker --test-gaia RA,DEC` to exercise it end-to-end.
+  `~/Library/Caches/skystacker/gaia_cache/` on macOS). **Consumed by
+  `--plate-solve`** (seed with `--plate-center RA,DEC` or a reference
+  frame with FITS `RA`/`DEC`); the solved WCS is written to
+  `plate_solution.json`. Standalone: `./skystacker --test-gaia RA,DEC`.
   Tile geometry matches healpy 1.16.5 at nside up to 256; fixtures live in `testdata/healpix_reference.json`.
 
 ## Planned Potential Features and Technologies Roadmap
@@ -571,12 +572,13 @@ The following items from the original roadmap have been implemented in 0.5.0:
   Test: `testSIPResampleRoundTrip`.
 - **Astrometric plate solving & WCS** (consumer of the Gaia layer):
   the data-access layer (HEALPix nested math, TAP client, per-tile JSON
-  cache, `--test-gaia`) is already committed and tested; `solvePlate`
-  is wired via `--plate-solve` but is always blind around (0,0) until
-  Tier 1's `--plate-center` lands. Remaining work: FITS-header RA/DEC
-  auto-seed, SIP application (previous bullet), `plate_solution.json`
-  in the output bundle. Reference: Astrometry.net / local Gaia
-  catalogues.
+  cache, `--test-gaia`) and the solver (`solvePlate`, `fitWCSFromMatches`,
+  `fitSIPFromMatches`) are committed and tested. `--plate-solve` consumes
+  the layer; `--plate-center RA,DEC` and FITS-header RA/DEC auto-seed are
+  wired, and `plate_solution.json` is written to the output bundle. What
+  remains is *applying* SIP to the resampler (see the SIP bullet above)
+  and wiring the solver into `--post-only`. Reference: Astrometry.net /
+  local Gaia catalogues.
   Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
 - **PSF modelling & HFR**: Gaussian and Moffat profile fits per star;
   Half Flux Radius; elliptical Gaussian fitting for tracking errors,
