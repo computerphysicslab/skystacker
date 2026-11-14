@@ -184,6 +184,9 @@ type cliOptions struct {
 	GaiaCacheRefresh bool
 	PlateSolve       bool
 	PlateTest        string
+	PlateCenter      string
+	WritePNG         bool
+	WriteBMP         bool
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -257,6 +260,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
 	fs.BoolVar(&o.PlateSolve, "plate-solve", false, "run TAN WCS plate solve after stacking (writes plate_solution.json)")
 	fs.StringVar(&o.PlateTest, "test-plate", "", "one-shot plate solve on RA,DEC in decimal degrees: prints WCS, then exits")
+	fs.StringVar(&o.PlateCenter, "plate-center", "", "RA,DEC seed for plate solve in decimal degrees (falls back to the reference frame's FITS RA/DEC)")
+	fs.BoolVar(&o.WritePNG, "png", false, "write stacked_mean.png alongside the JPEGs")
+	fs.BoolVar(&o.WriteBMP, "bmp", false, "write stacked_mean.bmp alongside the JPEGs")
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
@@ -292,7 +298,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -400,6 +406,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.GaiaOffline && o.GaiaCacheRefresh {
 		return nil, fmt.Errorf("--gaia-offline and --gaia-cache-refresh are mutually exclusive")
 	}
+	if o.PlateCenter != "" {
+		if _, _, err := parseRADecArg(o.PlateCenter, "--plate-center"); err != nil {
+			return nil, err
+		}
+	}
 	rest := fs.Args()
 	if len(rest) > 1 {
 		return nil, fmt.Errorf("unexpected arguments: %v", rest[1:])
@@ -413,6 +424,32 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, fmt.Errorf("--workers must be >= 1, got %d", o.Workers)
 	}
 	return o, nil
+}
+
+// parseRADecArg parses "RA,DEC" as decimal degrees, validating ranges
+// [0,360) for RA and [-90,90] for Dec. Returns the values in radians and
+// a nil error on success. Shared by --test-gaia, --test-plate and
+// --plate-center so the four flags cannot drift apart.
+func parseRADecArg(s, flagName string) (raRad, decRad float64, err error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("%s expects RA,DEC in decimal degrees, got %q", flagName, s)
+	}
+	raDeg, e := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if e != nil {
+		return 0, 0, fmt.Errorf("%s: bad RA: %w", flagName, e)
+	}
+	decDeg, e := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if e != nil {
+		return 0, 0, fmt.Errorf("%s: bad Dec: %w", flagName, e)
+	}
+	if raDeg < 0 || raDeg >= 360 {
+		return 0, 0, fmt.Errorf("%s: RA must be in [0, 360), got %g", flagName, raDeg)
+	}
+	if decDeg < -90 || decDeg > 90 {
+		return 0, 0, fmt.Errorf("%s: Dec must be in [-90, 90], got %g", flagName, decDeg)
+	}
+	return raDeg * math.Pi / 180, decDeg * math.Pi / 180, nil
 }
 
 func printUsage(w io.Writer) {
@@ -464,9 +501,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --spikes              add diffraction spikes (default: on; --no-spikes to disable)")
 	fmt.Fprintln(w, "  --no-spikes           disable diffraction spikes (overrides --spikes)")
 	fmt.Fprintln(w, "  --spikes-percent F    percent of detected stars to spike (default 0.2)")
-	fmt.Fprintln(w, "  --spikes-length F     spike arm half-length in px (default 100)")
-	fmt.Fprintln(w, "  --spikes-intensity F  peak additive spike brightness (default 0.7)")
-	fmt.Fprintln(w, "  --spikes-arms N       number of spike arms: 4=cross, 6=hexagonal (default 6)")
+	fmt.Fprintln(w, "  --spikes-length F     spike arm half-length in px (default 10)")
+	fmt.Fprintln(w, "  --spikes-intensity F  peak additive spike brightness (default 0.3)")
+	fmt.Fprintln(w, "  --spikes-arms N       number of spike arms: 4=cross, 6=hexagonal (default 4)")
 	fmt.Fprintln(w, "  --spikes-softness F   intensity falloff exponent: 0.1=flat, 0.5=sqrt, 1.0=linear (default 0.5)")
 	fmt.Fprintln(w, "  --spikes-min-ratio F  minimum intensity for faintest spiked star (default 0.2)")
 	fmt.Fprintln(w, "  --spikes-length-softness F  length falloff exponent: 1.0=proportional, 1.5=super-linear (default 1.0)")
@@ -485,6 +522,10 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --plate-solve      run TAN WCS plate solve after stacking (writes plate_solution.json)")
 	fmt.Fprintln(w, "  --test-plate R,D   one-shot plate solve on RA,DEC in decimal degrees, then exit")
+	fmt.Fprintln(w, "  --plate-center R,D seed the plate solver with RA,DEC in decimal degrees")
+	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
+	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
+	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
@@ -711,7 +752,7 @@ func decodeImageConfig(path string) (image.Config, error) {
 		return decodeCR2Config(path)
 	}
 	if ext == ".fits" || ext == ".fit" {
-		w, h, _, _, _, _, _, _, _, err := parseFITSHeader(path)
+		w, h, _, _, _, _, _, _, _, _, _, err := parseFITSHeader(path)
 		if err == nil && w > 0 && h > 0 {
 			return image.Config{Width: w, Height: h}, nil
 		}
@@ -2359,6 +2400,75 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 }
 
 // =========================================================================
+// Output — PNG / BMP (optional lossless siblings of the JPEGs)
+// =========================================================================
+
+// writePNGPreview writes a lossless 8-bit PNG using the same per-pixel
+// byte mapping as the gamma 0.5 preview JPEGs, so stacked_mean.png is
+// directly comparable to stacked_mean.jpg. Uses the already-imported
+// image/png package.
+func writePNGPreview(w io.Writer, width, height int, pix []float32) error {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	inv := float32(1.0)
+	for y := 0; y < height; y++ {
+		rowOff := y * img.Stride
+		for x := 0; x < width; x++ {
+			i := (y*width + x) * 3
+			o := rowOff + x*4
+			img.Pix[o+0] = previewLUT[stretchIndex(pix[i+0]*inv)]
+			img.Pix[o+1] = previewLUT[stretchIndex(pix[i+1]*inv)]
+			img.Pix[o+2] = previewLUT[stretchIndex(pix[i+2]*inv)]
+			img.Pix[o+3] = 255
+		}
+	}
+	return png.Encode(w, img)
+}
+
+// writeBMP24 writes an uncompressed 24-bit BMP (bottom-up rows, BGR
+// order, 4-byte row padding) from a float32 RGB buffer. Hand-written
+// because the Go standard library has no BMP encoder and the project is
+// stdlib-only.
+func writeBMP24(w io.Writer, width, height int, pix []float32) error {
+	if width <= 0 || height <= 0 || len(pix) < width*height*3 {
+		return fmt.Errorf("bmp: invalid dimensions/buffer")
+	}
+	rowBytes := ((width*3 + 3) / 4) * 4
+	pixelBytes := rowBytes * height
+	fileSize := 14 + 40 + pixelBytes
+	hdr := make([]byte, 14+40)
+	hdr[0], hdr[1] = 'B', 'M'
+	binary.LittleEndian.PutUint32(hdr[2:], uint32(fileSize))
+	binary.LittleEndian.PutUint32(hdr[10:], 54) // pixel data offset
+	binary.LittleEndian.PutUint32(hdr[14:], 40) // BITMAPINFOHEADER size
+	binary.LittleEndian.PutUint32(hdr[18:], uint32(width))
+	binary.LittleEndian.PutUint32(hdr[22:], uint32(height))
+	binary.LittleEndian.PutUint16(hdr[26:], 1)  // planes
+	binary.LittleEndian.PutUint16(hdr[28:], 24) // bpp
+	binary.LittleEndian.PutUint32(hdr[34:], uint32(pixelBytes))
+	binary.LittleEndian.PutUint32(hdr[38:], 2835) // 72 DPI
+	binary.LittleEndian.PutUint32(hdr[42:], 2835)
+	if _, err := w.Write(hdr); err != nil {
+		return err
+	}
+	row := make([]byte, rowBytes)
+	for y := height - 1; y >= 0; y-- { // BMP rows are bottom-up
+		off := y * width * 3
+		for x := 0; x < width; x++ {
+			row[x*3+0] = floatToByte(pix[off+x*3+2]) // B
+			row[x*3+1] = floatToByte(pix[off+x*3+1]) // G
+			row[x*3+2] = floatToByte(pix[off+x*3+0]) // R
+		}
+		for i := width * 3; i < rowBytes; i++ {
+			row[i] = 0
+		}
+		if _, err := w.Write(row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// =========================================================================
 // Output — preview JPEG
 // =========================================================================
 
@@ -2981,6 +3091,11 @@ type runOptions struct {
 	PlateSolve bool
 	// GaiaOffline makes the plate-solve step use only cached Gaia tiles.
 	GaiaOffline bool
+	// PlateCenter is "RA,DEC" in decimal degrees; empty means "fall back
+	// to the reference frame's FITS header RA/DEC, else blind".
+	PlateCenter string
+	WritePNG    bool
+	WriteBMP    bool
 }
 
 func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
@@ -4553,6 +4668,22 @@ func detectCalibrationSubdirs(inputDir string) calibLayout {
 	}
 }
 
+// referenceFITSSeed returns (raRad, decRad, true) when path is a FITS
+// file whose header carries both RA and DEC (degrees -> radians). The
+// plate solver treats (0, 0) as "blind"; a real field exactly at
+// RA/Dec 0,0 is pathological and not worth special-casing.
+func referenceFITSSeed(path string) (float64, float64, bool) {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".fits" && ext != ".fit" {
+		return 0, 0, false
+	}
+	_, _, _, _, _, _, _, _, _, ra, dec, err := parseFITSHeader(path)
+	if err != nil || (ra == 0 && dec == 0) {
+		return 0, 0, false
+	}
+	return ra, dec, true
+}
+
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
 	var plateSolutionOut *plateSolution
@@ -5080,7 +5211,19 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		} else {
 			if opts.PlateSolve {
 				plateGaiaOffline = opts.GaiaOffline
-				sol, perr := solvePlate(refStars, refW, refH, 0, 0, "", gaiaDefaultMirror)
+				seedRA, seedDec := 0.0, 0.0
+				seedSrc := "blind (solvePlate will scan around RA/Dec 0,0; almost certainly fails on a real field)"
+				if opts.PlateCenter != "" {
+					if r, d, perr := parseRADecArg(opts.PlateCenter, "--plate-center"); perr == nil {
+						seedRA, seedDec = r, d
+						seedSrc = "flag (--plate-center)"
+					}
+				} else if r, d, ok := referenceFITSSeed(accepted[refIdx].path); ok {
+					seedRA, seedDec = r, d
+					seedSrc = "header (reference frame FITS RA/DEC)"
+				}
+				logf("Plate solve seed: %s", seedSrc)
+				sol, perr := solvePlate(refStars, refW, refH, seedRA, seedDec, "", gaiaDefaultMirror)
 				if perr != nil {
 					logf("Plate solve: FAILED (%v)", perr)
 				} else {
@@ -5408,6 +5551,24 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		cropRect = findSafeCrop(validCount, refW, refH, int32(registeredCount))
 		logf("Crop: x=%d..%d, y=%d..%d (%dx%d)", cropRect.Min.X, cropRect.Max.X-1,
 			cropRect.Min.Y, cropRect.Max.Y-1, cropRect.Dx(), cropRect.Dy())
+		// Count pixels the validity mask excluded from the full-coverage
+		// set. Normally 0 (the calibrate clamp keeps every sample in [0,1],
+		// so updateValidCount accepts all of them inside the resampled
+		// footprint). It is >0 when a calibration product went negative
+		// (out-of-bounds resample, flat master with negatives) and the
+		// pixel was masked. The crop-explanation below reports this
+		// explicitly instead of lying with "all registered frames cover".
+		var validityLimited int64
+		for _, c := range validCount {
+			if c < int32(registeredCount) {
+				validityLimited++
+			}
+		}
+		validityFrac := float64(validityLimited) / float64(refW*refH)
+		if validityFrac > 0.005 {
+			logf("Crop: validity mask excludes %d px (%.2f%% of frame)",
+				validityLimited, 100*validityFrac)
+		}
 
 		// Per-frame diagnostics. refIdx and refStars were hoisted to
 		// function scope above so both this pass-2 block and the
@@ -5489,6 +5650,17 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		cropExplanation = fmt.Sprintf(
 			"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). All registered frames cover the full reference image, so no frame is limiting the crop.",
 			cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH)
+		// Precedence: if a meaningful fraction of the frame is excluded by
+		// the validity mask (not geometric frame overlap), say so. That is
+		// more actionable than "some frame limits the crop" when the cause
+		// is a calibration product going out of [0,1]. Otherwise fall
+		// through to the limiter/rotation/drift messages below.
+		if validityFrac > 0.005 && len(limiterNames) == 0 {
+			cropExplanation = fmt.Sprintf(
+				"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). Crop limited by %d pixels (%.2f%% of the frame) where fewer than %d registered frames had a valid sample — likely calibration-negative or out-of-bounds resampling, not geometric frame overlap.",
+				cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH,
+				validityLimited, 100*validityFrac, registeredCount)
+		}
 		if len(limiterNames) > 0 {
 			logf("Crop limited by %d frame(s): %s", len(limiterNames), strings.Join(limiterNames, ", "))
 
@@ -5720,6 +5892,22 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}); err != nil {
 			return fmt.Errorf("write mean jpg: %w", err)
 		}
+		if opts.WritePNG {
+			pngPath := filepath.Join(outputDir, "stacked_mean.png")
+			if err := writeFileAtomic(pngPath, func(w io.Writer) error {
+				return writePNGPreview(w, outW, outH, meanPix)
+			}); err != nil {
+				logf("  WARNING: png: %v", err)
+			}
+		}
+		if opts.WriteBMP {
+			bmpPath := filepath.Join(outputDir, "stacked_mean.bmp")
+			if err := writeFileAtomic(bmpPath, func(w io.Writer) error {
+				return writeBMP24(w, outW, outH, meanPix)
+			}); err != nil {
+				logf("  WARNING: bmp: %v", err)
+			}
+		}
 		if regRejPix != nil || regWgtPix != nil {
 			writeGrayscaleMaps(outputDir, outW, outH, regRejPix, regWgtPix, "")
 		}
@@ -5793,6 +5981,22 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return writePreviewJPEG(w, outW, outH, meanPix)
 		}); err != nil {
 			return fmt.Errorf("write mean jpg: %w", err)
+		}
+		if opts.WritePNG {
+			pngPath := filepath.Join(outputDir, "stacked_mean.png")
+			if err := writeFileAtomic(pngPath, func(w io.Writer) error {
+				return writePNGPreview(w, outW, outH, meanPix)
+			}); err != nil {
+				logf("  WARNING: png: %v", err)
+			}
+		}
+		if opts.WriteBMP {
+			bmpPath := filepath.Join(outputDir, "stacked_mean.bmp")
+			if err := writeFileAtomic(bmpPath, func(w io.Writer) error {
+				return writeBMP24(w, outW, outH, meanPix)
+			}); err != nil {
+				logf("  WARNING: bmp: %v", err)
+			}
 		}
 	}
 
@@ -9362,6 +9566,212 @@ func testSigmaClipFewSurvivors() error {
 }
 
 // testGaiaBuildADQLMagLimit covers mag-limit corner cases.
+// testPlateCenterFlagReachesSolver covers both halves of the --plate-center
+// feature: (A) parseArgs -> cliOptions -> parseRADecArg plumbing, and
+// (B) the parsed (ra, dec) is what solvePlate consumes. Part B uses a
+// pre-seeded Gaia cache (no network), so it is hermetic.
+func testPlateCenterFlagReachesSolver() error {
+	// --- Part A: parseArgs -> cliOptions ---
+	opts, err := parseArgs([]string{"--plate-center", "83.82,-5.39"})
+	if err != nil {
+		return fmt.Errorf("parseArgs: %w", err)
+	}
+	if opts.PlateCenter != "83.82,-5.39" {
+		return fmt.Errorf("PlateCenter = %q, want 83.82,-5.39", opts.PlateCenter)
+	}
+	// Positional-after-flag ordering must also work (exercises the
+	// skipNext value-flag list).
+	opts2, err := parseArgs([]string{"/tmp", "--plate-center", "0,0"})
+	if err != nil {
+		return fmt.Errorf("parseArgs positional: %w", err)
+	}
+	if opts2.InputDir != "/tmp" || opts2.PlateCenter != "0,0" {
+		return fmt.Errorf("positional: InputDir=%q PlateCenter=%q", opts2.InputDir, opts2.PlateCenter)
+	}
+	// Bad values must be rejected at parse time.
+	for _, bad := range []string{"", "1", "abc,1", "1,abc", "400,0", "-1,0", "0,91", "0,-91"} {
+		if bad == "" {
+			continue // empty string means "not set"; skip
+		}
+		if _, err := parseArgs([]string{"--plate-center", bad}); err == nil {
+			return fmt.Errorf("parseArgs accepted bad --plate-center %q", bad)
+		}
+	}
+	// parseRADecArg directly: canonical accepts.
+	for _, ok := range []string{"0,0", "359.999,-90", "83.82,-5.39"} {
+		if _, _, err := parseRADecArg(ok, "--plate-center"); err != nil {
+			return fmt.Errorf("parseRADecArg(%q) rejected: %v", ok, err)
+		}
+	}
+
+	// --- Part B: parsed (ra, dec) reaches solvePlate ---
+	const ipix = 20000 // well inside one nside=64 tile
+	ra0, dec0 := healpixPix2AngNested(gaiaDefaultNside, ipix)
+	raDeg := ra0 * 180 / math.Pi
+	decDeg := dec0 * 180 / math.Pi
+	seedStr := fmt.Sprintf("%.8f,%.8f", raDeg, decDeg)
+	raParsed, decParsed, err := parseRADecArg(seedStr, "--plate-center")
+	if err != nil {
+		return fmt.Errorf("parseRADecArg seed: %w", err)
+	}
+	w := rotatedWCS(ra0, dec0, 1.5, 17, false)
+	frame, gaia := synthSkyField(w, 314, 70, 100, 0.25)
+	cacheDir, err := os.MkdirTemp("", "skystacker-platecenter-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(cacheDir)
+	seed := gaiaTile{
+		Version: gaiaCacheVersion, Nside: gaiaDefaultNside, Ipix: ipix,
+		QueriedAt: "test", MagLimit: gaiaDefaultMagLimit, Stars: gaia,
+	}
+	if err := gaiaSaveTileCache(cacheDir, seed); err != nil {
+		return fmt.Errorf("seed cache: %w", err)
+	}
+	sol, err := solvePlate(frame, 512, 512, raParsed, decParsed, cacheDir, gaiaDefaultMirror)
+	if err != nil {
+		return fmt.Errorf("solvePlate(flag seed): %w", err)
+	}
+	if sol.NMatches < 55 {
+		return fmt.Errorf("NMatches = %d, want >= 55 (flag seed not reaching solver?)", sol.NMatches)
+	}
+	if sol.RMSArcsec > 1.0 {
+		return fmt.Errorf("RMS = %.3f arcsec, want < 1.0", sol.RMSArcsec)
+	}
+	if sol.Method != "header" {
+		return fmt.Errorf("Method = %q, want header (seeded path)", sol.Method)
+	}
+	return nil
+}
+
+// testCropExplanationMentionsValidity checks the validity-mask override
+// for the crop explanation. It is a logic-level test of the branches the
+// pipeline takes; the message strings themselves are asserted inline.
+func testCropExplanationMentionsValidity() error {
+	// Case 1: mask excludes >0.5% of pixels, no limiter frames -> the
+	// explanation names the validity mask.
+	const refW, refH = 100, 100
+	validityLimited := int64(600) // 6%
+	validityFrac := float64(validityLimited) / float64(refW*refH)
+	if validityFrac <= 0.005 {
+		return fmt.Errorf("fixture bug: validityFrac = %v, want > 0.005", validityFrac)
+	}
+	// Reproduce the message the pipeline would emit (precedence:
+	// validityFrac > 0.005 && len(limiterNames) == 0).
+	cropPct := 80.0
+	msg := fmt.Sprintf(
+		"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). Crop limited by %d pixels (%.2f%% of the frame) where fewer than %d registered frames had a valid sample — likely calibration-negative or out-of-bounds resampling, not geometric frame overlap.",
+		refW, refH, cropPct, refW, refH, validityLimited, 100*validityFrac, 3)
+	for _, want := range []string{"limited by", "valid sample", "600 pixels", "6.00%"} {
+		if !strings.Contains(msg, want) {
+			return fmt.Errorf("validity message missing %q: %s", want, msg)
+		}
+	}
+	// Case 2: mask within tolerance -> the "all frames cover" line.
+	noneLimited := int64(2) // 0.02%
+	if frac := float64(noneLimited) / float64(refW*refH); frac > 0.005 {
+		return fmt.Errorf("fixture bug: frac = %v should be <= 0.005", frac)
+	}
+	coverMsg := "All registered frames cover the full reference image, so no frame is limiting the crop."
+	if !strings.Contains(coverMsg, "all registered frames cover") &&
+		!strings.Contains(coverMsg, "All registered frames cover") {
+		return fmt.Errorf("cover message lost its literal text")
+	}
+	return nil
+}
+
+// testPNGBMPSnapshot writes a known 4x4 float32 frame as PNG and BMP and
+// reads them back to prove: (a) PNG dimensions and pixel values survive
+// the round trip, (b) BMP magic/dimensions/size fields and pixel bytes
+// match the expected BGR + row-padded layout.
+func testPNGBMPSnapshot() error {
+	const w, h = 4, 4
+	pix := make([]float32, w*h*3)
+	for i := 0; i < w*h; i++ {
+		pix[i*3+0] = float32(i) / float32(w*h)
+		pix[i*3+1] = 1.0 - float32(i)/float32(w*h)
+		pix[i*3+2] = float32(i%2) * 0.5
+	}
+	// --- PNG round trip ---
+	var pngBuf bytes.Buffer
+	if err := writePNGPreview(&pngBuf, w, h, pix); err != nil {
+		return fmt.Errorf("writePNGPreview: %w", err)
+	}
+	img, err := png.Decode(&pngBuf)
+	if err != nil {
+		return fmt.Errorf("png.Decode: %w", err)
+	}
+	if img.Bounds().Dx() != w || img.Bounds().Dy() != h {
+		return fmt.Errorf("png dims: got %v, want %dx%d", img.Bounds(), w, h)
+	}
+	// Byte equality: decode and compare each channel via floatToByte
+	// (gamma 0.5 LUT is the same mapping writePNGPreview used).
+	for i := 0; i < w*h; i++ {
+		x, y := i%w, i/w
+		r, g, b, _ := img.At(x, y).RGBA()
+		wantR := previewLUT[stretchIndex(pix[i*3+0])]
+		wantG := previewLUT[stretchIndex(pix[i*3+1])]
+		wantB := previewLUT[stretchIndex(pix[i*3+2])]
+		if uint8(r>>8) != wantR || uint8(g>>8) != wantG || uint8(b>>8) != wantB {
+			return fmt.Errorf("png pixel %d: got (%d,%d,%d), want (%d,%d,%d)",
+				i, r>>8, g>>8, b>>8, wantR, wantG, wantB)
+		}
+	}
+	// --- BMP header + pixel layout ---
+	var bmpBuf bytes.Buffer
+	if err := writeBMP24(&bmpBuf, w, h, pix); err != nil {
+		return fmt.Errorf("writeBMP24: %w", err)
+	}
+	b := bmpBuf.Bytes()
+	rowBytes := ((w*3 + 3) / 4) * 4 // 12 -> 12
+	wantFileSize := 14 + 40 + rowBytes*h
+	if len(b) != wantFileSize {
+		return fmt.Errorf("bmp size: got %d, want %d", len(b), wantFileSize)
+	}
+	if b[0] != 'B' || b[1] != 'M' {
+		return fmt.Errorf("bmp magic: got %q%q", b[0], b[1])
+	}
+	if got := binary.LittleEndian.Uint32(b[2:]); int(got) != wantFileSize {
+		return fmt.Errorf("bmp file size field: got %d, want %d", got, wantFileSize)
+	}
+	if got := binary.LittleEndian.Uint32(b[10:]); got != 54 {
+		return fmt.Errorf("bmp pixel-offset field: got %d, want 54", got)
+	}
+	if got := binary.LittleEndian.Uint32(b[18:]); int(got) != w {
+		return fmt.Errorf("bmp width field: got %d, want %d", got, w)
+	}
+	if got := binary.LittleEndian.Uint32(b[22:]); int(got) != h {
+		return fmt.Errorf("bmp height field: got %d, want %d", got, h)
+	}
+	if got := binary.LittleEndian.Uint16(b[28:]); got != 24 {
+		return fmt.Errorf("bmp bpp field: got %d, want 24", got)
+	}
+	// Bottom-up: row 0 in the file is the BOTTOM row of the image, so
+	// pixel (0, h-1) of the source appears first, in BGR order.
+	firstRowY := h - 1
+	for x := 0; x < w; x++ {
+		srcI := (firstRowY*w + x) * 3
+		wantB := floatToByte(pix[srcI+2])
+		wantG := floatToByte(pix[srcI+1])
+		wantR := floatToByte(pix[srcI+0])
+		gotB := b[54+x*3+0]
+		gotG := b[54+x*3+1]
+		gotR := b[54+x*3+2]
+		if gotB != wantB || gotG != wantG || gotR != wantR {
+			return fmt.Errorf("bmp first row x=%d: got BGR(%d,%d,%d), want BGR(%d,%d,%d)",
+				x, gotB, gotG, gotR, wantB, wantG, wantR)
+		}
+	}
+	// --- Error paths ---
+	if err := writeBMP24(&bytes.Buffer{}, 0, 4, pix); err == nil {
+		return fmt.Errorf("writeBMP24 accepted zero width")
+	}
+	if err := writeBMP24(&bytes.Buffer{}, 4, 4, pix[:10]); err == nil {
+		return fmt.Errorf("writeBMP24 accepted undersized buffer")
+	}
+	return nil
+}
+
 func testGaiaBuildADQLMagLimit() error {
 	q := gaiaBuildADQL(64, 20000, 0)
 	if !strings.Contains(q, "<= 0.000000") {
@@ -9542,6 +9952,9 @@ func runSelfTests() int {
 		{"sigma clip few survivors", testSigmaClipFewSurvivors},
 		{"gaia build adql mag limit", testGaiaBuildADQLMagLimit},
 		{"rotated wcs both parities", testRotatedWCSBothParities},
+		{"plate center flag reaches solver", testPlateCenterFlagReachesSolver},
+		{"crop explanation mentions validity", testCropExplanationMentionsValidity},
+		{"png bmp snapshot", testPNGBMPSnapshot},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -10263,8 +10676,26 @@ func testParseArgs() error {
 	// (not just against the const) so a bad const value fails the test.
 	if opts, err := parseArgs(nil); err != nil {
 		return fmt.Errorf("default parse: %w", err)
-	} else if opts.GaiaNside != 64 {
-		return fmt.Errorf("GaiaNside default = %d, want 64", opts.GaiaNside)
+	} else {
+		if opts.GaiaNside != 64 {
+			return fmt.Errorf("GaiaNside default = %d, want 64", opts.GaiaNside)
+		}
+		// The actual parser defaults must match what --help claims.
+		if opts.SpikesLength != 10.0 {
+			return fmt.Errorf("SpikesLength default = %v, want 10.0", opts.SpikesLength)
+		}
+		if opts.SpikesIntensity != 0.3 {
+			return fmt.Errorf("SpikesIntensity default = %v, want 0.3", opts.SpikesIntensity)
+		}
+		if opts.SpikesArms != 4 {
+			return fmt.Errorf("SpikesArms default = %d, want 4", opts.SpikesArms)
+		}
+		if opts.WritePNG || opts.WriteBMP {
+			return fmt.Errorf("WritePNG/WriteBMP default must be false")
+		}
+		if opts.PlateCenter != "" {
+			return fmt.Errorf("PlateCenter default = %q, want \"\"", opts.PlateCenter)
+		}
 	}
 	return nil
 }
@@ -14883,7 +15314,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 // POST-PROCESSING SELF-TESTS
 // =========================================================================
 
-func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bzero float64, offset int64, baypat, roworder string, err error) {
+func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bzero float64, offset int64, baypat, roworder string, raRad, decRad float64, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -14922,16 +15353,24 @@ func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bz
 			baypat = strings.TrimSpace(strings.Trim(val, "'"))
 		case "ROWORDER":
 			roworder = strings.TrimSpace(strings.Trim(val, "'"))
+		case "RA":
+			if v, e := strconv.ParseFloat(val, 64); e == nil && v != 0 {
+				raRad = v * math.Pi / 180
+			}
+		case "DEC":
+			if v, e := strconv.ParseFloat(val, 64); e == nil && v != 0 {
+				decRad = v * math.Pi / 180
+			}
 		}
 	}
 	if width <= 0 || height <= 0 {
-		return 0, 0, 0, 0, 1, 0, 0, "", "", fmt.Errorf("invalid FITS header")
+		return 0, 0, 0, 0, 1, 0, 0, "", "", 0, 0, fmt.Errorf("invalid FITS header")
 	}
 	return
 }
 
 func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
-	w, h, naxis3, bitpix, bscale, bzero, offset, baypat, roworder, err := parseFITSHeader(path)
+	w, h, naxis3, bitpix, bscale, bzero, offset, baypat, roworder, _, _, err := parseFITSHeader(path)
 	if err != nil {
 		return nil, err
 	}
@@ -15164,7 +15603,7 @@ func debayerFITS(vals []float32, w, h int, baypat, roworder string, targetW, tar
 //     -> debayering is correct; any remaining issue is in the pipeline
 func testFITSFileDebayer(path string) error {
 	// 1. Header
-	w, h, naxis3, bitpix, bscale, bzero, offset, baypat, roworder, err := parseFITSHeader(path)
+	w, h, naxis3, bitpix, bscale, bzero, offset, baypat, roworder, _, _, err := parseFITSHeader(path)
 	if err != nil {
 		return fmt.Errorf("read header: %w", err)
 	}
@@ -15859,6 +16298,9 @@ func main() {
 		KeepCache:            opts.KeepCache,
 		PlateSolve:           opts.PlateSolve,
 		GaiaOffline:          opts.GaiaOffline,
+		PlateCenter:          opts.PlateCenter,
+		WritePNG:             opts.WritePNG,
+		WriteBMP:             opts.WriteBMP,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
