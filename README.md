@@ -503,45 +503,154 @@ The following items from the original roadmap have been implemented in 0.5.0:
 
 ## Planned Potential Features and Technologies Roadmap
 
-To evolve SkyStacker into a more complete scientific astrophotography preprocessing and image-processing platform, the following features and technologies are planned for future integration:
+### Tier 0 — Documentation and hygiene (`XS`)
 
-### 1. Advanced Stacking & Image Integration
-* **Frame quality weighting**: Combine SNR, FWHM, eccentricity, and background measurements ($Q_i = w_1 \text{SNR}_i - w_2 \text{FWHM}_i - w_3 E_i - w_4 B_i$) to give sharper, cleaner frames more influence.
-* **Local Normalization Correction (LNC)**: Reduce differences in background and illumination between individual frames.
-* **Drizzle & Bayer Drizzle Integration**: Recover better sampling from undersampled data and improve colour reconstruction without conventional demosaicing first.
-* **Adaptive Rejection & Maps**: Iterative sigma-clipping, MAD, asymmetric thresholds, and generation of per-pixel rejection and weight maps.
-* **Per-Frame Normalization**: Additive, multiplicative, and scaling normalization to handle sky brightness and transparency variations.
+- **Stale `--help` spike defaults**: `printUsage` still prints
+  `--spikes-length 100`, `--spikes-intensity 0.7`, `--spikes-arms 6`;
+  the actual defaults are `10`, `0.3`, `4`. Align the usage text with
+  `parseArgs` and assert it in `testParseArgs`.
+- **Doc drift**: `TECHNICAL_SPEC.md` §2/§4.5 still say plate solving is
+  excluded and has no pipeline consumer; `COMPARISON.md` still shows `–`
+  for SkyStacker plate solving. Update both to `Partial` / wired.
 
-### 2. Advanced Star Detection & Optical Modelling
-* **PSF Modelling & HFR**: Gaussian and Moffat profiles, Half Flux Radius (HFR) measurement, and elliptical Gaussian fitting for tracking errors, tilt, or coma.
-* **Astrometric Plate Solving & WCS**: Automatic celestial coordinate identification using Astrometry.net and local Gaia catalogues, storing WCS metadata and SIP polynomial distortion coefficients.
+### Tier 1 — Small, self-contained (`S`)
 
-### 3. Advanced Photometric & Colour Calibration
-* **Photometric & Spectrophotometric Colour Calibration (PCC / SPCC)**: Use stellar spectral information from Gaia DR3 combined with camera sensor response and filter transmission characteristics.
-* **Narrowband & Advanced Calibration**: Support for monochrome H-alpha, OIII, and SII filters with custom mappings (HOO, SHO, LRGB), dark-frame scaling, Bad Pixel Maps (BPM), and separate RGB channel normalization.
+- **Explicit extra output formats — PNG and BMP**: `--png` and `--bmp`
+  write `stacked_mean.png` / `stacked_mean.bmp` alongside the JPEGs.
+  PNG is lossless and uses the already-imported `image/png`; BMP is a
+  ~40-line hand-written encoder to stay stdlib-only.
+  Test: `testPNGBMPSnapshot`.
+- **`--plate-center RA,DEC` seed flag**: the pipeline currently calls
+  `solvePlate(..., 0, 0, ...)`, so it is always blind around (0,0) and
+  cannot solve real fields. Thread a parsed `RA,DEC` (decimal degrees)
+  into the solver; fall back to the reference frame's FITS-header
+  `RA`/`DEC` when unset.
+  Test: `testSolvePlateSeededCLI`.
+- **Weighted median**: `--method median` still ignores `frameWeights`.
+  Implement `weightedMedian(vals, weights)` (sort by value, walk the
+  cumulative weight to 0.5) and wire it into `reduceTile`'s
+  `case "median":`, gated on `frameWeights != nil` exactly like the
+  sigma path. Closes a documented limitation.
+  Test: `testWeightedMedian`.
+- **SER video input**: add `.ser` to `discoverFiles`; `decodeSER` reads
+  the header (width, height, pixel depth, frame count) and yields frames
+  one at a time, pairing with the existing streaming/tiled path.
+  Test: `testSERDecode`.
+- **Automatic comet / moving-object tracking**: dual registration
+  (star-aligned + comet-aligned). New `--comet-center X,Y` or
+  `--comet RA,DEC --comet-rate dRA,dDec`; per-frame predicted comet pixel
+  position from the ephemeris + EXIF `DateTimeOriginal`; reuse the
+  existing resampler with a per-frame translation so the comet is sharp
+  and stars trail. Emit `stacked_comet.f32raw` + preview; combined
+  comet+stars output is a stretch goal. Closes a `COMPARISON.md` gap.
+  Test: `testCometTranslation`.
 
-### 4. Advanced Background Extraction & Post-Processing
-* **Multiscale Background Modelling**: Sample-based extraction, robust polynomial fitting protecting extended astronomical objects, and multiscale wavelet processing.
-* **PSF-Based Deconvolution**: Richardson-Lucy, Wiener filtering, and regularized deconvolution to recover fine details lost to atmospheric seeing.
-* **Star Separation**: Generate starless images and independent star layers for isolated nebular processing.
-* **Advanced Noise Reduction**: Multiscale noise estimation and spatially adaptive denoising.
+### Tier 2 — Medium, a day each (`M`)
 
-### 5. New Astrophotography Processing Modes
-* **Multi-Night Integration**: Intelligent session classifiers, cross-session normalization, and calibration matching across nights.
-* **Mosaic Construction**: Multi-panel alignment, overlap-based photometric normalization, feathered blending, and multiband seam elimination.
-* **Comet & Moving-Object Stacking**: Dual registration preserving both star-aligned and comet-aligned structures.
+- **Bad-pixel map (BPM)**: `--bpm PATH` (FITS or `x,y` text). Load once
+  in pass 1 and mark those pixels invalid (`Pix = -1`) before
+  calibration so `addFrameMasked` skips them and `validCount` excludes
+  them. Optional `--bpm-auto` builds a BPM from a master dark (pixels
+  > Nσ from the dark median). The rejection map is the *post hoc*
+  version; BPM is the *a priori* version. Closes a `COMPARISON.md` gap.
+  Test: `testBPMMasksPixels`.
+- **FITS output**: `--fits` writes `stacked_sum.fits` (2880-byte
+  header blocks, big-endian, `BITPIX=-32`, `NAXIS=3`). The reader
+  already exists, so this is the easy half of interoperability.
+  Test: `testFITSWriterRoundTrip`.
+- **Distortion correction (SIP)**: `fitSIPFromMatches` already exists
+  and is tested (`testWCSSIP`); the missing piece is *applying* it.
+  Add `wcsTanInverseSIP` (adds the polynomial terms after the linear CD
+  projection) and a resampler path that uses it when a plate solution
+  exists. Gate behind `--plate-solve` + `--use-sip` so it never fires on
+  unsolved fields. Closes a `COMPARISON.md` gap.
+  Test: `testSIPResampleRoundTrip`.
+- **Astrometric plate solving & WCS** (consumer of the Gaia layer):
+  the data-access layer (HEALPix nested math, TAP client, per-tile JSON
+  cache, `--test-gaia`) is already committed and tested; `solvePlate`
+  is wired via `--plate-solve` but is always blind around (0,0) until
+  Tier 1's `--plate-center` lands. Remaining work: FITS-header RA/DEC
+  auto-seed, SIP application (previous bullet), `plate_solution.json`
+  in the output bundle. Reference: Astrometry.net / local Gaia
+  catalogues.
+  Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
+- **PSF modelling & HFR**: Gaussian and Moffat profile fits per star;
+  Half Flux Radius; elliptical Gaussian fitting for tracking errors,
+  tilt, or coma. Feeds the advanced frame-quality formula.
+  Test: `testPSFFit` (synthetic Moffat, recover FWHM within tolerance).
+- **Frame quality weighting (advanced)**: already partially applied
+  (`computeAdvancedQuality`, `Q_i = w₁·SNR − w₂·FWHM − w₃·E − w₄·B`);
+  remaining work is to consume PSF-derived FWHM/eccentricity (above)
+  instead of the current connected-component proxy.
+- **Adaptive rejection & maps**: already partially applied (MAD
+  sigma-clipping, per-pixel rejection/weight maps, coverage map);
+  remaining work is asymmetric thresholds and richer per-pixel metadata.
 
-### 6. High-Performance Computing & GPU Acceleration
-* **Hardware Abstraction Layer**: Optional CUDA, OpenCL, and Vulkan Compute support alongside optimized SIMD/AVX2/AVX-512 CPU pixel operations and memory-mapped tiles.
+### Tier 3 — Large, multi-day (`L`)
 
-### 7. Artificial Intelligence & Machine Learning (Optional Modules)
-* **Optional AI Tools**: CNN/U-Net AI denoising, automated star removal, anomaly-based defect detection, and ML regression frame selection.
+- **XISF output**: block-structured container with an XML header and
+  optional compression. A minimal writer (no compression, `Float32`
+  sample format, one image block) is ~200 lines. Lower priority than
+  FITS — most tools read FITS.
+  Test: `testXISFWrite`.
+- **Drizzle & Bayer drizzle integration**: per-input-pixel *drop* onto
+  the output grid with the drizzle kernel (pixfrac, scale), a
+  weight/coverage accumulator, and a final normalise. Replaces
+  `resampleToReference` in the registered path; pairs with
+  `--scale < 1` upsampling. The streaming/tiled skeleton fits — the
+  work is the kernel and geometric bookkeeping. Bayer drizzle recovers
+  colour without conventional demosaicing first.
+  Tests: `testDrizzleKernel`, `testDrizzleIdentity`.
+- **Multiscale background modelling**: sample-based extraction, robust
+  polynomial fitting that protects extended astronomical objects, and
+  multiscale wavelet processing. Supersedes the current single 2nd-degree
+  polynomial.
+- **PSF-based deconvolution**: Richardson–Lucy, Wiener filtering, and
+  regularized deconvolution to recover fine detail lost to atmospheric
+  seeing. Depends on PSF modelling (Tier 2).
+- **Star separation**: generate a starless image plus an independent
+  star layer for isolated nebular processing. The existing
+  `removeStars` (annulus median) is the crude first step; real
+  separation needs a proper star mask.
+- **Advanced noise reduction**: multiscale noise estimation and
+  spatially adaptive denoising (the current guided filter + two-scale
+  chroma pass is the baseline).
+- **Advanced photometric & colour calibration (PCC / SPCC)**: use
+  stellar spectral information from Gaia DR3 plus camera sensor
+  response and filter transmission to derive true colour. Depends on
+  plate solving (Tier 2) and the Gaia layer.
+- **Narrowband & advanced calibration**: monochrome Hα / OIII / SII
+  support with HOO / SHO / LRGB mappings, dark-frame scaling, and
+  separate RGB channel normalization.
+- **Per-frame normalization (extended)**: already applied as
+  global + local scale+offset; remaining work is additive and
+  multiplicative modes and per-channel normalization.
+- **Multi-night integration**: intelligent session classifiers,
+  cross-session normalization, and calibration matching across nights.
+- **Mosaic construction**: multi-panel alignment, overlap-based
+  photometric normalization, feathered blending, and multiband seam
+  elimination.
+- **Expanded formats**: FITS with compression, RAW/DNG ingestion
+  preserving acquisition metadata and calibration provenance.
+- **Robust workflow control**: processing cache (already partly in
+  place), checkpoint and resume, YAML/JSON pipeline configuration files,
+  structured JSON telemetry reports, a modular plugin architecture, and
+  an optional REST API.
 
-### 8. Scientific Interoperability & Interchange Formats
-* **Expanded Formats**: Full support for XISF, FITS with compression, SER video sequences, and RAW/DNG ingestion while preserving acquisition metadata and calibration provenance.
+### Tier 4 — Architectural / out of scope (`XL`, `∞`)
 
-### 9. Automation, Observability & Architecture
-* **Robust Workflow Control**: Processing cache, checkpoint and resume capabilities, YAML/JSON pipeline configuration files, structured JSON telemetry reports, a modular plugin architecture, and an optional REST API.
+- **Hardware abstraction layer + SIMD/AVX2/AVX-512**: optimized
+  CPU pixel operations and memory-mapped tiles. `XL` — the clean seam is
+  the pure functions over `[]float32` (`reduceTile`,
+  `guidedFilterGray`).
+- **CUDA / OpenCL / Vulkan Compute GPU acceleration**: `∞` under the
+  current single-file / stdlib-only constraint (`TECHNICAL_SPEC.md` §2).
+  If ever attempted, the seam is the same two pure functions as the SIMD
+  work. Test: `testGPUReduceMatchesCPU` (bit-exact or within 1e-5).
+- **Optional AI/ML modules**: CNN/U-Net AI denoising, automated star
+  removal, anomaly-based defect detection, and ML regression frame
+  selection. `∞` under the stdlib-only constraint.
+
 
 ---
 
