@@ -187,6 +187,7 @@ type cliOptions struct {
 	PlateCenter      string
 	WritePNG         bool
 	WriteBMP         bool
+	Limit            int
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -263,6 +264,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.PlateCenter, "plate-center", "", "RA,DEC seed for plate solve in decimal degrees (falls back to the reference frame's FITS RA/DEC)")
 	fs.BoolVar(&o.WritePNG, "png", false, "write stacked_mean.png alongside the JPEGs")
 	fs.BoolVar(&o.WriteBMP, "bmp", false, "write stacked_mean.bmp alongside the JPEGs")
+	fs.IntVar(&o.Limit, "limit", 0, "process at most N discovered frames (0 = unlimited)")
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
@@ -298,7 +300,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -410,6 +412,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if _, _, err := parseRADecArg(o.PlateCenter, "--plate-center"); err != nil {
 			return nil, err
 		}
+	}
+	if o.Limit < 0 {
+		return nil, fmt.Errorf("--limit must be >= 0, got %d", o.Limit)
 	}
 	rest := fs.Args()
 	if len(rest) > 1 {
@@ -526,6 +531,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
+	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
@@ -3096,6 +3102,11 @@ type runOptions struct {
 	PlateCenter string
 	WritePNG    bool
 	WriteBMP    bool
+	// Limit caps the number of discovered frames the pipeline decodes and
+	// accumulates. 0 = unlimited (default). Applied after discoverFiles and
+	// before the per-frame decode loop, so a huge session can be sampled
+	// for a quick end-to-end smoke test without waiting for every sub.
+	Limit int
 }
 
 func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
@@ -4897,6 +4908,17 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		workers = 1
 	}
 
+	if opts.Limit > 0 && len(candidates) > opts.Limit {
+		logf("Limit: using first %d of %d discovered frames (--limit %d)",
+			opts.Limit, len(candidates), opts.Limit)
+		candidates = candidates[:opts.Limit]
+		if workers > len(candidates) {
+			workers = len(candidates)
+		}
+		if workers < 1 {
+			workers = 1
+		}
+	}
 	logf("Stacking %d frame(s) at %dx%d using up to %d worker(s)",
 		len(candidates), refW, refH, workers)
 
@@ -16301,6 +16323,7 @@ func main() {
 		PlateCenter:          opts.PlateCenter,
 		WritePNG:             opts.WritePNG,
 		WriteBMP:             opts.WriteBMP,
+		Limit:                opts.Limit,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
