@@ -1,0 +1,723 @@
+// =========================================================================
+// Coverage-focused self-tests (session 2026-11-14)
+// =========================================================================
+
+// testCalibrateClampsNegative reproduces the ON/IMG_7005..7007 crop
+// collapse: a dark frame whose values exceed the light frame pushes sky
+// pixels below zero. Without the clamp, the resampler keeps the
+// negatives, updateValidCount rejects them, and findSafeCrop shrinks to
+// a tiny patch. Asserts (a) every calibrated pixel lands in [0,1] and
+// (b) a no-op calibrate() leaves the frame untouched.
+func testCalibrateClampsNegative() error {
+	const w, h = 4, 4
+	light := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	dark := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range light.Pix {
+		light.Pix[i] = 0.1
+		dark.Pix[i] = 0.2
+	}
+	calibrate(light, dark, nil, nil)
+	for i, v := range light.Pix {
+		if v < 0 || v > 1 {
+			return fmt.Errorf("dark-subtracted pixel %d = %v outside [0,1]; clamp regressed", i, v)
+		}
+		if v != 0 {
+			return fmt.Errorf("dark-subtracted pixel %d = %v, want clamped to 0", i, v)
+		}
+	}
+
+	light2 := &frame{Width: 1, Height: 1, Pix: []float32{1.0, 1.0, 1.0}}
+	flat2 := &frame{Width: 1, Height: 1, Pix: []float32{0.1, 0.1, 0.1}}
+	calibrate(light2, nil, flat2, nil)
+	for i, v := range light2.Pix {
+		if v > 1 {
+			return fmt.Errorf("flat-divided pixel %d = %v > 1; clamp regressed", i, v)
+		}
+	}
+
+	light3 := &frame{Width: 1, Height: 1, Pix: []float32{-0.5, 0.5, 1.5}}
+	before := append([]float32(nil), light3.Pix...)
+	calibrate(light3, nil, nil, nil)
+	for i := range before {
+		if light3.Pix[i] != before[i] {
+			return fmt.Errorf("no-op calibrate changed pixel %d: %v -> %v",
+				i, before[i], light3.Pix[i])
+		}
+	}
+
+	light4 := &frame{Width: 1, Height: 1, Pix: []float32{0.05, 0.05, 0.05}}
+	flat4 := &frame{Width: 1, Height: 1, Pix: []float32{0.4, 0.4, 0.4}}
+	bias4 := &frame{Width: 1, Height: 1, Pix: []float32{0.3, 0.3, 0.3}}
+	calibrate(light4, nil, flat4, bias4)
+	if math.Abs(float64(light4.Pix[0])-0.5) > 1e-6 {
+		return fmt.Errorf("flat-bias division: got %v, want 0.5", light4.Pix[0])
+	}
+
+	light5 := &frame{Width: 1, Height: 1, Pix: []float32{0.5, 0.5, 0.5}}
+	flat5 := &frame{Width: 1, Height: 1, Pix: []float32{0, 0, 0}}
+	calibrate(light5, nil, flat5, nil)
+	if math.IsInf(float64(light5.Pix[0]), 0) || math.IsNaN(float64(light5.Pix[0])) {
+		return fmt.Errorf("zero flat produced %v (inf/nan)", light5.Pix[0])
+	}
+	if light5.Pix[0] != 1 {
+		return fmt.Errorf("zero flat denominator should saturate to 1 after clamp, got %v", light5.Pix[0])
+	}
+	return nil
+}
+
+// testRawFloat32RGBRoundTrip covers the full write/read cycle of the
+// spill format plus its error paths.
+func testRawFloat32RGBRoundTrip() error {
+	const w, h = 7, 5
+	pix := make([]float32, w*h*3)
+	for i := range pix {
+		pix[i] = float32(i) / float32(len(pix))
+	}
+	dir, err := os.MkdirTemp("", "skystacker-raw-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "t.f32raw")
+	if err := writeFileAtomic(path, func(wr io.Writer) error {
+		return writeRawFloat32RGB(wr, w, h, pix)
+	}); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	gw, gh, gpix, err := readRawFloat32RGB(path)
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	if gw != w || gh != h {
+		return fmt.Errorf("dims %dx%d, want %dx%d", gw, gh, w, h)
+	}
+	for i := range pix {
+		if gpix[i] != pix[i] {
+			return fmt.Errorf("pixel %d = %v, want %v", i, gpix[i], pix[i])
+		}
+	}
+
+	if err := writeRawFloat32RGB(&bytes.Buffer{}, 2, 2, make([]float32, 11)); err == nil {
+		return errors.New("writeRawFloat32RGB accepted mismatched buffer")
+	}
+
+	shortHdr := filepath.Join(dir, "short_hdr.f32raw")
+	if err := os.WriteFile(shortHdr, []byte{1, 2, 3}, 0o644); err != nil {
+		return err
+	}
+	if _, _, _, err := readRawFloat32RGB(shortHdr); err == nil {
+		return errors.New("truncated header should error")
+	}
+
+	truncBody := filepath.Join(dir, "trunc_body.f32raw")
+	hdr := make([]byte, 8)
+	binary.LittleEndian.PutUint32(hdr[0:], 4)
+	binary.LittleEndian.PutUint32(hdr[4:], 4)
+	if err := os.WriteFile(truncBody, append(hdr, make([]byte, 4)...), 0o644); err != nil {
+		return err
+	}
+	if _, _, _, err := readRawFloat32RGB(truncBody); err == nil {
+		return errors.New("truncated body should error")
+	}
+
+	if _, _, _, err := readRawFloat32RGB(filepath.Join(dir, "nope.f32raw")); err == nil {
+		return errors.New("missing file should error")
+	}
+	return nil
+}
+
+// testDiscoverFilesRecursiveAndExclude covers recursive=true and the
+// exclude argument of discoverFiles.
+func testDiscoverFilesRecursiveAndExclude() error {
+	dir, err := os.MkdirTemp("", "skystacker-disc2-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	mk := func(p string) error {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(p, []byte("x"), 0o644)
+	}
+	files := []string{
+		filepath.Join(dir, "top.jpg"),
+		filepath.Join(dir, "a", "nested.jpg"),
+		filepath.Join(dir, "a", "b", "deep.jpg"),
+		filepath.Join(dir, "out", "should_not_appear.jpg"),
+		filepath.Join(dir, "out", "nested", "also_not.jpg"),
+	}
+	for _, f := range files {
+		if err := mk(f); err != nil {
+			return err
+		}
+	}
+
+	got, err := discoverFiles(dir, false, nil)
+	if err != nil {
+		return err
+	}
+	if len(got) != 1 || filepath.Base(got[0]) != "top.jpg" {
+		return fmt.Errorf("non-recursive: got %v, want [top.jpg]", got)
+	}
+
+	got, err = discoverFiles(dir, true, nil)
+	if err != nil {
+		return err
+	}
+	if len(got) != 5 {
+		return fmt.Errorf("recursive: got %d files, want 5", len(got))
+	}
+
+	got, err = discoverFiles(dir, true, []string{filepath.Join(dir, "out")})
+	if err != nil {
+		return err
+	}
+	if len(got) != 3 {
+		return fmt.Errorf("recursive+exclude: got %d files, want 3: %v", len(got), got)
+	}
+	for _, p := range got {
+		if strings.Contains(p, filepath.Join("out", "should_not_appear")) ||
+			strings.Contains(p, filepath.Join("out", "nested")) {
+			return fmt.Errorf("exclude failed: %s leaked through", p)
+		}
+	}
+
+	if _, err := discoverFiles(filepath.Join(dir, "does-not-exist"), false, nil); err == nil {
+		return errors.New("non-existent root should error")
+	}
+	return nil
+}
+
+// testStackCalibrationFolder covers empty dir, missing path, single
+// file, and two-file mean.
+func testStackCalibrationFolder() error {
+	dir, err := os.MkdirTemp("", "skystacker-calib-folder-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	empty := filepath.Join(dir, "empty")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		return err
+	}
+	m, err := stackCalibrationFolder(empty, 0, 0)
+	if err != nil {
+		return fmt.Errorf("empty dir: %w", err)
+	}
+	if m != nil {
+		return fmt.Errorf("empty dir: got non-nil master %v", m)
+	}
+
+	if _, err := stackCalibrationFolder(filepath.Join(dir, "nope"), 0, 0); err == nil {
+		return errors.New("missing path should error")
+	}
+
+	// Single-file path: decoded via decodeImageFile. Use a tiny PNG.
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			img.SetRGBA(x, y, color.RGBA{200, 100, 50, 255})
+		}
+	}
+	pngPath := filepath.Join(dir, "one.png")
+	f, err := os.Create(pngPath)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		return err
+	}
+	f.Close()
+	m, err = stackCalibrationFolder(pngPath, 0, 0)
+	if err != nil {
+		return fmt.Errorf("single file: %w", err)
+	}
+	if m == nil || m.Width != 2 || m.Height != 2 {
+		return fmt.Errorf("single file: got %v, want 2x2", m)
+	}
+	if math.Abs(float64(m.Pix[0])-200.0/255.0) > 0.02 {
+		return fmt.Errorf("single file: pixel[0] = %v, want ~0.784", m.Pix[0])
+	}
+
+	// Directory with two valid files: master is the arithmetic mean.
+	fa, err := os.Create(filepath.Join(dir, "a.png"))
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(fa, solidPNG(2, 2, 0.2)); err != nil {
+		fa.Close()
+		return err
+	}
+	fa.Close()
+	fb, err := os.Create(filepath.Join(dir, "b.png"))
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(fb, solidPNG(2, 2, 0.6)); err != nil {
+		fb.Close()
+		return err
+	}
+	fb.Close()
+	m, err = stackCalibrationFolder(dir, 0, 0)
+	if err != nil {
+		return fmt.Errorf("two files: %w", err)
+	}
+	if m == nil {
+		return errors.New("two files: nil master")
+	}
+	// a=0.2 (R), b=0.6 (R) -> 0.4, but the directory also contains one.png
+	// (0.784, 0.392, 0.196) and is not excluded from the scan. The mean is
+	// over three files: (0.784 + 0.2 + 0.6)/3 = 0.528.
+	want := (200.0/255.0 + 0.2 + 0.6) / 3.0
+	if math.Abs(float64(m.Pix[0])-want) > 0.02 {
+		return fmt.Errorf("three files: R = %v, want ~%v", m.Pix[0], want)
+	}
+	return nil
+}
+
+func solidPNG(w, h int, v float64) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	byteV := uint8(clampFloat(v, 0, 1) * 255)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{byteV, byteV, byteV, 255})
+		}
+	}
+	return img
+}
+
+// testFrameFromYCbCr covers the YCbCr branch of frameFromImage.
+func testFrameFromYCbCr() error {
+	const w, h = 8, 8
+	img := image.NewYCbCr(image.Rect(0, 0, w, h), image.YCbCrSubsampleRatio420)
+	for i := range img.Y {
+		img.Y[i] = 128
+	}
+	for i := range img.Cb {
+		img.Cb[i] = 128
+		img.Cr[i] = 128
+	}
+	f, err := frameFromImage(img)
+	if err != nil {
+		return err
+	}
+	if f.Width != w || f.Height != h {
+		return fmt.Errorf("dims %dx%d, want %dx%d", f.Width, f.Height, w, h)
+	}
+	for i := 0; i < w*h; i++ {
+		for c := 0; c < 3; c++ {
+			if f.Pix[i*3+c] < 0.45 || f.Pix[i*3+c] > 0.55 {
+				return fmt.Errorf("pixel %d ch %d = %v, want ~0.5", i, c, f.Pix[i*3+c])
+			}
+		}
+	}
+	if _, err := frameFromImage(image.NewRGBA(image.Rect(0, 0, 0, 0))); err == nil {
+		return errors.New("zero-dim image should error")
+	}
+	return nil
+}
+
+// testGetAvailableMemoryMB is a smoke test.
+func testGetAvailableMemoryMB() error {
+	mb := getAvailableMemoryMB()
+	if mb < 0 {
+		return fmt.Errorf("getAvailableMemoryMB returned negative value %d", mb)
+	}
+	if runtime.GOOS == "linux" && mb == 0 {
+		return errors.New("getAvailableMemoryMB returned 0 on Linux; /proc/meminfo should be readable")
+	}
+	return nil
+}
+
+// testGetAvailableDiskBytes covers the Unix branch and its missing-path
+// case.
+func testGetAvailableDiskBytes() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dir, err := os.MkdirTemp("", "skystacker-disk2-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	free, err := getAvailableDiskBytes(dir)
+	if err != nil {
+		return fmt.Errorf("existing path: %w", err)
+	}
+	if free <= 0 {
+		return fmt.Errorf("free = %d, want > 0", free)
+	}
+	if _, err := getAvailableDiskBytes(filepath.Join(dir, "nope")); err != nil {
+		return fmt.Errorf("missing path under existing parent: %w", err)
+	}
+	return nil
+}
+
+// testApplyNormTransform covers masked-pixel pass-through, scale+offset,
+// and the [0,1] clamp.
+func testApplyNormTransform() error {
+	const w, h = 4, 1
+	f := &frame{Width: w, Height: h, Pix: []float32{
+		0.0, 0.0, 0.0,
+		0.5, 0.5, 0.5,
+		-1, -1, -1,
+		1.0, 1.0, 1.0,
+	}}
+	out := applyNormTransform(f, 2.0, -0.25)
+	want := []float32{
+		0, 0, 0,
+		0.75, 0.75, 0.75,
+		-1, -1, -1,
+		1, 1, 1,
+	}
+	for i := range want {
+		if math.Abs(float64(out.Pix[i]-want[i])) > 1e-6 {
+			return fmt.Errorf("pixel %d = %v, want %v", i, out.Pix[i], want[i])
+		}
+	}
+	masked := &frame{Width: 1, Height: 1, Pix: []float32{-1, -1, -1}}
+	ident := applyNormTransform(masked, 1.0, 0.0)
+	for i := range ident.Pix {
+		if ident.Pix[i] != -1 {
+			return fmt.Errorf("masked pixel %d became %v", i, ident.Pix[i])
+		}
+	}
+	return nil
+}
+
+// testHealpixTileSizeDeg2 checks tileSize(1) = 41252.96/12 and derived
+// values.
+func testHealpixTileSizeDeg2() error {
+	wholeSky := 4.0 * math.Pi * (180.0 / math.Pi) * (180.0 / math.Pi)
+	cases := []struct {
+		nside int
+		want  float64
+	}{
+		{1, wholeSky / 12.0},
+		{16, wholeSky / (12.0 * 256.0)},
+		{64, wholeSky / (12.0 * 4096.0)},
+		{256, wholeSky / (12.0 * 65536.0)},
+	}
+	for _, c := range cases {
+		got := healpixTileSizeDeg2(c.nside)
+		if math.Abs(got-c.want) > 1e-9 {
+			return fmt.Errorf("nside=%d: got %v, want %v", c.nside, got, c.want)
+		}
+	}
+	if math.Abs(healpixTileSizeDeg2(1)-(41252.96/12.0)) > 0.1 {
+		return fmt.Errorf("nside=1 total sky mismatch")
+	}
+	return nil
+}
+
+// testWCSDegenerateCD covers the det == 0 early-returns.
+func testWCSDegenerateCD() error {
+	w := &wcsTan{
+		CRVAL1: 1.0, CRVAL2: 0.5,
+		CRPIX1: 100, CRPIX2: 100,
+		CD:     [2][2]float64{{0, 0}, {0, 0}},
+	}
+	x, y := wcsTanForward(w, 1.0, 0.5)
+	if x != 0 || y != 0 {
+		return fmt.Errorf("forward with zero CD: got (%v,%v), want (0,0)", x, y)
+	}
+	ra, dec := wcsTanInverse(w, 100, 100)
+	if ra != 1.0 || dec != 0.5 {
+		return fmt.Errorf("inverse with zero CD: got (%v,%v), want CRVAL", ra, dec)
+	}
+	w2 := &wcsTan{
+		CRVAL1: 2.0, CRVAL2: -0.3,
+		CRPIX1: 50, CRPIX2: 50,
+		CD:     [2][2]float64{{1e-6, 0}, {0, -1e-6}},
+	}
+	ra2, dec2 := wcsTanInverse(w2, 50, 50)
+	if math.Abs(ra2-2.0) > 1e-9 || math.Abs(dec2-(-0.3)) > 1e-9 {
+		return fmt.Errorf("inverse at CRPIX: got (%v,%v), want CRVAL", ra2, dec2)
+	}
+	return nil
+}
+
+// testSolvePlateFailureModes covers early-return error paths.
+func testSolvePlateFailureModes() error {
+	if _, err := solvePlate([]star{{X: 1, Y: 2}}, 512, 512, 0, 0, "", ""); err == nil {
+		return errors.New("solvePlate accepted 1 frame star")
+	}
+	dir, err := os.MkdirTemp("", "skystacker-plate-fail-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	oldOffline := plateGaiaOffline
+	plateGaiaOffline = true
+	defer func() { plateGaiaOffline = oldOffline }()
+	frame := make([]star, 10)
+	for i := range frame {
+		frame[i] = star{X: float64(i * 10), Y: float64(i * 10), Flux: 100}
+	}
+	_, err = solvePlate(frame, 512, 512, 1.0, 0.5, dir, gaiaDefaultMirror)
+	if err == nil {
+		return errors.New("offline cache miss should error")
+	}
+	if !strings.Contains(err.Error(), "Gaia stars") && !strings.Contains(err.Error(), "no consistent") {
+		return fmt.Errorf("unexpected error: %v", err)
+	}
+	return nil
+}
+
+// testFitSIPFailureModes covers the fitSIPFromMatches error paths.
+func testFitSIPFailureModes() error {
+	w := wcsTan{
+		CRVAL1: 1.0, CRVAL2: 0.0,
+		CRPIX1: 50, CRPIX2: 50,
+		CD:     [2][2]float64{{1e-6, 0}, {0, -1e-6}},
+	}
+	if _, err := fitSIPFromMatches(make([]star, 3), make([]gaiaStar, 3), w, 2); err == nil {
+		return errors.New("fitSIPFromMatches accepted 3 pairs")
+	}
+	w.CD = [2][2]float64{{0, 0}, {0, 0}}
+	frame := make([]star, 10)
+	gaia := make([]gaiaStar, 10)
+	for i := 0; i < 10; i++ {
+		frame[i] = star{X: float64(i), Y: float64(i)}
+		gaia[i] = gaiaStar{RA: 1.0 + float64(i)*1e-4, Dec: float64(i) * 1e-4}
+	}
+	if _, err := fitSIPFromMatches(frame, gaia, w, 2); err == nil {
+		return errors.New("fitSIPFromMatches accepted singular CD")
+	}
+	w.CD = [2][2]float64{{1e-6, 0}, {0, -1e-6}}
+	if _, err := fitSIPFromMatches(frame, gaia, w, 5); err != nil {
+		return fmt.Errorf("order=5 should downgrade to 2, got: %w", err)
+	}
+	return nil
+}
+
+// testMedianPairwiseDistanceFunctions covers the three pairwise helpers.
+func testMedianPairwiseDistanceFunctions() error {
+	pts := []star{{X: 0, Y: 0}, {X: 3, Y: 4}, {X: 6, Y: 8}}
+	if got := medianPairwiseDistancePixels(pts); math.Abs(got-5.0) > 1e-9 {
+		return fmt.Errorf("pixels median = %v, want 5", got)
+	}
+	if medianPairwiseDistancePixels(nil) != 0 {
+		return errors.New("pixels empty should be 0")
+	}
+	if medianPairwiseDistancePixels(pts[:1]) != 0 {
+		return errors.New("pixels single should be 0")
+	}
+	p2 := []point2D{{X: 0, Y: 0}, {X: 3, Y: 4}, {X: 6, Y: 8}}
+	if got := medianPairwiseDistancePoints(p2); math.Abs(got-5.0) > 1e-9 {
+		return fmt.Errorf("points median = %v, want 5", got)
+	}
+	if medianPairwiseDistancePoints(nil) != 0 {
+		return errors.New("points empty should be 0")
+	}
+	g := []gaiaStar{{RA: 0, Dec: 0}, {RA: 1e-4, Dec: 0}, {RA: 2e-4, Dec: 0}}
+	if got := medianPairwiseDistanceRadians(g); math.Abs(got-1e-4) > 1e-9 {
+		return fmt.Errorf("radians median = %v, want 1e-4", got)
+	}
+	if medianPairwiseDistanceRadians(nil) != 0 {
+		return errors.New("radians empty should be 0")
+	}
+	return nil
+}
+
+// testPlaneGrid covers the spatial hash used by matchStarsToGaia.
+func testPlaneGrid() error {
+	pts := []point2D{{X: 1, Y: 1}, {X: 5, Y: 5}}
+	grid := newPlaneGrid(pts, 2.0)
+	if !grid.has(point2D{X: 1.5, Y: 1.5}, 1.0) {
+		return errors.New("has() missed a nearby point")
+	}
+	if grid.has(point2D{X: 100, Y: 100}, 1.0) {
+		return errors.New("has() matched a far point")
+	}
+	if grid.has(point2D{X: math.NaN(), Y: 1}, 1.0) {
+		return errors.New("has() matched NaN query")
+	}
+	empty := newPlaneGrid(nil, 2.0)
+	if empty.has(point2D{X: 0, Y: 0}, 1.0) {
+		return errors.New("empty grid matched")
+	}
+	if grid.has(point2D{X: 1.0, Y: 1.0}, 0.1) {
+		return errors.New("has() matched a point outside tol")
+	}
+	return nil
+}
+
+// testFrameLimiterFootprintZero covers the FootprintPct == 0 sentinel.
+func testFrameLimiterFootprintZero() error {
+	const refW, refH = 2400, 1600
+	d := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 0}
+	flags := frameLimiterFlags(d, refW, refH)
+	for _, f := range flags {
+		if f == "LOW FOOTPRINT" {
+			return fmt.Errorf("FootprintPct=0 should be sentinel, got flags %v", flags)
+		}
+	}
+	d.FootprintPct = 49.9
+	flags = frameLimiterFlags(d, refW, refH)
+	found := false
+	for _, f := range flags {
+		if f == "LOW FOOTPRINT" {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("FootprintPct=49.9 should fire LOW FOOTPRINT, got %v", flags)
+	}
+	return nil
+}
+
+// testResolveBuildDate covers the three branches of resolveBuildDate.
+func testResolveBuildDate() error {
+	saved := buildDate
+	defer func() { buildDate = saved }()
+	buildDate = "2026-11-14T00:00:00Z"
+	if got := resolveBuildDate(); got != "2026-11-14T00:00:00Z" {
+		return fmt.Errorf("explicit buildDate: got %q", got)
+	}
+	buildDate = ""
+	got := resolveBuildDate()
+	if got == "" {
+		return errors.New("resolveBuildDate returned empty string")
+	}
+	if got != "unknown" && !strings.Contains(got, "T") {
+		return fmt.Errorf("resolveBuildDate returned %q, which is neither a timestamp nor 'unknown'", got)
+	}
+	return nil
+}
+
+// testPrintBannerSmoke verifies printBanner writes the version and repo URL.
+func testPrintBannerSmoke() error {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	printBanner()
+	w.Close()
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		return err
+	}
+	out := buf.String()
+	for _, want := range []string{"SkyStacker", repoURL} {
+		if !strings.Contains(out, want) {
+			return fmt.Errorf("banner missing %q: %s", want, out)
+		}
+	}
+	return nil
+}
+
+// testGaiaGetTileRefreshAndOffline covers forceRefresh and offline.
+func testGaiaGetTileRefreshAndOffline() error {
+	dir, err := os.MkdirTemp("", "skystacker-gaiatile-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	if _, err := gaiaGetTile(dir, gaiaDefaultMirror, 64, 12345, 14.0, true, false); err == nil {
+		return errors.New("offline cache miss should error")
+	}
+	tile := gaiaTile{
+		Version: gaiaCacheVersion, Nside: 64, Ipix: 12345,
+		QueriedAt: "2026-11-14T00:00:00Z", MagLimit: 14.0,
+		Stars: []gaiaStar{{RA: 1, Dec: 1, MagG: 10}},
+	}
+	if err := gaiaSaveTileCache(dir, tile); err != nil {
+		return err
+	}
+	got, err := gaiaGetTile(dir, gaiaDefaultMirror, 64, 12345, 14.0, true, false)
+	if err != nil {
+		return fmt.Errorf("offline cache hit: %w", err)
+	}
+	if len(got.Stars) != 1 {
+		return fmt.Errorf("cached stars = %d, want 1", len(got.Stars))
+	}
+	if _, err := gaiaGetTile(dir, gaiaDefaultMirror, 64, 12345, 14.0, true, true); err == nil {
+		return errors.New("offline forceRefresh should error")
+	}
+	return nil
+}
+
+// testMatchStarsToGaiaTooFewStars covers the early-return.
+func testMatchStarsToGaiaTooFewStars() error {
+	if _, ok := matchStarsToGaia(nil, nil, 5.0); ok {
+		return errors.New("nil/nil returned ok=true")
+	}
+	if _, ok := matchStarsToGaia(make([]star, 2), make([]gaiaStar, 100), 5.0); ok {
+		return errors.New("2 frame stars returned ok=true")
+	}
+	if _, ok := matchStarsToGaia(make([]star, 100), make([]gaiaStar, 2), 5.0); ok {
+		return errors.New("2 gaia stars returned ok=true")
+	}
+	return nil
+}
+
+// testMatchStarsToReferenceTooFew covers the minCount == 0 branch.
+func testMatchStarsToReferenceTooFew() error {
+	_, inliers, ok := matchStarsToReference(nil, nil)
+	if ok || inliers != 0 {
+		return fmt.Errorf("nil/nil returned ok=%v inliers=%d", ok, inliers)
+	}
+	ref := []star{{X: 1, Y: 1}, {X: 2, Y: 2}}
+	tgt := []star{{X: 1, Y: 1}, {X: 2, Y: 2}}
+	_, _, ok = matchStarsToReference(ref, tgt)
+	if ok {
+		return errors.New("2-star lists returned ok=true (need >=8 inliers)")
+	}
+	return nil
+}
+
+// testSigmaClipFewSurvivors covers the "fewer than 3 survivors" branch.
+func testSigmaClipFewSurvivors() error {
+	vals := []float32{1.0, 100.0, 100.0, 100.0}
+	mean, _, acc, rej := sigmaClipReduce(vals, 3.0, 2)
+	if acc+rej != len(vals) {
+		return fmt.Errorf("acc+rej = %d, want %d", acc+rej, len(vals))
+	}
+	if math.Abs(float64(mean)-100) > 1.0 {
+		return fmt.Errorf("mean = %v, want ~100", mean)
+	}
+	vals2 := []float32{5, 5, 5, 1000}
+	mean2, _, _, _ := sigmaClipReduce(vals2, 1.0, 3)
+	if mean2 == 0 {
+		return errors.New("few-survivor fallback returned 0")
+	}
+	return nil
+}
+
+// testGaiaBuildADQLMagLimit covers mag-limit corner cases.
+func testGaiaBuildADQLMagLimit() error {
+	q := gaiaBuildADQL(64, 20000, 0)
+	if !strings.Contains(q, "<= 0.000000") {
+		return fmt.Errorf("mag=0 not formatted: %s", q)
+	}
+	q = gaiaBuildADQL(64, 20000, 20.0)
+	if !strings.Contains(q, "<= 20.000000") {
+		return fmt.Errorf("mag=20 not formatted: %s", q)
+	}
+	return nil
+}
+
+// testRotatedWCSBothParities is a sanity check on the test helper.
+func testRotatedWCSBothParities() error {
+	w := rotatedWCS(1.0, 0.5, 1.5, 30, false)
+	det := w.CD[0][0]*w.CD[1][1] - w.CD[0][1]*w.CD[1][0]
+	if det <= 0 {
+		return fmt.Errorf("mirror=false: det = %v, want > 0", det)
+	}
+	w = rotatedWCS(1.0, 0.5, 1.5, 30, true)
+	det = w.CD[0][0]*w.CD[1][1] - w.CD[0][1]*w.CD[1][0]
+	if det >= 0 {
+		return fmt.Errorf("mirror=true: det = %v, want < 0", det)
+	}
+	return nil
+}
+

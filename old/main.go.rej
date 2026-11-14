@@ -1,0 +1,40 @@
+--- main.go
++++ main.go
+@@ -5060,26 +5062,18 @@
+ 		if len(refStars) < 5 {
+ 			logf("WARNING: reference frame has only %d stars; disabling registration", len(refStars))
+ 			registrationOn = false
+-		} else {
+-			if opts.PlateSolve {
+-				cacheDir := ""
+-				if !opts.NoCache {
+-					cacheDir = opts.CacheDir
+-					if cacheDir == "" {
+-						cacheDir = filepath.Join(outputDir, "_work", "cache")
+-					}
+-				}
+-				sol, perr := solvePlate(refStars, refW, refH, 0, 0, cacheDir, gaiaDefaultMirror)
+-				if perr != nil {
+-					logf("Plate solve: FAILED (%v)", perr)
+-				} else {
+-					logf("Plate solved: CRVAL=(%.6f, %.6f) RMS=%.2f arcsec N=%d/%d (%s)",
+-						sol.WCS.CRVAL1*180/math.Pi, sol.WCS.CRVAL2*180/math.Pi,
+-						sol.RMSArcsec, sol.NMatches, sol.NStars, sol.Method)
+-					plateSolutionOut = sol
+-				}
+-			}
+ 		} else {
++			if opts.PlateSolve {
++				sol, perr := solvePlate(refStars, refW, refH, 0, 0, "", gaiaDefaultMirror)
++				if perr != nil {
++					logf("Plate solve: FAILED (%v)", perr)
++				} else {
++					logf("Plate solved: CRVAL=(%.6f, %.6f) RMS=%.2f arcsec N=%d/%d (%s)",
++						sol.WCS.CRVAL1*180/math.Pi, sol.WCS.CRVAL2*180/math.Pi,
++						sol.RMSArcsec, sol.NMatches, sol.NStars, sol.Method)
++					plateSolutionOut = sol
++				}
++			}
+ 			registeredCount = 1
+ 			transforms[refIdx].starCount = len(refStars)
+ 			transforms[refIdx].inliers = len(refStars)
