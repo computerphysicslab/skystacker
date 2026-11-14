@@ -20,11 +20,11 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 128 embedded self-tests.
+- 154 embedded self-tests.
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
-- Drizzle, Bayer drizzle, plate-solving, SIP distortion models.
+- Drizzle, Bayer drizzle, SIP distortion application to the resampler, and other higher-order distortion models (TAN WCS plate solving itself is included and wired via `--plate-solve`).
 - GUI.
 
 ## 3. CLI Contract
@@ -80,8 +80,12 @@ Flags are accepted before or after the positional input directory. Default input
 - `--selftest`, `--version`, `--help`.
 - `--test-gaia RA,DEC` — one-shot Gaia DR3 tile query; prints nside, ipix, first 5 stars, exits.
 - `--test-debayer PATH` — one-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg`.
+- `--plate-solve` — run the TAN WCS plate solver after stacking; writes `plate_solution.json`.
+- `--plate-center RA,DEC` — seed for `--plate-solve` in decimal degrees. Falls back to the reference frame's FITS-header `RA`/`DEC` when unset; blind mode scans only the 3×3 nside=64 neighbourhood around (0,0) and will fail on a real field.
+- `--png` — write `stacked_mean.png` alongside the JPEGs (same gamma 0.5 LUT as the JPEGs, so the two are directly comparable; lossless).
+- `--bmp` — write `stacked_mean.bmp` alongside the JPEGs (hand-written uncompressed 24-bit BMP, BGR, bottom-up, 4-byte row padding).
 
-### Gaia DR3 data-access layer (no pipeline consumer yet)
+### Gaia DR3 data-access layer
 - `--gaia-mirror URL` (default `https://gea.esac.esa.int/tap-server/tap`).
 - `--gaia-cache-dir D` (default: OS user cache dir, e.g. `~/.cache/skystacker/gaia_cache` on Linux).
 - `--gaia-nside N` (default 64; power of 2, 2-8192).
@@ -120,9 +124,9 @@ Robust statistics per frame: `(median, MAD)` of luminance, computed on a 1024-bi
 
 Optional steps gated by flags: `--post-ca`, `--post-color`, `--post-flatten`, `--post-sharpen`, `--post-hdr`, `--post-stretch`.
 
-### 4.5 Gaia DR3 data-access layer (scaffolding)
+### 4.5 Gaia DR3 data-access layer
 
-No pipeline consumer yet; reachable only via `--test-gaia`.
+Consumed by `--plate-solve` (seeded via `--plate-center` or the reference frame's FITS RA/DEC; blind mode scans only the 3x3 nside=64 neighbourhood around (0,0)). Still reachable standalone via `--test-gaia`.
 
 - **HEALPix nested scheme** — `healpixAng2PixNested`, `healpixPix2AngNested`, `healpixTileCorners`. `ang2pix`/`pix2ang` match healpy 1.20.1 exactly (nside 1/16/64/256, ~3,600 reference points; exact pixel-corner points are float-noise ties). `healpixTileBoundary` ports `Healpix_Base::boundaries(step)` and matches `hp.boundaries` exactly; `healpixTileCorners` returns a 16-vertex polygon following the curved pixel edge, padded 1 % outward, RA in [0, 2π). Default query nside is 64 (~0.84 deg² per tile); override with `--gaia-nside 256` (~0.052 deg²) when finer tiles are needed.
 - **TAP client** — `gaiaQueryTile` posts an ADQL `POLYGON` query to `/sync` on the configured mirror. Per-attempt `context.WithTimeout(180s)`; 5 s heartbeat via `gaiaWaitWithProgress`; 3 attempts with 2 s / 4 s backoff on 5xx / connection error. Timeouts are fatal and not retried. Custom User-Agent; `MAXREC=2000`.
@@ -152,4 +156,4 @@ Before processing:
 - Memory and disk pre-flight checks abort before Pass 1; `--force` bypasses both.
 
 ## 8. Self-tests
-`./skystacker --selftest` runs 128 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only).
+`./skystacker --selftest` runs 154 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only).

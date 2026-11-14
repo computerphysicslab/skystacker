@@ -392,8 +392,12 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--no-cache` | Disable the star/transform cache | `false` |
 | `--clean` | Remove `_work` directory after successful run | `false` |
 | `--cache-dir string` | Cache directory (default `<output>/_work/cache`) | — |
-| `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query (diagnostic; no pipeline consumer yet) | — |
+| `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query (diagnostic; the pipeline consumes the same layer via `--plate-solve` / `--plate-center`) | — |
 | `--test-debayer PATH` | One-shot FITS debayer diagnostic | — |
+| `--plate-solve` | Run TAN WCS plate solve after stacking; writes `plate_solution.json` | `false` |
+| `--plate-center RA,DEC` | Seed for `--plate-solve` in decimal degrees. Falls back to the reference frame's FITS `RA`/`DEC` when unset. Blind mode scans only the 3×3 nside=64 neighbourhood around (0,0) and will fail on a real field. | — |
+| `--png` | Write `stacked_mean.png` alongside the JPEGs (gamma 0.5 LUT, so it is the lossless sibling of `stacked_mean.jpg`) | `false` |
+| `--bmp` | Write `stacked_mean.bmp` alongside the JPEGs (hand-written uncompressed 24-bit BMP; no stdlib BMP encoder exists) | `false` |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
 | `--gaia-cache-dir D` | Gaia tile cache directory | OS user cache dir (e.g. `~/.cache/skystacker/gaia_cache`) |
 | `--gaia-nside N` | HEALPix nside (power of 2, 2-8192) | `64` |
