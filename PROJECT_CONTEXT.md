@@ -953,3 +953,90 @@ The `plate solve blind` self-test remains hermetic (forces `plateGaiaOffline = t
   weighted-median bullet is unchanged.
 - No code behaviour change beyond the version string. Self-test
   count remains **156**; gofmt and go vet stay clean.
+
+## 2026-11-14 — Tier 1 of synthetic-calibration roadmap
+
+Implements `ROADMAP_SYNTHETIC_CALIBRATION.md` §Tier 1 in one commit
+(no code change to the guardrails, no `TECHNICAL_SPEC.md` change).
+
+### 1.1 `--black-level auto`
+
+- New `--black-level` string flag. Default `""` (off). Only accepted
+  non-empty value is `auto` (case-insensitive; `parseArgs` normalizes
+  to `"auto"`). Anything else is a parse error:
+  `--black-level must be "auto" or empty (off), got %q`.
+- `auto` reads the black-level pedestal from file metadata:
+  - JPEG/RAW: EXIF tag `0x14A` via new helper
+    `readExifBlackLevel` (SHORT / LONG / RATIONAL, averaged across
+    CFA channels, normalized to [0,1]).
+  - FITS: `BLACK_LVL` card via `fitsBlackLevelFor(path)`, which reads
+    the same header string `parseFITSHeader` already scans.
+- `subtractBlackLevel(f, level)` subtracts the normalized pedestal
+  from every pixel, clamped to [0,1]. No-op for level <= 0 or NaN/Inf.
+- Called in Pass 1 (after `calibrate`) and Pass 2 (after
+  `calibrate`, before resample), so unregistered, registered, and
+  spill paths all see the corrected pixel values.
+- `report.txt` gains a `Black level: <tag> = <value>` line under the
+  `Sum TIFF normalisation:` block. Tag is `EXIF BlackLevel` or
+  `FITS BLACK_LVL`.
+- New self-test: `testSubtractBlackLevel`. Covers:
+  - Positive case: subtract a known 0.05 pedestal, assert 1st
+    luminance percentile is within 1/65535 of 0.
+  - Negative control: same frame without subtraction is NOT within
+    1/65535 of 0.
+  - `level = 0` is a no-op; over-subtraction clamps to 0.
+  - EXIF tag decode: 26-byte TIFF with tag 0x14A (SHORT, count=1,
+    value 0x0800) → returns 2048/65535.
+
+**Design decision on `parseFITSHeader`.** Its signature returns a
+12-tuple used by three callers (`decodeImageConfig`,
+`decodeFITSNative`, `referenceFITSSeed`) and changing it would touch
+all three. Instead the `BLACK_LVL` value is published through
+package-level vars `lastFITSBlackLevel` / `lastFITSHasBlackLvl`,
+guarded by `fitsBlackLevelMu`, and read back via `fitsBlackLevelFor`.
+A follow-up should change `parseFITSHeader` to return a struct.
+
+### 1.2 Report per-frame read-noise sigma
+
+- `report.txt` gains a `BgSigma` column in the frame-diagnostics
+  table. Value comes from `frameDiag.BgSigma`, which is set from
+  `accepted[i].bgNoise` in Pass 2 (that is the same value
+  `estimateFrameBgNoise` computes in Pass 1 and stores in the star
+  cache, so no new computation).
+- `frameDiag.BgNoise` was renamed to `BgSigma`. The
+  `starCache.BgNoise` field is a separate type and is untouched.
+- Column order: `… Foot%  BgSigma  Note`. Header is `%-9s` for
+  `BgSigma`, row is `%9.5f`.
+- New self-test: `testFrameBgNoiseReported`. Covers:
+  - Two 256×256 frames with Gaussian σ = 0.02 and σ = 0.04.
+  - Estimated σ(0.02) is within 10% of 0.02.
+  - Estimated σ(0.04) is within 10% of 0.04 AND strictly greater
+    than σ(0.02).
+  - A `processingReport` with one `frameDiag{BgSigma: 0.02000}`
+    written via `writeTo` contains both the string `BgSigma`
+    (header) and `0.02000` (value).
+
+### Constraints check
+
+- Stdlib only. `go.mod` unchanged. `testdata/` unchanged.
+- No network at `--selftest` time.
+- `TECHNICAL_SPEC.md` §4.1 untouched (median description unchanged).
+- The three `--synthetic-*` refusal flags and the
+  `testSyntheticCalib*` guardrails are unchanged and still pass.
+
+### Self-test count
+
+**163 → 165.** Exactly two new test cases in `runSelfTests`,
+matching the two named in the roadmap (`testSubtractBlackLevel`,
+`testFrameBgNoiseReported`). `gofmt -l main.go` and `go vet ./...`
+clean at commit time.
+
+### Handoff to next session
+
+- **Tier 2.1 `--bpm PATH`** (bad-pixel map) is the next actionable
+  item in `ROADMAP_SYNTHETIC_CALIBRATION.md`.
+- Follow-up on 1.1: change `parseFITSHeader` to return a struct and
+  drop the `fitsBlackLevelFor` side channel.
+- Follow-up on 1.2: nothing outstanding; the column is report-only.
+
+<!-- BL_BGSIG_V1_MARKER -->
