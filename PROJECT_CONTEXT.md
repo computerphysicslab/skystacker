@@ -707,3 +707,12 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
     tile's 0.84 deg² coverage.
 - `--png` / `--bmp` outputs also written cleanly (no `WARNING: png:` /
   `WARNING: bmp:` lines).
+
+- **Re-confirmed on a 3-frame subset** (same reference IMG_9158.JPG,
+  `--limit 3`): identical `CRVAL=(85.077297, -2.369846) RMS=1.30 arcsec
+  N=71/100`, and `plate_solution.json` written again. Two independent
+  observations that the solution depends only on the reference frame's
+  star list, not on the accumulated stack. This run also exercised the
+  Gaia disk cache (`gaia: tile nside=64 ipix=22854 [cache hit]`),
+  dropping end-to-end wall time from 1 m 08 s → 30 s on identical
+  input. `--png` / `--bmp` outputs also written cleanly.
