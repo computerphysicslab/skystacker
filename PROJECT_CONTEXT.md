@@ -842,6 +842,56 @@ started:
   `git add <file>`, but a single `*.bak` line would prevent an
   accidental `git add -A`).
 
+<!-- RESEARCH_DOCS_V1_MARKER -->
+
+## Session log: research and roadmap documents (2026-11-14, later)
+
+Two docs, no code change. Both close items the previous synthcalib
+session left open.
+
+- **`SYNTHETIC_CALIBRATION_RESEARCH.md` created** with the required
+  `## Deep-research pass (2026-11-14)` section on top (A corrections,
+  B ten-component evidence, C SkyStacker fit, D Tier 1-4, E refusal
+  contract). The seed doc is preserved below the section for
+  traceability; section A says which seed claims are over-claimed
+  (the §5 reliability table is the main one).
+- **`ROADMAP_SYNTHETIC_CALIBRATION.md` created** from section D. Tier 1
+  is `--black-level auto` + read-noise sigma in `report.txt`; Tier 2
+  is `--bpm PATH` + `--self-flat`; Tier 3 is the confidence map;
+  Tier 4 is the refused synthetic generator, recorded only so the next
+  session does not re-open it.
+
+**Self-test count unchanged at 163.** No `main.go` change. No new
+`go.mod` deps. No `testdata/` additions.
+
+### Corrected divergence vs. `research/RESEARCH_SYNTHESIS.md`
+
+`research/RESEARCH_SYNTHESIS.md` is **stale** on two points:
+- It says "version reported as `0.4.1`"; `main.go` says `0.5.1`.
+- Its §4 "Known Limitations" says "No drizzle, local normalization,
+  plate solving, or multi-night intelligence yet"; three of those four
+  are shipped (`--local-normalize`, `--plate-solve`, and the
+  normalization path). Only drizzle is genuinely missing.
+
+The next session that touches the research folder should re-anchor
+`RESEARCH_SYNTHESIS.md` against `main.go`, not treat it as
+authoritative. This is recorded here so the next session does not
+re-discover it.
+
+### Still open after this session
+
+- `.gitignore` still does not exclude `*.bak` (this session added two
+  more: `PROJECT_CONTEXT.md.before_research_docs.bak` and, if you ran
+  Step 1's `cp`, `PROJECT_CONTEXT.md.before_synth_calib.bak` from last
+  session — both untracked).
+- `research/RESEARCH_SYNTHESIS.md` version and limitations are stale
+  (see above).
+- The **implementation** half of the synthetic-calibration roadmap is
+  not started. Tier 1 of `ROADMAP_SYNTHETIC_CALIBRATION.md` is the
+  next actionable item; it is two small commits, each with a named
+  `test…` case.
+
+
 
 ## Session log: Tier 0 documentation and hygiene (2026-11-14)
 
