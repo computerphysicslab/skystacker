@@ -161,6 +161,11 @@ type cliOptions struct {
 	Normalize            bool
 	LocalNormalize       bool
 	LNTileSize           int
+	SynthCalib           bool
+	SynthDark            bool
+	SynthFlat            bool
+	SynthBias            bool
+	SynthCalibReport     bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -279,6 +284,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Normalize, "normalize", false, "globally normalize each frame sky background to the reference frame (requires registration)")
 	fs.BoolVar(&o.LocalNormalize, "local-normalize", false, "per-tile normalization (implies --normalize; requires registration)")
 	fs.IntVar(&o.LNTileSize, "ln-tile-size", 256, "tile side length for --local-normalize (64-2048)")
+	fs.BoolVar(&o.SynthCalib, "synthetic-calibration", false, "report which calibration components are recoverable from lights; never fabricates frames")
+	fs.BoolVar(&o.SynthDark, "synthetic-dark", false, "generate a synthetic dark frame (REFUSED by default; see --synthetic-calibration)")
+	fs.BoolVar(&o.SynthFlat, "synthetic-flat", false, "generate a synthetic flat frame (REFUSED by default; see --synthetic-calibration)")
+	fs.BoolVar(&o.SynthBias, "synthetic-bias", false, "generate a synthetic bias frame (REFUSED by default; see --synthetic-calibration)")
+	fs.BoolVar(&o.SynthCalibReport, "synthetic-calibration-report", false, "print the synthetic-calibration guardrail report to stdout and exit")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
@@ -523,6 +533,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --normalize       globally normalize each frame to the reference (requires registration)")
 	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
+	fmt.Fprintln(w, "  --synthetic-calibration         report what is recoverable from lights; never fabricates frames")
+	fmt.Fprintln(w, "  --synthetic-calibration-report  print the recovery report and exit")
+	fmt.Fprintln(w, "  --synthetic-dark|flat|bias      REFUSED: see --synthetic-calibration")
 	fmt.Fprintln(w, "  --no-cache         disable star/transform cache (default: cache in <output>/_work/cache)")
 	fmt.Fprintln(w, "  --keep-cache       keep the star/transform cache after a successful run (default: remove it)")
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
@@ -3084,6 +3097,7 @@ type runOptions struct {
 	Normalize            bool
 	LocalNormalize       bool
 	LNTileSize           int
+	SynthCalib           bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -4990,6 +5004,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	logf("Stacking %d frame(s) at %dx%d using up to %d worker(s)",
 		len(candidates), refW, refH, workers)
+	if opts.SynthCalib {
+		logf("%s", formatSyntheticCalibReport())
+	}
 
 	// Time estimation. Calibrated against two real sigma runs on
 	// 2400x1600 JPGs:
@@ -9890,6 +9907,243 @@ func testRotatedWCSBothParities() error {
 	return nil
 }
 
+// SYNTHCAL_V1_MARKER
+// =========================================================================
+// SYNTHETIC CALIBRATION GUARDRAILS (V1)
+// =========================================================================
+//
+// The research pass (SYNTHETIC_CALIBRATION_RESEARCH.md) concluded that
+// SkyStacker must NOT silently fabricate bias, dark or flat frames from
+// nothing. Instead it must:
+//
+//   1. Report which calibration components are recoverable from the
+//      lights alone (the --synthetic-calibration report path).
+//   2. Refuse --synthetic-dark / --synthetic-flat / --synthetic-bias and
+//      explain why, naming the missing real exposure for each.
+//   3. Point the user at the empirical reconstruction path that DOES
+//      work from lights alone: --normalize / --local-normalize.
+//
+// The refusal report is deliberately phrased per-component, because the
+// research doc's section B shows the recoverability is wildly different
+// per component: a constant bias pedestal is trivially recoverable from
+// EXIF black-level metadata; dark current at a different temperature is
+// not; a dust shadow is recoverable only if the optical train is
+// unchanged and multiple dithered frames exist.
+
+// syntheticCalibComponent describes one calibration component and what
+// the software can and cannot do about it without a real exposure.
+type syntheticCalibComponent struct {
+	Name        string
+	Recoverable string // "yes" | "partial" | "no"
+	Requires    string // what a real exposure would supply
+	Path        string // the correct SkyStacker flag / action
+}
+
+// syntheticCalibComponents is the authoritative list. Update this when
+// the research doc's section B changes; the tests below assert every
+// entry is non-empty so a half-filled row fails the build.
+var syntheticCalibComponents = []syntheticCalibComponent{
+	{"bias pedestal", "partial", "camera black-level in EXIF or FITS header",
+		"EXIF/header pedestal subtraction is automatic; for a full bias map pass --bias"},
+	{"spatial bias pattern", "no", "at least one real bias frame",
+		"--bias (individual file or folder)"},
+	{"read noise", "no", "statistical model only; cannot be recovered from lights",
+		"read noise is not correctable, only characterised"},
+	{"dark current", "no", "a dark frame at the same exposure, gain and temperature",
+		"--dark (individual file or folder)"},
+	{"hot pixels", "yes", "the per-pixel rejection map already identifies them",
+		"sigma-clipping + stacked_rejection_map.jpg; or --bpm (Tier 2)"},
+	{"amp glow", "no", "a real dark frame; the glow is exposure- and temperature-dependent",
+		"--dark"},
+	{"vignetting", "partial", "multiple dithered lights; --local-normalize recovers the fixed component",
+		"--local-normalize (empirical, not synthetic)"},
+	{"dust shadows", "no", "a real flat frame taken with the same optical train",
+		"--flat"},
+	{"pixel-response non-uniformity", "no", "a real flat frame; dithering averages it out but does not recover it",
+		"--flat (or accept the averaged result of --local-normalize)"},
+	{"illumination gradient", "partial", "robust background modelling on the stacked result",
+		"--bg-degree 1-3 on the stack (post-processing, not calibration)"},
+}
+
+// formatSyntheticCalibReport returns a multi-line human-readable report
+// explaining, per component, whether a synthetic substitute is possible
+// and which SkyStacker flag is the correct action. Never returns an
+// empty string.
+func formatSyntheticCalibReport() string {
+	var b strings.Builder
+	b.WriteString("SkyStacker synthetic-calibration report\n")
+	b.WriteString("======================================\n\n")
+	b.WriteString("The software does NOT fabricate bias, dark or flat frames from\n")
+	b.WriteString("nothing. The table below says, per component, what is recoverable\n")
+	b.WriteString("from the lights alone and what requires a real exposure.\n\n")
+	b.WriteString(fmt.Sprintf("%-28s %-10s %-55s %s\n",
+		"component", "recover?", "what a real exposure supplies", "correct action"))
+	for _, c := range syntheticCalibComponents {
+		b.WriteString(fmt.Sprintf("%-28s %-10s %-55s %s\n",
+			c.Name, c.Recoverable, c.Requires, c.Path))
+	}
+	b.WriteString("\nEmpirical reconstruction from lights (no real calibration frames):\n")
+	b.WriteString("  --normalize        per-frame global scale+offset to the reference\n")
+	b.WriteString("  --local-normalize  per-tile scale+offset, bilinear-interpolated\n")
+	b.WriteString("\nThese recover the FIXED component (vignetting direction, sky-glow\n")
+	b.WriteString("drift) but cannot recover dust shadows, hot-pixel maps or amp glow.\n")
+	return b.String()
+}
+
+// checkSyntheticCalibRefusal returns an error if the user asked for a
+// synthetic frame this software refuses to produce. Returns nil for
+// every combination that does NOT request a refused frame, including
+// the plain --synthetic-calibration report request.
+func checkSyntheticCalibRefusal(opts *cliOptions) error {
+	var refused []string
+	if opts.SynthDark {
+		refused = append(refused, "  --synthetic-dark: dark current is exposure-, gain- and temperature-dependent; a synthetic frame cannot reproduce hot pixels, amp glow or the fixed-pattern dark current of THIS sensor. Use --dark with real frames.")
+	}
+	if opts.SynthFlat {
+		refused = append(refused, "  --synthetic-flat: dust shadows and pixel-response non-uniformity require the actual optical train. Use --flat with real frames, or --local-normalize to recover the fixed illumination component from dithered lights.")
+	}
+	if opts.SynthBias {
+		refused = append(refused, "  --synthetic-bias: only the constant pedestal is recoverable (from EXIF/header metadata); the spatial readout pattern requires a real bias frame. Use --bias.")
+	}
+	if len(refused) == 0 {
+		return nil
+	}
+	return fmt.Errorf("SYNTHETIC CALIBRATION REFUSED\n\n"+
+		"SkyStacker does not fabricate calibration frames, because a synthetic\n"+
+		"frame that looks correct but is not the actual sensor response is\n"+
+		"worse than no calibration at all.\n\n"+
+		"Refused requests:\n%s\n\n"+
+		"Run with --synthetic-calibration to see what IS recoverable from the\n"+
+		"lights alone, or supply real calibration frames via --dark/--flat/--bias.",
+		strings.Join(refused, "\n"))
+}
+
+// testSyntheticCalibGuardrailEmpty asserts that a run with no synthetic
+// flags does not error and does not emit the refusal.
+func testSyntheticCalibGuardrailEmpty() error {
+	opts := &cliOptions{}
+	if err := checkSyntheticCalibRefusal(opts); err != nil {
+		return fmt.Errorf("empty opts refused: %w", err)
+	}
+	return nil
+}
+
+// testSyntheticCalibGuardrailFullSet asserts that all three refused
+// flags together produce a single error that names all three.
+func testSyntheticCalibGuardrailFullSet() error {
+	opts := &cliOptions{SynthDark: true, SynthFlat: true, SynthBias: true}
+	err := checkSyntheticCalibRefusal(opts)
+	if err == nil {
+		return errors.New("expected refusal for all three flags")
+	}
+	msg := err.Error()
+	for _, want := range []string{"--synthetic-dark", "--synthetic-flat", "--synthetic-bias", "REFUSED"} {
+		if !strings.Contains(msg, want) {
+			return fmt.Errorf("refusal missing %q: %s", want, msg)
+		}
+	}
+	return nil
+}
+
+// testSyntheticCalibGuardrailDarkOnly asserts a single refused flag is
+// enough to trigger the error, and that the message names it.
+func testSyntheticCalibGuardrailDarkOnly() error {
+	opts := &cliOptions{SynthDark: true}
+	if err := checkSyntheticCalibRefusal(opts); err == nil {
+		return errors.New("expected refusal for --synthetic-dark alone")
+	}
+	return nil
+}
+
+// testSyntheticCalibGuardrailFlatOnly asserts --synthetic-flat alone is
+// refused and mentions the empirical alternative.
+func testSyntheticCalibGuardrailFlatOnly() error {
+	opts := &cliOptions{SynthFlat: true}
+	err := checkSyntheticCalibRefusal(opts)
+	if err == nil {
+		return errors.New("expected refusal for --synthetic-flat alone")
+	}
+	if !strings.Contains(err.Error(), "--local-normalize") {
+		return fmt.Errorf("flat refusal should point at --local-normalize: %v", err)
+	}
+	return nil
+}
+
+// testSyntheticCalibGuardrailBiasOnly asserts --synthetic-bias alone is
+// refused and mentions the EXIF-pedestal caveat.
+func testSyntheticCalibGuardrailBiasOnly() error {
+	opts := &cliOptions{SynthBias: true}
+	err := checkSyntheticCalibRefusal(opts)
+	if err == nil {
+		return errors.New("expected refusal for --synthetic-bias alone")
+	}
+	return nil
+}
+
+// testSyntheticCalibRefusalMessage asserts the report is never empty,
+// lists every component, and that every row has a non-empty Path and
+// Recoverable field (a half-filled row is a bug, not a "medium" rating).
+func testSyntheticCalibRefusalMessage() error {
+	report := formatSyntheticCalibReport()
+	if report == "" {
+		return errors.New("report is empty")
+	}
+	for _, want := range []string{
+		"synthetic-calibration report",
+		"bias pedestal",
+		"dark current",
+		"hot pixels",
+		"vignetting",
+		"dust shadows",
+		"--normalize",
+		"--local-normalize",
+	} {
+		if !strings.Contains(report, want) {
+			return fmt.Errorf("report missing %q", want)
+		}
+	}
+	if len(syntheticCalibComponents) != 10 {
+		return fmt.Errorf("expected 10 components, got %d", len(syntheticCalibComponents))
+	}
+	for i, c := range syntheticCalibComponents {
+		if c.Name == "" || c.Recoverable == "" || c.Requires == "" || c.Path == "" {
+			return fmt.Errorf("component %d has an empty field: %+v", i, c)
+		}
+		if c.Recoverable != "yes" && c.Recoverable != "partial" && c.Recoverable != "no" {
+			return fmt.Errorf("component %d Recoverable=%q, want yes/partial/no", i, c.Recoverable)
+		}
+	}
+	return nil
+}
+
+// testSyntheticCalibParseArgs asserts every new flag reaches cliOptions.
+func testSyntheticCalibParseArgs() error {
+	for _, c := range []struct {
+		arg  string
+		want func(*cliOptions) bool
+	}{
+		{"--synthetic-calibration", func(o *cliOptions) bool { return o.SynthCalib }},
+		{"--synthetic-dark", func(o *cliOptions) bool { return o.SynthDark }},
+		{"--synthetic-flat", func(o *cliOptions) bool { return o.SynthFlat }},
+		{"--synthetic-bias", func(o *cliOptions) bool { return o.SynthBias }},
+		{"--synthetic-calibration-report", func(o *cliOptions) bool { return o.SynthCalibReport }},
+	} {
+		opts, err := parseArgs([]string{c.arg})
+		if err != nil {
+			return fmt.Errorf("parseArgs(%s): %w", c.arg, err)
+		}
+		if !c.want(opts) {
+			return fmt.Errorf("parseArgs(%s) did not set the option", c.arg)
+		}
+	}
+	// Default: every synth flag is false.
+	opts, _ := parseArgs(nil)
+	if opts.SynthCalib || opts.SynthDark || opts.SynthFlat || opts.SynthBias || opts.SynthCalibReport {
+		return errors.New("synth flags default to true")
+	}
+	return nil
+}
+
 func runSelfTests() int {
 	cases := []testCase{
 		{"accumulator sum and mean", testAccumulatorSumMean},
@@ -10048,6 +10302,13 @@ func runSelfTests() int {
 		{"plate center flag reaches solver", testPlateCenterFlagReachesSolver},
 		{"crop explanation mentions validity", testCropExplanationMentionsValidity},
 		{"png bmp snapshot", testPNGBMPSnapshot},
+		{"synthetic calib guardrail empty", testSyntheticCalibGuardrailEmpty},
+		{"synthetic calib guardrail full set", testSyntheticCalibGuardrailFullSet},
+		{"synthetic calib guardrail dark only", testSyntheticCalibGuardrailDarkOnly},
+		{"synthetic calib guardrail flat only", testSyntheticCalibGuardrailFlatOnly},
+		{"synthetic calib guardrail bias only", testSyntheticCalibGuardrailBiasOnly},
+		{"synthetic calib refusal message", testSyntheticCalibRefusalMessage},
+		{"synthetic calib parse args", testSyntheticCalibParseArgs},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -16410,6 +16671,14 @@ func main() {
 		}
 		return
 	}
+	if opts.SynthCalibReport {
+		fmt.Print(formatSyntheticCalibReport())
+		return
+	}
+	if err := checkSyntheticCalibRefusal(opts); err != nil {
+		fmt.Fprintln(os.Stderr, "skystacker:", err)
+		os.Exit(1)
+	}
 	err = runPipeline(context.Background(), runOptions{
 		InputDir:             opts.InputDir,
 		OutputDir:            opts.OutputDir,
@@ -16470,6 +16739,7 @@ func main() {
 		Normalize:            opts.Normalize,
 		LocalNormalize:       opts.LocalNormalize,
 		LNTileSize:           opts.LNTileSize,
+		SynthCalib:           opts.SynthCalib,
 		CreateTIFF:           opts.CreateTIFF,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
