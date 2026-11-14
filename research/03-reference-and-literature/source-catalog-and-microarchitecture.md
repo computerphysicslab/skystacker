@@ -1,19 +1,19 @@
-# Comprehensive Technical Compendium of SkyStacker Sources and Technological Architecture
+# Comprehensive Source Catalog, Runtime Microarchitecture & Keyword Index
 
-This document constitutes an exhaustive technical and documentary synthesis of the 41 original sources (now expanded to 49) integrated into the **SkyStacker** project. Its purpose is to provide a structured compendium encompassing both the complete catalog of references and the entirety of the mathematical, algorithmic, microarchitectural, and software engineering foundations described in the project's literature. To improve and update the documentation, unreleased content regarding advanced AI-based processing, WCS astrometry, standardized astronomical formats (FITS/XISF), and GPU acceleration has been incorporated.
+**Scope:** Consolidated catalog of all 50 primary project references, systems-level microarchitecture notes (Go runtime internals, eBPF continuous profiling, and the Roofline performance model), and a categorized 100-term technical keyword index.
 
 ---
 
-## 1. General Catalog of Project Sources
+## 1. Master Catalog of 50 Primary Project Sources
 
-Below is a detailed list of all primary information sources selected in the notebook. The table specifies the internal identifier, the official title of the document or resource, its original format, and its domain of contribution to the SkyStacker project:
+This table consolidates all 41 original notebook references together with the 9 extended references covering AI-based processing, WCS/SIP astrometry, FITS/XISF standards, Go concurrency, and GPU acceleration:
 
 | ID | Source Title | Source Type | Technical Domain and Contribution |
 | :--- | :--- | :--- | :--- |
 | **01** | ASTAP, Astrometric Stacking Program - HNSky | URL | Astrometric alignment algorithms, mosaic stacking, plate solving, and calibration. |
-| **02** | Architectural Specification and Mathematical Foundations for a Local-First, Concurrent Go CLI Engine for Astronomical Image Integration | Markdown Specification | Go CLI engine architecture, memory management with `sync.Pool`, spatial tiles, and IEEE 754 float32 TIFF encoding. |
+| **02** | Architectural Specification and Mathematical Foundations for a Local-First, Concurrent Go CLI Engine for Astronomical Image Integration | Markdown Specification | Go CLI engine architecture, memory management with `sync.Pool`, spatial tiles, and IEEE 754 `float32` TIFF encoding. |
 | **03** | Asinh transformation [Siril 1.0] | URL | Mathematical foundations and color preservation through the inverse hyperbolic sine transformation. |
-| **04** | AsinhStretch — Astropy v8.0.2 | URL | Standard reference implementation for the non-linear AsinhStretch in astrophotography. |
+| **04** | AsinhStretch — Astropy v8.0.2 | URL | Standard reference implementation for the non-linear `AsinhStretch` in astrophotography. |
 | **05** | Astrophotography — Art and Science - Bluewater Astronomical Society | PDF Document | Comparative workflows between Siril, PixInsight, Affinity Photo, and complementary AI tools. |
 | **06** | Best Deep-Sky Stacking Software for Mac (2026 Guide) | URL | RAM memory requirements, macOS Apple Silicon scalability, and comparative analysis of stacking software. |
 | **07** | Best Practices for Identifying and Eliminating Code Smells - Codacy \| Blog | URL | Static analysis techniques and elimination of degrading patterns (code smells) in software development. |
@@ -38,7 +38,7 @@ Below is a detailed list of all primary information sources selected in the note
 | **26** | Stacking — Siril 1.4.4 documentation | URL | Scale estimators (IKSS, MAD), frame selection by percentage/k-sigma, and additive/multiplicative normalization. |
 | **27** | Static Code Analysis: Top 7 Methods, Pros/Cons and Best Practices - Oligo Security | URL | Static code analysis strategies for vulnerability prevention and software optimization. |
 | **28** | SwissMap: A smaller, faster Golang Hash Table \| DoltHub Blog | URL | Go port of Swiss Tables (`dolthub/swiss`), fast modulo reduction (`fastModN`), and SIMD/AVO optimizations. |
-| **29** | TECHNICAL_SPEC.md | Markdown Specification | Detailed technical specification of SkyStacker v0.5.0: CLI contract, 6-stage pipeline, and numerical limits. |
+| **29** | TECHNICAL_SPEC.md | Markdown Specification | Detailed technical specification of SkyStacker `v0.5.0`: CLI contract, 6-stage pipeline, and numerical limits. |
 | **30** | TIFF file format: specification, software and libraries · fileformats.dev | URL | Internal TIFF structure, strips, tiles, 64-bit BigTIFF, and GeoTIFF extensions. |
 | **31** | TIFF: Summary from the Encyclopedia of Graphics File Formats - FileFormat.Info | URL | Historical and structural summary of TIFF 6.0 formats, byte order, and IEEE data types. |
 | **32** | Tiff - MATLAB Gateway to LibTIFF library routines - MathWorks | URL | Properties and functions of the MATLAB LibTIFF interface for reading and writing scientific TIFF tags. |
@@ -58,32 +58,146 @@ Below is a detailed list of all primary information sources selected in the note
 | **46** | Understanding SIP (Simple Imaging Polynomial) Distortion - Astropy | URL | Advanced mathematical modeling of optical distortions for accurate correction in spatial WCS coordinates. |
 | **47** | Concurrency in Go: Advanced Pipelines and Context - Go Blog | URL | Advanced concurrency design patterns for safe goroutine lifecycle management using `context.Context`. |
 | **48** | FITS WCS Standard (World Coordinate System) | PDF Document | Specification of transformation algorithms mapping physical pixel coordinates to celestial equatorial coordinates (RA/Dec). |
-| **49** | The Role of CUDA and Vulkan in GPU-Accelerated Image Integration | Technical Article | Hardware abstractions (HAL) to offload intensive mathematical computations to graphics processing units. |
+| **49** | The Role of CUDA and Vulkan in GPU-Accelerated Image Integration | Technical Article | Hardware abstractions (HAL) to offload intensive mathematical computations to the GPU in astrophotography CLI engines. |
+| **50** | NoiseXTerminator & StarXTerminator Architecture - RC-Astro | URL | Convolutional Neural Networks (CNNs) applied to the deconstruction of astrophotographic images for star separation. |
 
 ---
 
-## 2. Technical Foundations & Architectural Synthesis
+## 2. Software Engineering, Profiling & Hardware Performance Models
 
-### 2.1 World Coordinate System (WCS) Astrometry & SIP Distortion Correction
-The **World Coordinate System (WCS)** standardizes transformations mapping discrete image pixel coordinates $(x, y)$ to celestial equatorial coordinates $(\alpha, \delta)$ (Right Ascension and Declination).
-* **Gnomonic Projection (TAN):** Projects spherical coordinates onto a tangent plane.
-* **Simple Imaging Polynomial (SIP):** Extends WCS by modeling optical field distortions introduced by camera lenses and focal reducers via explicit polynomial expressions:
-  $$f(u, v) = \sum_{p+q \le A} A_{p,q} \, u^p v^q, \quad g(u, v) = \sum_{p+q \le B} B_{p,q} \, u^p v^q$$
-  where $u, v$ are standard focal-plane coordinates, and $A_{p,q}, B_{p,q}$ are the SIP distortion coefficients stored directly within FITS file headers.
+### 2.1 Code Smell Detection and Refactoring Standards
+SkyStacker's codebase adheres to static analysis rules designed to eliminate performance-degrading patterns:
+* **Complex or Lengthy Functions:** Decomposing monolithic routines into atomic modules with single responsibility.
+* **Hidden Heap Allocations:** Eliminating implicit interface conversions (`any`) that force stack variables to escape to the heap.
+* **I/O Coupling:** Decoupling disk reads from numerical loops using bounded concurrent channel buffers.
 
-### 2.2 Deep Learning AI Denoising & Background Extraction
-Modern astrophotography pipelines complement traditional rejection stacking with deep neural models (e.g., U-Nets, Noise2Noise, self-supervised networks):
-* **Background Gradient Removal:** Neural networks isolate complex non-linear light pollution gradients without requiring manual background sample placement.
-* **Supervised vs. Self-Supervised Denoising:** U-Nets trained on synthetic or high-SNR astronomical master frames achieve substantial signal-to-noise ratio gains ($>1.5\times$) while retaining point-source stellar flux and diffraction spikes.
-* **Pre-processing Requirements:** Outlier artifacts like cosmic rays must be rejected prior to neural inference to prevent them from being mistaken for stellar point sources.
+### 2.2 Continuous Profiling with eBPF
+To inspect runtime performance in production without instrumentation overhead, kernel-level continuous profilers based on **eBPF** (*Extended Berkeley Packet Filter*), such as **Parca** or **Pyroscope**, monitor CPU hardware performance counters and memory allocations, generating low-overhead flamegraphs of active goroutines.
 
-### 2.3 Multiscale Wavelet Analysis (*À Trous* Transform)
-The *à trous* ("with holes") discrete wavelet transform provides scale-invariant decomposition of deep-sky images:
-* **Scale Separation:** Decomposes an image $I$ into an array of wavelet scales $w_k$ and a residual smooth background layer $c_N$:
-  $$I(x, y) = c_N(x, y) + \sum_{k=1}^{N} w_k(x, y)$$
-* **Feature Isolation:** Finer detail layers ($w_1, w_2$) isolate high-frequency sensor noise and small stars, while coarser layers ($w_3..w_N$) isolate diffuse nebular structures. This multiresolution structure allows targeted noise suppression and contrast enhancement without inducing halo artifacts.
+### 2.3 The Roofline Performance Model
+Numerical throughput in SkyStacker is evaluated using the **Roofline Model**, which bounds achievable execution speed (in GFLOPS) by peak hardware compute capacity and memory bandwidth scaled by **Arithmetic Intensity** $I$ (floating-point operations per byte transferred from RAM):
 
-### 2.4 GPU Offloading & Execution Pipelines
-To maintain real-time performance on high-resolution sensor frames, image integration engines employ Hardware Abstraction Layers (HAL):
-* **Execution APIs:** CUDA and Vulkan backends execute dense pixel-level matrix operations (e.g., interpolation, cross-correlation alignment, frame normalization, and weighting).
-* **Parallel Pipelines:** Utilizing concurrent worker goroutines with `context.Context` cancellation and thread-safe memory allocations (`sync.Pool`), CPU data transfer overhead is minimized while offloading heavy transformations to GPU compute queues.
+$$\text{Performance (GFLOPS)} = \min\left( \text{Peak ALU Performance}, \text{RAM Bandwidth} \times I \right)$$
+
+* **Memory-Bound Regimes:** Operations with low arithmetic intensity (e.g., simple pixel addition) are bottlenecked by DRAM bandwidth.
+* **Compute-Bound Regimes:** Algorithms with high arithmetic intensity (e.g., FFT convolutions, subpixel Lanczos/Sinc interpolation, iterative Winsorized sorting) are bounded by CPU vector execution units (AVX2/AVX-512) or GPU compute shaders.
+
+By partitioning images into L2-cache-friendly spatial tiles, SkyStacker maximizes data locality and shifts execution toward the compute-bound regime.
+
+---
+
+## 3. Categorized Technical Keyword Index (100 Core Concepts)
+
+### Core System & Architecture
+1. SkyStacker
+2. Astrometric Stacking Program
+3. Go CLI Engine
+4. Local-First Design
+5. Static Compilation
+6. `CGO_ENABLED=0`
+7. Spatial Tiles
+8. IEEE 754 `float32` TIFF
+9. Garbage Collector Optimization
+10. `sync.Pool`
+11. `TileBuffer`
+12. Goroutine leaks
+13. `context.Context`
+14. Concurrency Pipeline
+15. Hardware Abstraction Layer (HAL)
+16. GPU Compute
+17. Metal compute shaders
+18. CUDA
+19. Vulkan
+
+### Data Structures & Performance Optimization
+20. Swiss Table Architecture
+21. SoA Layout (*Structure of Arrays*)
+22. $H_1/H_2$ Hash Splitting
+23. Control bytes
+24. SIMD vector register
+25. SWAR technique
+26. Load factor
+27. Escape analysis
+28. Fingerprint ($H_2$)
+29. Roofline Model
+30. Arithmetic Intensity
+31. Memory-Bound Regimes
+32. Compute-Bound Regimes
+33. Code Smell Detection
+34. Continuous Profiling
+35. eBPF
+
+### Calibration & Photometric Preprocessing
+36. Master Bias
+37. Master Dark
+38. Master Flat
+39. Photometric calibration
+40. Vignetting correction
+41. Photometric quality metrics ($Q_i$)
+42. `SubframeSelector`
+43. Noise evaluation
+44. `LocalNormalization`
+45. FWHM (Full Width at Half Maximum)
+46. Eccentricity
+47. Signal-to-noise ratio (SNR)
+48. `PSFWeight`
+
+### Detection, Registration & Astrometry
+49. Point Spread Function (PSF)
+50. Centroid calculation
+51. Aperture photometry
+52. Star-Pattern Matching
+53. Similarity Transformation
+54. RANSAC Filtering
+55. Blind Plate Solving
+56. World Coordinate System (WCS)
+57. SIP Distortion (Simple Imaging Polynomial)
+58. Gaia DR3
+59. Right Ascension (RA)
+60. Declination (Dec)
+61. PSF deconvolution
+
+### Stacking & Pixel Rejection Algorithms
+62. Stochastic noise theory
+63. Arithmetic Mean
+64. Median Stacking
+65. Sigma Clipping
+66. Winsorized Sigma
+67. Linear Fit Clipping
+68. GESDT test (Extreme Studentized Deviate)
+69. Pixel Maximum (`Max Stack`)
+70. Pixel Minimum (`Min Stack`)
+71. Pixel rejection filters
+
+### File Formats & Metadata Processing
+72. TIFF 6.0
+73. BigTIFF format
+74. Image File Directory (IFD)
+75. EXIF metadata
+76. IPTC metadata
+77. XMP metadata
+78. `imagemeta` package
+79. Flexible Image Transport System (FITS)
+80. Extensible Image Serialization Format (XISF)
+
+### Non-Linear Post-Processing & AI Integration
+81. Asinh transformation
+82. `AsinhStretch`
+83. `ArcsinhStretch`
+84. Generalized Hyperbolic Stretch (GHS)
+85. Midtone Transfer Function (MTF)
+86. Spectrophotometric Color Calibration (SPCC)
+87. Subtractive Chromatic Noise Reduction (SCNR)
+88. Background Extraction
+89. Chromatic Aberration Correction
+90. Unsharp Mask
+91. Wavelet Processing
+92. Wavelet *À Trous* Transforms
+93. StarXTerminator
+94. NoiseXTerminator
+95. GraXpert
+96. Calibration algorithms
+97. IKSS estimator
+98. Directed Acyclic Graph (DAG)
+99. Non-linear post-processing
+100. Starless Workflows
