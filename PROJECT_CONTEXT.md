@@ -751,6 +751,98 @@ Tier 0 is closed. The next actionable roadmap items are **Tier 1 weighted median
 
 The `plate solve blind` self-test remains hermetic (forces `plateGaiaOffline = true`, fixture's sky position moved into the blind-scan patch, cache pre-seeded). Tier 0 changed no code in that path. The bigger caveat — that "blind" mode is a 3x3 nside=64 local scan, not a whole-sky solve — is now stated in `TECHNICAL_SPEC §2 Excluded` and in `COMPARISON.md` Gaps; it was previously only in the 2026-11-14 session log and in `printUsage`'s `--plate-center` description.
 
+<!-- SYNTHCAL_V1_MARKER -->
+
+## Session log: synthetic-calibration guardrails (2026-11-14)
+
+**Commit:** `5be6865` — `synthcalib: refuse synthetic bias/dark/flat; add recovery report`
+
+**Scope:** the guardrail half of the synthetic-calibration research
+pass. No synthetic frame is generated; this patch only makes the
+software *refuse* to generate one and *report* what is recoverable
+from the lights alone. The research prompt's section E is mandatory
+because silent synthetic calibration is worse than no calibration —
+this is that section, landed.
+
+**New flags (`parseArgs` + `printUsage` + `runOptions` + `cliOptions`):**
+- `--synthetic-calibration` — logs the per-component recovery report
+  at pipeline start (reaches `report.txt` via the normal Notes path).
+- `--synthetic-calibration-report` — prints the report to stdout and
+  exits, before any discovery or decode (see `main()` order: it runs
+  before `--selftest`'s post-processing branch and before
+  `runPipeline`).
+- `--synthetic-dark`, `--synthetic-flat`, `--synthetic-bias` — each
+  triggers `checkSyntheticCalibRefusal()` in `main()` and exits 1
+  with a `SYNTHETIC CALIBRATION REFUSED` error naming the missing
+  real exposure and the correct `--dark`/`--flat`/`--bias` flag.
+  The refusal is the **first** thing the user sees, not a stack
+  that silently produced a wrong master.
+
+**Guardrail table (`syntheticCalibComponents`):** 10 rows, one per
+component in `SYNTHETIC_CALIBRATION_RESEARCH.md` section B. Each row
+has `Name`, `Recoverable` ∈ {yes, partial, no}, `Requires`, `Path`.
+`testSyntheticCalibRefusalMessage` asserts every field is non-empty
+and every `Recoverable` is one of the three values, so a half-filled
+row fails `--selftest` rather than shipping a vague "medium".
+
+Recoverability verdicts (from the research pass; the table in the
+seed doc's section 5 is qualitative and is **not** reproduced as-is):
+- bias pedestal: partial (EXIF/header metadata only)
+- spatial bias pattern: no
+- read noise: no (not correctable, only characterisable)
+- dark current: no
+- hot pixels: yes (sigma-clipping + rejection map already finds them)
+- amp glow: no
+- vignetting: partial (`--local-normalize` recovers the fixed component)
+- dust shadows: no
+- pixel-response non-uniformity: no
+- illumination gradient: partial (`--bg-degree` on the stack)
+
+**Tests:** 154 → 163 (the `--selftest` count is authoritative per
+`TECHNICAL_SPEC.md` §2; the commit message says 161, which was the
+projected count before the tree drifted by two; the real number is
+163). New: `testSyntheticCalibGuardrailEmpty`,
+`testSyntheticCalibGuardrailFullSet`,
+`testSyntheticCalibGuardrailDarkOnly`,
+`testSyntheticCalibGuardrailFlatOnly`,
+`testSyntheticCalibGuardrailBiasOnly`,
+`testSyntheticCalibRefusalMessage`, `testSyntheticCalibParseArgs`.
+The last three are the `--plate-center` / crop-validity / PNG-BMP
+tests, which were already in the tree before this patch.
+
+**No change to** `TECHNICAL_SPEC.md` §4.1 (median description stays
+correct — the unweighted algorithm text is untouched), `go.mod` (no
+new deps), `testdata/` (no additions).
+
+### Still open after this session
+
+The implementation half of the research pass — `--synthetic-calibration`
+*reporting* is live, but the *empirical reconstruction* roadmap is not
+started:
+
+- **`ROADMAP_SYNTHETIC_CALIBRATION.md` does not exist in the repo.**
+  The research prompt's section D ("Recommended implementation order",
+  Tier 1-4) is the input for the next implementation session, but it
+  lives only in the prompt. Create it from section D before the next
+  implementation session, with each Tier 1 item stated as a
+  user-visible flag, a falsifiable acceptance test, and a
+  `test…` self-test name. The section-D items that the guardrail
+  table already points at are `--bpm` (Tier 2), `--self-flat` from
+  dithered lights (Tier 3), and the confidence map (Tier 3).
+- **`SYNTHETIC_CALIBRATION_RESEARCH.md` has not received the
+  "Deep-research pass (YYYY-MM-DD)" section** required by the prompt.
+  That section (A-E) is the *output* of the research session, not the
+  input; this session only consumed section E's conclusion. The
+  research session's own deliverable is still owed.
+- The `.gitignore` `.bak` item from the Tier 0 cleanup is still open
+  (this session added two more `.bak` files:
+  `main.go.before_synth_calib.bak` and
+  `PROJECT_CONTEXT.md.before_synth_calib.bak`; both are untracked
+  and will stay untracked because the commits use explicit
+  `git add <file>`, but a single `*.bak` line would prevent an
+  accidental `git add -A`).
+
+
 ## Session log: Tier 0 documentation and hygiene (2026-11-14)
 
 **Commit:** `1f1f875` — `tier0: docs — plate solving is wired; guard spike defaults in printUsage`
