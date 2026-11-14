@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 151 passing.** Update this number after any test change.
+**Self-test count: 154 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -624,7 +624,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 151 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 154 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -642,3 +642,32 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 - **KNOWN LIMITS (not fixed)**: (1) pipeline calls `solvePlate(..., 0, 0, ...)` so it is always BLIND around RA/Dec 0,0 and cannot solve real fields: needs a pointing seed (e.g. `--plate-center RA,DEC` or FITS header RA/DEC). (2) Matcher assumes the frame covers a large fraction of the Gaia pool (top-40 by brightness each side); a small field inside a ~0.9 deg tile returns "no consistent transform". Needs local-neighbourhood triangles or a pointing+scale seed.
 
 - **2026-11-14 (later)**: `plate solve blind` self-test fixed. It was not hermetic (unseeded scan tiles were fetched live from Gaia, adding unrelated real stars) and, with a fixture away from RA/Dec 0,0, could never succeed because blind mode only scans the 8 nside=64 tiles around (0,0) (RA 359.3-0.7 deg, Dec +/-1.2 deg). The test now forces `plateGaiaOffline` and moves the fixture's sky position (CRVAL) into that patch, keeping pixel geometry. NOTE: "blind" mode is therefore a local scan, not a whole-sky solve.
+
+## Session log: --plate-center, crop-explanation validity, --png/--bmp (2026-11-14)
+
+- **`--plate-center RA,DEC` APPLIED**: pipeline no longer calls
+  `solvePlate(..., 0, 0, ...)` unconditionally. Priority: `--plate-center`
+  flag > reference frame's FITS-header `RA`/`DEC` > blind (with a loud
+  warning, because blind mode only scans the 3x3 nside=64 neighbourhood
+  around (0,0) and will fail on a real field). `parseFITSHeader` now
+  returns `(raRad, decRad)`; the three call sites (`decodeImageConfig`,
+  `decodeFITSNative`, `testFITSFileDebayer`) discard them with `_, _`.
+- **Crop explanation validity override APPLIED**: `runPipeline` counts
+  pixels where `validCount[p] < registeredCount` right after
+  `findSafeCrop`. If >0.5% of the frame is excluded and no frame is a
+  geometric limiter, the report says "Crop limited by N pixels (P%) ...
+  likely calibration-negative or out-of-bounds resampling" instead of
+  "All registered frames cover". Precedence: explicit limiter frames
+  win; otherwise the validity message wins over the "all cover" line.
+- **`--png` / `--bmp` APPLIED**: both write alongside `stacked_mean.jpg`
+  in the registered and unregistered branches. `writePNGPreview` reuses
+  `image/png` and the same gamma-0.5 LUT as the JPEGs so the two are
+  directly comparable. `writeBMP24` is a hand-written uncompressed
+  24-bit BMP (BGR, bottom-up, 4-byte row padding).
+- **Stale `--help` spike defaults FIXED**: length 100→10, intensity
+  0.7→0.3, arms 6→4. `parseArgs` was already correct; only `printUsage`
+  lied. `testParseArgs` now asserts the parser defaults (10/0.3/4) so
+  the two cannot drift again.
+- Tests: `testPlateCenterFlagReachesSolver`, `testCropExplanationMentionsValidity`,
+  `testPNGBMPSnapshot`. `testParseArgs` extended in place (no count
+  change). Test count 151 -> 154.
