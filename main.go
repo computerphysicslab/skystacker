@@ -562,13 +562,14 @@ type frame struct {
 }
 
 func calibrate(f *frame, dark, flat, bias *frame) {
-	if dark != nil {
-		for i := range f.Pix {
+	if dark == nil && flat == nil {
+		return
+	}
+	for i := range f.Pix {
+		if dark != nil {
 			f.Pix[i] -= dark.Pix[i]
 		}
-	}
-	if flat != nil {
-		for i := range f.Pix {
+		if flat != nil {
 			denom := flat.Pix[i]
 			if bias != nil {
 				denom -= bias.Pix[i]
@@ -578,6 +579,19 @@ func calibrate(f *frame, dark, flat, bias *frame) {
 			}
 			f.Pix[i] /= denom
 		}
+		// Clamp to [0,1]. Without this, dark subtraction pushes
+		// sky-background pixels below zero; the resampler stores
+		// them, updateValidCount rejects them (Pix < 0), and
+		// findSafeCrop intersects the three per-frame validity
+		// masks down to a tiny patch (0.4% of the frame in the
+		// ON/IMG_7005..7007 run). See report.txt.
+		v := f.Pix[i]
+		if v < 0 {
+			v = 0
+		} else if v > 1 {
+			v = 1
+		}
+		f.Pix[i] = v
 	}
 }
 
