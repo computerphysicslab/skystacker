@@ -4191,6 +4191,61 @@ func madOf(vals []float32, median float32) float32 {
 	return medianInPlace(dev)
 }
 
+// weightedMedian returns the weighted median of vals. It sorts the
+// (value, weight) pairs by value, then walks the cumulative weight
+// until it reaches 50% of the total. That value is the weighted
+// median. Weights must be non-negative and the same length as vals.
+//
+// Degenerate cases (documented, not silently swallowed):
+//   - len(vals) == 0              -> return 0
+//   - len(vals) != len(weights)   -> return 0
+//   - sum(weights) <= 0           -> return the unweighted median via
+//     medianInPlace so callers do not
+//     zero out pixels that happen to
+//     have all-zero weights
+//   - negative weights            -> clamped to 0 (a negative weight
+//     has no physical meaning for a
+//     quality score; clamping keeps
+//     the cumulative walk monotone)
+//
+// Ties: the algorithm returns the first value whose cumulative weight
+// reaches >= half the total; consistent with numpy and R.
+func weightedMedian(vals, weights []float32) float32 {
+	if len(vals) == 0 || len(vals) != len(weights) {
+		return 0
+	}
+	total := 0.0
+	for _, w := range weights {
+		if w < 0 {
+			w = 0
+		}
+		total += float64(w)
+	}
+	if total <= 0 {
+		copyVals := make([]float32, len(vals))
+		copy(copyVals, vals)
+		return medianInPlace(copyVals)
+	}
+	order := make([]int, len(vals))
+	for i := range order {
+		order[i] = i
+	}
+	sort.Slice(order, func(a, b int) bool { return vals[order[a]] < vals[order[b]] })
+	half := total / 2
+	cum := 0.0
+	for _, i := range order {
+		w := float64(weights[i])
+		if w < 0 {
+			w = 0
+		}
+		cum += w
+		if cum >= half {
+			return vals[i]
+		}
+	}
+	return vals[order[len(order)-1]]
+}
+
 // sigmaClipReduce returns the MAD-based sigma-clipped mean of vals. The
 // first iteration computes median and MAD, derives sigma = 1.4826*MAD,
 // and rejects values further than threshold*sigma from the median. Each
@@ -4537,10 +4592,21 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 				sumPix[outPix*3+c] = float32(s)
 				switch method {
 				case "median":
-					workVals = workVals[:0]
-					workVals = append(workVals, validVals...)
-					meanPix[outPix*3+c] = medianInPlace(workVals)
-					wgtSum += float32(len(validVals))
+					if frameWeights != nil {
+						// frameWeights was populated by runPipeline from the per-frame
+						// quality scores; validWeights was built alongside validVals
+						// exactly like the sigma path.
+						meanPix[outPix*3+c] = weightedMedian(validVals, validWeights)
+						// Weight-map semantics for median: the "accepted count" is
+						// the number of frames that contributed a value (all of
+						// them for median; nothing is rejected).
+						wgtSum += float32(len(validVals))
+					} else {
+						workVals = workVals[:0]
+						workVals = append(workVals, validVals...)
+						meanPix[outPix*3+c] = medianInPlace(workVals)
+						wgtSum += float32(len(validVals))
+					}
 				case "sigma":
 					var m float32
 					var acc, rej int
@@ -9898,8 +9964,10 @@ func runSelfTests() int {
 		{"sigma clip reduce", testSigmaClipReduce},
 		{"sigma clip all same", testSigmaClipAllSame},
 		{"sigma clip reduce weighted", testSigmaClipReduceWeighted},
+		{"weighted median", testWeightedMedian},
 		{"read tile from raw", testReadTileFromRaw},
 		{"reduce tiles stack weighted", testReduceTilesStackWeighted},
+		{"reduce tiles stack weighted median", testReduceTilesStackWeightedMedian},
 		{"reduce tiles stack", testReduceTilesStack},
 		{"chroma denoise", testChromaDenoiseGB},
 		{"chroma denoise multi-scale", testChromaDenoiseMultiScale},
@@ -11839,6 +11907,54 @@ func testReadTileFromRaw() error {
 	return nil
 }
 
+func testReduceTilesStackWeightedMedian() error {
+	dir, err := os.MkdirTemp("", "skystacker-reduce-wm-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 16, 16
+	// Pick values that make weighted and unweighted genuinely differ:
+	// vals={0.1,0.2,0.9}, weights={10,1,1}. Unweighted median 0.2;
+	// weighted walks 0.1(cum 10) >= half 6 -> 0.1.
+	vals := []float32{0.1, 0.2, 0.9}
+	weights := []float32{10, 1, 1}
+	var spillPaths []string
+	for i, v := range vals {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for j := range f.Pix {
+			f.Pix[j] = v
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%d.f32raw", i))
+		if err := writeSpillFrame(path, f); err != nil {
+			return err
+		}
+		spillPaths = append(spillPaths, path)
+	}
+	_, meanW, _, _, err := reduceTilesStack(
+		spillPaths, w, h, image.Rect(0, 0, w, h),
+		"median", 3.0, 2, 16, 1, weights)
+	if err != nil {
+		return err
+	}
+	if math.Abs(float64(meanW[0])-0.1) > 1e-3 {
+		return fmt.Errorf("weighted median = %v, want 0.1", meanW[0])
+	}
+	_, meanUnw, _, _, err := reduceTilesStack(
+		spillPaths, w, h, image.Rect(0, 0, w, h),
+		"median", 3.0, 2, 16, 1, nil)
+	if err != nil {
+		return err
+	}
+	if math.Abs(float64(meanUnw[0])-0.2) > 1e-3 {
+		return fmt.Errorf("unweighted median = %v, want 0.2", meanUnw[0])
+	}
+	if math.Abs(float64(meanW[0]-meanUnw[0])) < 1e-3 {
+		return fmt.Errorf("weighted %v equals unweighted %v; test is not sensitive", meanW[0], meanUnw[0])
+	}
+	return nil
+}
+
 func testReduceTilesStack() error {
 	dir, err := os.MkdirTemp("", "skystacker-reduce-")
 	if err != nil {
@@ -11892,6 +12008,49 @@ func testReduceTilesStack() error {
 	}
 	if sumPix == nil || meanPix == nil || rejPix == nil || wgtPix == nil {
 		return errors.New("nil output slice")
+	}
+	return nil
+}
+
+func testWeightedMedian() error {
+	// Case 1: basic non-uniform weights. Unweighted median is 0.5;
+	// weighted walks 0.4(0.9) -> 0.5(1.8) -> 0.6(1.9); half is 0.95;
+	// first cum >= 0.95 is at 0.5 (cum 1.8). Answer 0.5.
+	if got := weightedMedian([]float32{0.4, 0.6, 0.5}, []float32{0.9, 0.1, 0.9}); math.Abs(float64(got)-0.5) > 1e-6 {
+		return fmt.Errorf("case 1: got %v, want 0.5", got)
+	}
+	// Case 2: all-equal weights must match medianInPlace.
+	vals2 := []float32{5, 5.1, 4.9, 5.05, 4.95}
+	cp := append([]float32(nil), vals2...)
+	if got := weightedMedian(vals2, []float32{1, 1, 1, 1, 1}); math.Abs(float64(got)-float64(medianInPlace(cp))) > 1e-4 {
+		return fmt.Errorf("case 2: got %v, want %v", got, cp[len(cp)/2])
+	}
+	// Case 3: one frame dominates.
+	if got := weightedMedian([]float32{0.2, 0.8, 0.9}, []float32{100, 1, 1}); math.Abs(float64(got)-0.2) > 1e-6 {
+		return fmt.Errorf("case 3: got %v, want 0.2", got)
+	}
+	// Case 4: zero total weight falls back to unweighted median.
+	vals4 := []float32{0.4, 0.6, 0.5}
+	cp4 := append([]float32(nil), vals4...)
+	if got := weightedMedian(vals4, []float32{0, 0, 0}); math.Abs(float64(got)-float64(medianInPlace(cp4))) > 1e-6 {
+		return fmt.Errorf("case 4: got %v, want 0.5", got)
+	}
+	// Case 5: length mismatch.
+	if got := weightedMedian([]float32{0.1, 0.2}, []float32{1.0}); got != 0 {
+		return fmt.Errorf("case 5: got %v, want 0", got)
+	}
+	// Case 6: empty.
+	if got := weightedMedian(nil, nil); got != 0 {
+		return fmt.Errorf("case 6: got %v, want 0", got)
+	}
+	// Case 7: negative weight is clamped to 0. vals={0.1,0.5,0.9},
+	// weights={-1,2,-1} -> effective {0,2,0} -> cum after 0.1 is 0,
+	// after 0.5 is 2 (half=1) -> answer 0.5. Compare against the
+	// same input with weights clamped to {0,2,0}.
+	a := weightedMedian([]float32{0.1, 0.5, 0.9}, []float32{-1, 2, -1})
+	b := weightedMedian([]float32{0.1, 0.5, 0.9}, []float32{0, 2, 0})
+	if math.Abs(float64(a-b)) > 1e-6 {
+		return fmt.Errorf("case 7: negative-weight got %v, clamped got %v", a, b)
 	}
 	return nil
 }
