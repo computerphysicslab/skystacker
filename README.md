@@ -578,6 +578,18 @@ The following items from the original roadmap have been implemented in 0.5.0:
 
 ### Tier 3 — Large, multi-day (`L`)
 
+- **Astrometric catalog annotation & unassociated-source (anomaly) flagging**:
+  consume `plate_solution.json` (WCS + optional SIP) during stacking or `--post-only`
+  to project reference catalog entries (Gaia DR3 plus bundled/cached NGC/IC, PGC,
+  Messier, and HD tables) into image pixel coordinates and emit an annotated overlay
+  (`stacked_annotated.jpg` / `.png`) with scaled elliptical apertures, leader lines,
+  and morphological/photometric labels. Cross-match blind detections against the
+  projected catalog within an angular tolerance radius to highlight uncatalogued
+  sources or photometric outliers (transients, minor planets, high-proper-motion
+  objects, or unclipped artifacts) with distinct anomaly reticles and emit an
+  `anomalies.json` manifest. Depends on astrometric plate solving (Tier 2).
+  Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`.
+
 - **XISF output**: block-structured container with an XML header and
   optional compression. A minimal writer (no compression, `Float32`
   sample format, one image block) is ~200 lines. Lower priority than
