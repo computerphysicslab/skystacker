@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 116 embedded self-tests.
+- 128 embedded self-tests.
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
@@ -124,7 +124,7 @@ Optional steps gated by flags: `--post-ca`, `--post-color`, `--post-flatten`, `-
 
 No pipeline consumer yet; reachable only via `--test-gaia`.
 
-- **HEALPix nested scheme** — `healpixAng2PixNested`, `healpixPix2AngNested`, `healpixTileCorners`. nside=1 matches healpy 1.16.5 exactly; nside>1 is round-trip-consistent but tile geometry is approximate (follow-up A1a.5). Default query nside is 64 (~0.84 deg² per tile); override with `--gaia-nside 256` (~0.052 deg²) when finer tiles are needed.
+- **HEALPix nested scheme** — `healpixAng2PixNested`, `healpixPix2AngNested`, `healpixTileCorners`. `ang2pix`/`pix2ang` match healpy 1.20.1 exactly (nside 1/16/64/256, ~3,600 reference points; exact pixel-corner points are float-noise ties). `healpixTileBoundary` ports `Healpix_Base::boundaries(step)` and matches `hp.boundaries` exactly; `healpixTileCorners` returns a 16-vertex polygon following the curved pixel edge, padded 1 % outward, RA in [0, 2π). Default query nside is 64 (~0.84 deg² per tile); override with `--gaia-nside 256` (~0.052 deg²) when finer tiles are needed.
 - **TAP client** — `gaiaQueryTile` posts an ADQL `POLYGON` query to `/sync` on the configured mirror. Per-attempt `context.WithTimeout(180s)`; 5 s heartbeat via `gaiaWaitWithProgress`; 3 attempts with 2 s / 4 s backoff on 5xx / connection error. Timeouts are fatal and not retried. Custom User-Agent; `MAXREC=2000`.
 - **Error extraction** — `gaiaExtractTAPError` pulls VOTable `<INFO>` text out of a non-JSON body; JSON with no `data` array is an error, not an empty star list.
 - **Disk cache** — `os.UserCacheDir()/skystacker/gaia_cache/healpix_n<nside>_p<ipix>.json` (on Linux `$XDG_CACHE_HOME` or `~/.cache`), atomic writes, `gaiaCacheVersion = 1` (distinct from `cacheVersion`). Overridable with `--gaia-cache-dir`. Gaia DR3 is frozen, so tiles never expire; the OS user cache is the right lifetime.
@@ -152,4 +152,4 @@ Before processing:
 - Memory and disk pre-flight checks abort before Pass 1; `--force` bypasses both.
 
 ## 8. Self-tests
-`./skystacker --selftest` runs 116 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (nside=1 exact vs healpy, nside=256 round-trip), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only).
+`./skystacker --selftest` runs 128 tests covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only).

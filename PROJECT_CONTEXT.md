@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 116 passing.** Update this number after any test change.
+**Self-test count: 128 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -624,9 +624,21 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 116 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 128 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
   - `/media/jips/Elements/big/fotosAstro/2019-01-25-SanJuan/Orion-135mm`
   - `/media/jips/Elements/big/fotosAstro/2023-04-01-riofrio/m42/JPG`
+
+
+## Session log: plate-solve integration fixes (2026-11-14)
+
+- **Build**: `runOptions.PlateSolve` / `GaiaOffline` added and wired from `cliOptions`.
+- **`fitWCSFromMatches`**: returned the TRANSPOSE of CD (invisible for diagonal CD); fixed, plus CRVAL re-centring iterations so the fit is exact. Test: `wcs fit rotated both parities`.
+- **`matchStarsToGaia`**: rewritten. Tangent-plane projection about a robust centre; brightness-sorted pools; both parities (mirrored fields are common); spatial-hash pre-screen over all triangle candidates; descriptor tolerance 0.015 then 0.05; significance floor `max(6, frameStars/4)` inliers so unrelated lists return ok=false.
+- **HEALPix tile polygon (A1a.5 RESOLVED)**: `ang2pix`/`pix2ang` were already correct vs healpy; the "0.15 deg west" discrepancy came from the old centre+/-half-side box in `healpixTileCorners`. Replaced with the true boundary (16 vertices).
+- **`solvePlate`**: cache-first tile loading, then network for misses; gives up after 2 consecutive failures; honours `--gaia-offline`.
+- **KNOWN LIMITS (not fixed)**: (1) pipeline calls `solvePlate(..., 0, 0, ...)` so it is always BLIND around RA/Dec 0,0 and cannot solve real fields: needs a pointing seed (e.g. `--plate-center RA,DEC` or FITS header RA/DEC). (2) Matcher assumes the frame covers a large fraction of the Gaia pool (top-40 by brightness each side); a small field inside a ~0.9 deg tile returns "no consistent transform". Needs local-neighbourhood triangles or a pointing+scale seed.
+
+- **2026-11-14 (later)**: `plate solve blind` self-test fixed. It was not hermetic (unseeded scan tiles were fetched live from Gaia, adding unrelated real stars) and, with a fixture away from RA/Dec 0,0, could never succeed because blind mode only scans the 8 nside=64 tiles around (0,0) (RA 359.3-0.7 deg, Dec +/-1.2 deg). The test now forces `plateGaiaOffline` and moves the fixture's sky position (CRVAL) into that patch, keeping pixel geometry. NOTE: "blind" mode is therefore a local scan, not a whole-sky solve.
