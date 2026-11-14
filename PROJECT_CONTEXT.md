@@ -750,3 +750,47 @@ Tier 0 is closed. The next actionable roadmap items are **Tier 1 weighted median
 ### "Plate solve blind" note (carried forward, unchanged by Tier 0)
 
 The `plate solve blind` self-test remains hermetic (forces `plateGaiaOffline = true`, fixture's sky position moved into the blind-scan patch, cache pre-seeded). Tier 0 changed no code in that path. The bigger caveat — that "blind" mode is a 3x3 nside=64 local scan, not a whole-sky solve — is now stated in `TECHNICAL_SPEC §2 Excluded` and in `COMPARISON.md` Gaps; it was previously only in the 2026-11-14 session log and in `printUsage`'s `--plate-center` description.
+
+## Session log: Tier 0 documentation and hygiene (2026-11-14)
+
+**Commit:** `1f1f875` — `tier0: docs — plate solving is wired; guard spike defaults in printUsage`
+
+- **Tier 0 (XS) CLOSED.** Documentation-only patch; no code behaviour change, self-test count unchanged at **154** (`all 154 self-tests passed` printed twice during the two-step apply). `go vet` exited 0 both times. `git push` accepted `d6b1b46..1f1f875  HEAD -> main`.
+
+- **Stale `--help` spike defaults — already correct in source; closed without a numeric edit.** `parseArgs` already set `--spikes-length 10.0`, `--spikes-intensity 0.3`, `--spikes-arms 4`; `printUsage` already printed those values; `testParseArgs` already asserted all three. This session added a comment above the `--spikes-*` block in `printUsage` making the contract explicit ("NOTE: the numeric defaults below MUST match parseArgs; testParseArgs asserts (SpikesLength=10.0, SpikesIntensity=0.3, SpikesArms=4) so any future drift fails the self-test suite."). Verified by `grep -n "MUST match parseArgs; testParseArgs" main.go` → line 506.
+
+- **TECHNICAL_SPEC.md §2 `Excluded` — corrected.** Plate solving removed from the exclusion list. New exclusion text names what is actually still open: *applying* SIP to the resampler, higher-order distortion beyond SIP order 2, and whole-sky blind solving. Verified by `grep -n "blind mode is a 3x3 nside=64 local scan" TECHNICAL_SPEC.md` → line 29.
+
+- **TECHNICAL_SPEC.md §4.5 — corrected.** Dropped "no pipeline consumer yet". Now states `--plate-solve` consumes the layer, `plate_solution.json` is written, SIP order-2 coefficients are stored alongside the WCS; *applying* SIP to the resampler is the remaining gap. Verified by `grep -n "applying SIP to the resampler is not yet wired" TECHNICAL_SPEC.md` → line 131.
+
+- **TECHNICAL_SPEC.md §2 — self-test count source-of-truth note.** The "154 embedded self-tests" line now says the count printed by `./skystacker --selftest` (i.e. `runSelfTests` in `main.go`) is authoritative.
+
+- **README.md — two corrections.** (1) "Recently implemented" Gaia-layer bullet: "No pipeline consumer yet" removed; now says the layer is consumed by `--plate-solve`, seeded with `--plate-center RA,DEC` or a reference frame with FITS `RA`/`DEC`, and that `plate_solution.json` is written. (2) Tier 2 plate-solving bullet reworded: was "wired via `--plate-solve` but always blind around (0,0) until Tier 1's `--plate-center` lands" (stale — `--plate-center` landed 2026-11-14); now: solver + data layer committed and tested, `--plate-center` and FITS-header auto-seed wired, `plate_solution.json` in the output bundle, remaining work is *applying* SIP and wiring the solver into `--post-only`.
+
+- **COMPARISON.md — three corrections.** (1) "Calibration and registration" table, `SkyStacker` row, `Plate solving` column: `–` → `Partial (wired, seeded)` (line 30). `Distortion corr.` stays `–` because SIP is *fit* but not *applied*. (2) "Where SkyStacker sits" → `Gaps` bullet (line 100): "no plate solving / WCS / SIP — … pipeline consumer pending" replaced with the wired + SIP-fit-only text. (3) "Post-processing and automation" table, `SkyStacker` row, `Output formats` cell: `TIFF / JPEG / raw` → `TIFF / JPEG / PNG / BMP / raw` (line 68; `--png` / `--bmp` landed 2026-11-14; `--fits` is Tier 2 and intentionally not listed). Note: the first patch attempt used a regex keyed on the row label containing "plate solv"/"astrometric"/"WCS" and missed because the label is just `**SkyStacker**`; the corrected patch matches the row verbatim.
+
+- **Backups.** Two rounds created `main.go.before_tier0_docs.bak`, `TECHNICAL_SPEC.md.before_tier0_docs.bak`, `README.md.before_tier0_docs.bak`, `PROJECT_CONTEXT.md.before_tier0_docs.bak`, then `COMPARISON.md.before_tier0_docs2.bak` and `PROJECT_CONTEXT.md.before_tier0_docs2.bak`. All untracked; the commit used explicit `git add main.go TECHNICAL_SPEC.md README.md COMPARISON.md`, so they stay out of history.
+
+- **Test count:** 154 → 154. No new tests; `testParseArgs` already covered the spike defaults, and the doc-only patch adds no code paths.
+
+### Tier 0 roadmap-list cleanup (2026-11-14, later)
+
+- **README "Planned Potential Features" → Tier 0 block removed.** The list still advertised the two Tier 0 (XS) items as open, even though commit `1f1f875` had closed both. Removed `### Tier 0 — Documentation and hygiene (XS)` and its two bullets; `### Tier 1 — Small, self-contained (S)` is now the first roadmap subsection.
+
+- **README Tier 1 `--plate-center RA,DEC` bullet removed.** The flag landed 2026-11-14; the bullet's `Test: testSolvePlateSeededCLI` was also wrong — the actual test is `testPlateCenterFlagReachesSolver`.
+
+- **Commit:** committed in the same change set as this log (the doc-only `git add` first listed only `main.go`/`TECHNICAL_SPEC.md`/`README.md`/`COMPARISON.md`, so `PROJECT_CONTEXT.md` was appended and committed separately in a follow-up).
+
+- **Test count:** 154 → 154 (docs only).
+
+### Still open after Tier 0
+
+Tier 0 is closed. The next actionable roadmap items are **Tier 1 weighted median** or **Tier 1 SER video input**. Two follow-up hygiene items surfaced during this pass and are recorded here so the next session does not rediscover them:
+
+1. **`.gitignore` does not exclude `*.bak`.** Every patch by this project leaves a `main.go.before_*.bak` (and now `.md.before_*.bak`) next to the source. A single `*.bak` line in `.gitignore` prevents accidental `git add -A` commits of these backups. Not user-visible; cheap and self-contained.
+
+2. **README "Planned Potential Features" Tier 1 list may still contain other already-applied bullets** — a re-audit against the current `main.go` is worth doing in the next hygiene pass.
+
+### "Plate solve blind" note (carried forward, unchanged by Tier 0)
+
+The `plate solve blind` self-test remains hermetic (forces `plateGaiaOffline = true`, fixture's sky position moved into the blind-scan patch, cache pre-seeded). Tier 0 changed no code in that path. The bigger caveat — that "blind" mode is a 3x3 nside=64 local scan, not a whole-sky solve — is now stated in `TECHNICAL_SPEC §2 Excluded` and in `COMPARISON.md` Gaps; it was previously only in the 2026-11-14 session log and in `printUsage`'s `--plate-center` description.

@@ -508,16 +508,6 @@ The following items from the original roadmap have been implemented in 0.5.0:
 
 ## Planned Potential Features and Technologies Roadmap
 
-### Tier 0 — Documentation and hygiene (`XS`)
-
-- **Stale `--help` spike defaults**: `printUsage` still prints
-  `--spikes-length 100`, `--spikes-intensity 0.7`, `--spikes-arms 6`;
-  the actual defaults are `10`, `0.3`, `4`. Align the usage text with
-  `parseArgs` and assert it in `testParseArgs`.
-- **Doc drift**: `TECHNICAL_SPEC.md` §2/§4.5 still say plate solving is
-  excluded and has no pipeline consumer; `COMPARISON.md` still shows `–`
-  for SkyStacker plate solving. Update both to `Partial` / wired.
-
 ### Tier 1 — Small, self-contained (`S`)
 
 - **Explicit extra output formats — PNG and BMP**: `--png` and `--bmp`
@@ -525,12 +515,6 @@ The following items from the original roadmap have been implemented in 0.5.0:
   PNG is lossless and uses the already-imported `image/png`; BMP is a
   ~40-line hand-written encoder to stay stdlib-only.
   Test: `testPNGBMPSnapshot`.
-- **`--plate-center RA,DEC` seed flag**: the pipeline currently calls
-  `solvePlate(..., 0, 0, ...)`, so it is always blind around (0,0) and
-  cannot solve real fields. Thread a parsed `RA,DEC` (decimal degrees)
-  into the solver; fall back to the reference frame's FITS-header
-  `RA`/`DEC` when unset.
-  Test: `testSolvePlateSeededCLI`.
 - **Weighted median**: `--method median` still ignores `frameWeights`.
   Implement `weightedMedian(vals, weights)` (sort by value, walk the
   cumulative weight to 0.5) and wire it into `reduceTile`'s
