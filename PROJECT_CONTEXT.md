@@ -671,3 +671,39 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 - Tests: `testPlateCenterFlagReachesSolver`, `testCropExplanationMentionsValidity`,
   `testPNGBMPSnapshot`. `testParseArgs` extended in place (no count
   change). Test count 151 -> 154.
+
+### Run 4 (2026-11-14): Horsehead (Barnard 33, ~1200mm, narrow field), 5 × JPG (from 46, via `--limit 5`), 2400×1600
+
+- Registration: 5/5 frames, reference frame IMG_9158.JPG (100 stars).
+- Runtime: 1 m 08 s — a `--limit 5` smoke test on the 46-frame session;
+  the `--limit N` flag (added same session) cut it from ~30 min.
+- Post-processing star-removal count: 583 detected stars.
+- **Plate solve with `--plate-center 85.24785,-2.45811` (Barnard 33)
+  SUCCEEDED.** Log lines:
+  - `Plate solve seed: flag (--plate-center)`
+  - `gaia: tile nside=64 ipix=22854 [fetched 231 stars]`
+  - `Plate solved: CRVAL=(85.077297, -2.369846) RMS=1.30 arcsec N=71/100 (header)`
+  - `plate_solution.json` written (439 bytes).
+  - True center `85.0773, -2.3698` is 0.19° from the Barnard 33 seed —
+    the target sits near (but not at) the frame center, exactly as
+    expected for a 1200mm APS-C frame (~1.1° × 0.75° FOV). 71/100
+    matches is a strong, unambiguous solve.
+- **This closes done criterion 1 from the 2026-11-14 session.**
+  The contrast with the ON run is instructive:
+  - **ON** is a 5.4° × 3.6° (~19 deg²) field. One nside=64 tile covers
+    ~4% of it. The matcher (`minInliers = max(6, frameStars/4) = 25`)
+    cannot overlap the top-40 bright stars of a 19-deg² field with the
+    245 Gaia stars of one 0.84-deg² tile. It failed with `0 matched
+    pairs`, exactly as documented in `PROJECT_CONTEXT.md`'s
+    "KNOWN LIMITS" from the 2026-11-14 session. This is the Tier 2
+    single-tile matcher limitation, not a bug.
+  - **Horsehead** is ~1.1° × 0.75° (~0.83 deg²). One nside=64 tile
+    covers the entire frame; the top-40 bright stars and the tile's
+    231 Gaia stars overlap heavily. It solved with 71/100 matches,
+    RMS 1.30 arcsec.
+  - `--plate-center` itself was correct in both cases (both runs log
+    `Plate solve seed: flag (--plate-center)` and fetch a single
+    correct tile). The difference is purely the frame FOV vs the
+    tile's 0.84 deg² coverage.
+- `--png` / `--bmp` outputs also written cleanly (no `WARNING: png:` /
+  `WARNING: bmp:` lines).
