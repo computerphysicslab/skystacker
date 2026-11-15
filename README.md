@@ -42,7 +42,7 @@ It takes a folder of night-sky exposures, detects stars, aligns the frames, comb
 - [Output Structure](#output-structure)
 - [Processing Pipeline at a Glance](#processing-pipeline-at-a-glance)
 - [Pre-Flight Resource Checks & Error Handling](#pre-flight-resource-checks--error-handling)
-- [Development Status & Recently Implemented (v0.5.1)](#development-status--recently-implemented-v051)
+- [Development Status & Recently Implemented (v0.6.0)](#development-status--recently-implemented-v060)
 - [Planned Potential Features and Technologies Roadmap](#planned-potential-features-and-technologies-roadmap)
 - [How SkyStacker Compares](#how-skystacker-compares)
 - [Project Goals & License](#project-goals--license)
@@ -185,7 +185,9 @@ Additional optional stages can be toggled via CLI flags: chromatic-aberration re
 SkyStacker currently discovers these file extensions:
 
 - `.jpg` and `.jpeg` (decoded natively via Go's standard image packages)
+- `.png` (decoded natively)
 - `.fit` and `.fits` (decoded natively with ImageMagick fallback)
+- `.ser` (FireCapture/Lucam SER; expanded to one frame per `#frame=N`)
 - `.cr2` and `.cr3` (decoded via external `dcraw`, `dcraw_emu`, or ImageMagick at runtime)
 
 ### External Tools
@@ -238,7 +240,7 @@ Print the version or command-line help:
 On every run, SkyStacker prints a one-line banner to standard error:
 
 ```text
-SkyStacker 0.5.1 | [https://github.com/computerphysicslab/skystacker](https://github.com/computerphysicslab/skystacker) | built 2026-11-12T12:00:00Z
+SkyStacker 0.6.0 | [https://github.com/computerphysicslab/skystacker](https://github.com/computerphysicslab/skystacker) | built 2026-11-15T00:00:00Z
 ```
 
 To embed the real build time when building directly from `main.go`:
@@ -580,11 +582,11 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ---
 
-## Development Status & Recently Implemented (v0.5.1)
+## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.5.1**). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `./skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.0**, 177 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
-The following capabilities have been implemented in `0.5.0`–`0.5.1`:
+The following capabilities have been implemented through `0.6.0`:
 
 - **Frame quality weighting**: Registered frames are weighted by `computeFrameQuality × computeIntrinsicQuality / 100`; unregistered frames by intrinsic quality alone. Per-frame scores appear in `report.txt` under the `IntrQ` and `Weight` columns.
 - **Per-frame global normalization (`--normalize`)**: Scales each frame's sky background (`median` + `MAD`) to match the reference frame.
@@ -592,6 +594,9 @@ The following capabilities have been implemented in `0.5.0`–`0.5.1`:
 - **Star / transform cache**: Re-runs skip Pass 1 star detection and Pass 2 registration using cached JSON metadata under `<output>/_work/cache/` (override with `--cache-dir`, disable with `--no-cache`).
 - **Adaptive rejection & diagnostic maps**: MAD-based sigma clipping (default `3.0σ`, `2` iterations) alongside per-pixel rejection and weight maps (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`, plus unregistered counterparts and full-frame `stacked_coverage_map.jpg`) for cosmic-ray and hot-pixel inspection.
 - **Gaia DR3 data-access layer & TAN WCS plate solving**: HEALPix nested geometry (verified against `healpy` up to `nside=256`; reference fixtures in `assets/testdata/healpix_reference.json`), ESA Gaia TAP client with 180 s timeout and 5 s heartbeat, persistent OS user cache (`gaia_cache/`), `--test-gaia RA,DEC` diagnostic, and `--plate-solve` writing `plate_solution.json`.
+- **SER video input**: `.ser` is discovered and expanded to one frame per `#frame=N`. `readSERHeader` / `decodeSERFrame` support 8/16-bit mono, Bayer-as-gray and RGB/BGR. Test: `testSERDecode`.
+- **Comet tracking (pixel mode)**: `--comet-center X,Y --comet-rate dX,dY` (reference pixels per second, timed by EXIF `DateTimeOriginal`). Writes `stacked_comet.f32raw` and `stacked_comet.jpg`. The star stack is unchanged. Test: `testCometTranslation`.
+- **Bad-pixel map**: `--bpm PATH` loads a FITS or `x,y` text map and marks those pixels invalid before stacking. Test: `testBPMMasksPixels`.
 
 ---
 
@@ -599,12 +604,13 @@ The following capabilities have been implemented in `0.5.0`–`0.5.1`:
 
 ### Tier 1 — Small, self-contained (`S`)
 
-- **SER video input** (shipped): `.ser` is discovered and expanded to one frame per `#frame=N`. `readSERHeader` / `decodeSERFrame` support 8/16-bit mono, Bayer-as-gray and RGB/BGR. Test: `testSERDecode`.
-- **Comet tracking** (shipped, pixel mode): `--comet-center X,Y --comet-rate dX,dY` (reference pixels per second, timed by EXIF `DateTimeOriginal`). Writes `stacked_comet.f32raw` and `stacked_comet.jpg`. The star stack is unchanged. RA/Dec ephemeris mode is not implemented. Test: `testCometTranslation`.
+Shipped items (SER input, pixel-mode comet stacking, `--bpm`) are listed under Recently Implemented. Still open:
+
+- **Comet RA/Dec mode**: `--comet RA,DEC` plus a sky rate, using the plate solution and EXIF time. Pixel mode is already shipped.
+- **`--bpm-auto`**: build a bad-pixel map from a master dark (pixels `> Nσ` from the dark median). Loading a user map with `--bpm` is already shipped.
 
 ### Tier 2 — Medium, a day each (`M`)
 
-- **Bad-pixel map (BPM)**: `--bpm PATH` (FITS or `x,y` text). Load once in Pass 1 and mark those pixels invalid (`Pix = -1`) before calibration so `addFrameMasked` skips them and `validCount` excludes them. Optional `--bpm-auto` builds a BPM from a master dark (pixels `> Nσ` from the dark median). The rejection map is the *post hoc* version; BPM is the *a priori* version. Closes a `COMPARISON.md` gap. Test: `testBPMMasksPixels`.
 - **FITS output**: `--fits` writes `stacked_sum.fits` (2880-byte header blocks, big-endian, `BITPIX=-32`, `NAXIS=3`). The reader already exists, so this is the easy half of interoperability. Test: `testFITSWriterRoundTrip`.
 - **Distortion correction (SIP)**: `fitSIPFromMatches` already exists and is tested (`testWCSSIP`); the missing piece is *applying* it. Add `wcsTanInverseSIP` (adds the polynomial terms after the linear CD projection) and a resampler path that uses it when a plate solution exists. Gate behind `--plate-solve` + `--use-sip` so it never fires on unsolved fields. Closes a `COMPARISON.md` gap. Test: `testSIPResampleRoundTrip`.
 - **Astrometric plate solving & WCS (completion)**: The data-access layer (HEALPix nested math, TAP client, per-tile JSON cache, `--test-gaia`) and solver (`solvePlate`, `fitWCSFromMatches`, `fitSIPFromMatches`) are committed and tested, with `plate_solution.json` written on `--plate-solve`. Remaining work: applying SIP to the resampler (above) and wiring the solver into `--post-only`. Reference: Astrometry.net / local Gaia catalogues. Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
