@@ -83,6 +83,57 @@ Both items are independently shippable in one commit.
   residual RMS 0.1936, corrected mean center/border 1.000. The
   extended-nebulosity risk was observed (M42 biases the map); see
   `research/04-calibration-and-self-flat.md`.
+- **Status: superseded for scientific use by 2.3.** Keep v1 behind
+  `--self-flat-model=registered` for A/B until the sensor-space model
+  passes the acceptance tests; do not remove the v1 code before then.
+
+### 2.3 Sensor-space robust self-flat (revision)
+
+- **Tier:** L (multi-session; phases 1-4 are the minimum viable
+  replacement).
+- **User-visible change:** `--self-flat` builds a full-frame illumination
+  model from calibrated, *unregistered* lights. It normalises each frame
+  per channel, masks stars and bright extended structure, estimates a
+  coarse cell grid, rejects cell outliers, and fits a low-degree
+  Chebyshev/Legendre polynomial with IRLS (Huber/Tukey). The flat is
+  applied to each frame **before** resampling, so it corrects both the
+  registered and unregistered stacks. `master_self_flat.f32raw` is
+  full-frame instead of crop-sized. A loaded flat still wins.
+- **Why:** v1 is built in reference coordinates, so aligned stars and
+  aligned nebulosity are treated as illumination. On Orion-135mm this
+  produces a ~1.9 ratio around M42 and dark halos. The new estimator uses
+  relative scene motion plus explicit masking, and a low-dimensional
+  model that cannot reproduce stars or dust.
+- **Phased acceptance tests:**
+  - Phase 1 (prototype, shipped 2026-11-15): synthetic known vignetting +
+    moving stars; recovered flat RMS < 0.05, full-frame master, applied
+    before resampling, no registration needed for the build. Orion-135mm
+    `--limit 20`: center/edge 1.2449, max 1.208 (v1 M42 dome absent),
+    mask fraction 67.6% (too high; Phase 2). Default remains `registered`.
+  - Phase 2 (masking): large static nebula; recovered flat at the nebula
+    within 0.02 of truth; bright-patch and dust-shadow cells rejected.
+  - Phase 3 (IRLS): fit RMS < 0.02; robust fit beats OLS with injected
+    cell outliers; degree/cell-size diagnostics reported.
+  - Phase 4 (integration): `mean`, `median`, `sigma`, registered and
+    `--no-register` outputs all corrected; section-E tests unchanged;
+    Orion E2E no longer shows the M42 dome.
+- **Main risks:** (1) a stable sky gradient is degenerate with the flat
+  and will be absorbed; document it and prefer a radial model when
+  possible. (2) A large nebula with small dithers remains partially
+  degenerate; masking and the polynomial reduce but do not eliminate it.
+  (3) Dust is out of scope; a real flat is required. (4) The current
+  sRGB-encoded pipeline makes the division approximate; gamma-aware
+  correction is a separate phase.
+- **Flags:** temporary `--self-flat-model=grid|registered` (default
+  `registered` until Phase 4 passes, then `grid`); optional
+  `--self-flat-degree` (default 4) and `--self-flat-cell` (default 64).
+  Do not document a flag before it exists.
+- **Implementation map:** see `research/04-calibration-and-self-flat.md`
+  sections 10-14. Build the flat before Pass 2; force/stream the
+  unregistered data in Pass 1; apply after calibration/BPM and before
+  `resampleToReference*`; post-divide the unregistered mean/median/sigma;
+  remove `flatCorrection` and the flat/`frameScales` parameters from
+  `reduceTilesStack`/`reduceTile` once unused.
 
 ## Tier 3 — Large, multi-day (`L`)
 

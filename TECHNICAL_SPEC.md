@@ -1,6 +1,6 @@
 # SkyStacker — Technical Specification
 
-**Current version:** 0.5.1
+**Current version:** 0.6.0
 **Implementation language:** Go (single-file, standard library only)
 **Status:** Active Development
 
@@ -51,6 +51,15 @@ Flags are accepted before or after the positional input directory. Default input
   plus a `.jpg` preview.
 - `--self-flat` derives a relative illumination map from ≥15 registered
   dithered lights and applies it after registration; a loaded flat wins.
+  This is the v1 reference-coordinate model; it can absorb extended
+  emission and only corrects the registered stack. The specified successor
+  is a full-frame sensor-space estimator (unregistered frames, source mask,
+  coarse grid, robust rejection, IRLS polynomial) applied before
+  resampling; see `research/04-calibration-and-self-flat.md` §9-14 and
+  `ROADMAP_SYNTHETIC_CALIBRATION.md` §2.3.
+- `--self-flat-model` is `registered` (default, v1) or `grid` (Phase-1
+  sensor-space prototype: unregistered frames, source mask, 64 px cells,
+  degree-4 Chebyshev least squares, applied before resampling).
 - `--calib-root` (auto-detect `Bias/Darks/Flats/<filter>` subfolders).
 
 ### Normalization (requires registration)
@@ -151,7 +160,7 @@ Before processing:
 - **TIFF**: uncompressed, little-endian, RGB, IEEE float32, single strip, in `TIFF/`.
 - **JPG**: 8-bit display previews, gamma 0.5 encoded, in the root output directory.
 - **Raw work file**: `_work/stacked_mean.f32raw` (uint32 w, uint32 h, float32 RGB), consumed by `--post-only`.
-- **Report**: `report.txt` with per-frame diagnostics, crop explanation, exposure summary, and normalization/limiter notes.
+- **Report**: `report.txt` with the original command line, resolved flags, per-frame diagnostics, crop explanation, exposure summary, and normalization/limiter notes.
 - **Maps**: `stacked_rejection_map.jpg`, `stacked_weight_map.jpg` (registered run, single-channel, gamma 0.5); `stacked_unregistered_rejection_map.jpg`, `stacked_unregistered_weight_map.jpg` (full-frame, when registration succeeded); `stacked_coverage_map.jpg` (full-frame per-pixel registered-frame coverage fraction, linear-mapped). The rejection map is the cosmic-ray / hot-pixel candidate map: sigma clipping rejects extreme outliers.
 
 ## 7. Error Handling

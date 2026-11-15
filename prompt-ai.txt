@@ -46,10 +46,15 @@ Current calibration features
 - --export-masters writes master_<kind>.f32raw (scientific) plus
   master_<kind>.jpg (preview only) for every loaded master.
 - --self-flat derives a relative flat from >=15 registered dithered lights
-  and applies it after registration. A loaded flat wins; registration is
-  mandatory.
+  and applies it after registration. This is v1 (reference coordinates);
+  a loaded flat wins and registration is mandatory for v1.
 - assets/Orion-135mm has no dark/flat/bias, so only master_self_flat is
   possible there:
       skystacker --self-flat --export-masters --overwrite
-- A self-flat built from lights can absorb extended nebulosity (M42); inspect
+- v1 can absorb extended nebulosity (M42 reaches ~1.9); inspect
   master_self_flat.f32raw and read research/04-calibration-and-self-flat.md.
+- Phase 1 of the sensor-space model IS implemented behind
+  --self-flat-model=grid. Default remains registered. Grid is a prototype:
+  source mask, 64 px cells, 25th percentile, degree-4 least squares. It is
+  not yet IRLS, 5x5 cell rejection, or the scientific default.
+  Read research/04 sections 9-14 before extending it.

@@ -100,13 +100,24 @@ You can pass individual calibration paths or use `--calib-root` to let SkyStacke
 percentile linearly to 0..255 and is intended for inspection only.
 
 `--self-flat` derives a relative illumination map from at least 15 registered
-dithered lights. It is applied after registration, so it corrects
-mosaic-level vignetting rather than sensor-level fixed-pattern noise; a
-loaded flat always wins. A flat built from lights can absorb structure
-common to every frame (for example a large nebula), so inspect the written
-`master_self_flat.f32raw` before trusting the correction. The self-flat
-master is crop-sized; use the crop rectangle in `report.txt` to map it back
-to the reference frame. Only the registered stack is corrected.
+dithered lights. The current v1 is built in reference coordinates and applied
+after registration, so it corrects mosaic-level vignetting rather than
+sensor-level fixed-pattern noise; a loaded flat always wins. A flat built
+from lights can absorb structure common to every frame (for example a large
+nebula), so inspect the written `master_self_flat.f32raw` before trusting the
+correction. The v1 self-flat master is crop-sized; use the crop rectangle in
+`report.txt` to map it back to the reference frame. Only the registered stack
+is corrected.
+
+The v1 map is known to overcorrect extended emission (the v1 flat itself
+reaches a ratio near 1.9 around M42 on Orion-135mm). A sensor-space revision
+is specified in `research/04-calibration-and-self-flat.md` and
+`ROADMAP_SYNTHETIC_CALIBRATION.md` section 2.3: unregistered frames, source
+masking, a coarse grid, robust cell rejection and an IRLS polynomial. Until
+that revision ships, use `--self-flat` only as a fallback and inspect the
+master. `--self-flat-model=grid` selects the Phase-1 sensor-space prototype
+(full-frame, applied before resampling). It is not the default, and it is
+not yet the robust IRLS estimator.
 
 ### Stacking methods
 
@@ -216,7 +227,7 @@ Print the version or command-line help:
 On every run SkyStacker prints a one-line banner to standard error:
 
 ```text
-SkyStacker 0.5.1 | https://github.com/computerphysicslab/skystacker | built 2026-11-12T12:00:00Z
+SkyStacker 0.6.0 | https://github.com/computerphysicslab/skystacker | built 2026-11-15T00:00:00Z
 ```
 
 To embed the real build time:
@@ -349,7 +360,8 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--bias string` | Bias frame or calibration path | — |
 | `--calib-root string` | Root directory containing Bias/Darks/Flats folders | — |
 | `--export-masters` | Write `master_<kind>.f32raw` + `.jpg` for loaded calibration products | `false` |
-| `--self-flat` | Derive a relative flat from ≥15 registered dithered lights | `false` |
+| `--self-flat` | Derive a relative flat from ≥15 lights | `false` |
+| `--self-flat-model` | `registered` (v1, default) or `grid` (sensor-space prototype) | `registered` |
 | `--stack-only` | Stack frames and skip post-processing | `false` |
 | `--no-postprocess` | Alias for `--stack-only` | `false` |
 | `--post-only` | Run post-processing using existing intermediate data | `false` |
@@ -441,7 +453,7 @@ Depending on the selected workflow and enabled options, it can contain:
 - TIFF data products when requested.
 - JPEG previews from post-processing stages.
 - Intermediate working data used by the post-processing pass.
-- `report.txt`, containing processing information and per-frame outcomes.
+- `report.txt`, containing the command line, the resolved flags, processing information and per-frame outcomes.
 
 The precise set of files depends on the version, flags and input data. The report is the best place to check which frames were loaded, registered, skipped or processed.
 
@@ -484,7 +496,9 @@ Astrophotography session
 
 ## Development status
 
-SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.5.1**.
+SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.6.0**.
+
+Download a static binary from the [GitHub releases](https://github.com/computerphysicslab/skystacker/releases): Linux, macOS and Windows, amd64 and arm64. No installer and no C library. CR2/CR3 still need `dcraw` and ImageMagick.
 
 The feature set, output names and command-line interface may change between development revisions. Treat the source code and `--help` output from the checked-out commit as authoritative.
 ## Recently implemented (v0.5.1)

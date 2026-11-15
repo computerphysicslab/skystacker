@@ -81,7 +81,7 @@ import (
 	"time"
 )
 
-var version = "0.5.1"
+var version = "0.6.0"
 
 // repoURL is printed in the startup banner and in --version output.
 const repoURL = "https://github.com/computerphysicslab/skystacker"
@@ -170,6 +170,8 @@ type cliOptions struct {
 	BPMFile              string
 	ExportMasters        bool
 	SelfFlat             bool
+	NoSelfFlat           bool
+	SelfFlatModel        string
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -218,7 +220,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.BiasFile, "bias", "", "path to bias frame or folder for calibration")
 	fs.StringVar(&o.CalibRoot, "calib-root", "", "auto-detect Bias/Darks/Flats inside this root folder")
 	fs.BoolVar(&o.ExportMasters, "export-masters", false, "export loaded calibration masters as master_<kind>.f32raw + .jpg")
-	fs.BoolVar(&o.SelfFlat, "self-flat", false, "derive a relative flat from >=15 registered dithered lights (requires registration)")
+	fs.BoolVar(&o.SelfFlat, "self-flat", false, "derive a relative flat from >=15 lights; on by default when no flat frames are found")
+	fs.BoolVar(&o.NoSelfFlat, "no-self-flat", false, "do not derive a self-flat when no flat frames are found")
+	fs.StringVar(&o.SelfFlatModel, "self-flat-model", "registered", "self-flat estimator: registered (v1) or grid (sensor-space)")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
 	var noAffine bool
 	fs.BoolVar(&noAffine, "no-affine", false, "disable full-affine refinement (similarity-only registration)")
@@ -318,7 +322,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -362,6 +366,15 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DenoiseStrength < 0 || o.DenoiseStrength > 10 {
 		return nil, fmt.Errorf("--denoise-strength must be in [0, 10], got %g", o.DenoiseStrength)
+	}
+	if o.SelfFlatModel == "" {
+		o.SelfFlatModel = "registered"
+	}
+	if o.SelfFlatModel != "registered" && o.SelfFlatModel != "grid" {
+		return nil, fmt.Errorf("--self-flat-model must be registered or grid, got %q", o.SelfFlatModel)
+	}
+	if o.NoSelfFlat {
+		o.SelfFlat = false
 	}
 	if o.DenoiseRadius < 1 || o.DenoiseRadius > 20 {
 		return nil, fmt.Errorf("--denoise-radius must be in [1, 20], got %d", o.DenoiseRadius)
@@ -416,8 +429,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.BlackLevel != "" {
 		o.BlackLevel = strings.ToLower(o.BlackLevel)
-		if o.BlackLevel != "auto" {
-			return nil, fmt.Errorf("--black-level must be \"auto\" or empty (off), got %q", o.BlackLevel)
+		if o.BlackLevel != "auto" && o.BlackLevel != "off" {
+			return nil, fmt.Errorf("--black-level must be \"auto\", \"off\" or empty, got %q", o.BlackLevel)
 		}
 	}
 	if o.LocalNormalize {
@@ -550,7 +563,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `  --black-level string  black-level pedestal: "auto" reads EXIF BlackLevel / FITS BLACK_LVL and subtracts it (default: off)`)
 	fmt.Fprintln(w, "  --bpm string      bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs; coordinates are native pixels (default: off)")
 	fmt.Fprintln(w, "  --export-masters  write master_bias/dark/flat.f32raw + .jpg for inspection (default: off)")
-	fmt.Fprintln(w, "  --self-flat       derive a relative flat from >=15 registered dithered lights (requires registration)")
+	fmt.Fprintln(w, "  --self-flat       derive a relative illumination flat from the lights (default when no flats are found)")
+	fmt.Fprintln(w, "  --no-self-flat    do not derive a self-flat when no flat frames are found")
+	fmt.Fprintln(w, "  --self-flat-model string  self-flat estimator: registered (v1) or grid (sensor-space) (default: registered; auto uses grid)")
 	fmt.Fprintln(w, "  --synthetic-calibration         report what is recoverable from lights; never fabricates frames")
 	fmt.Fprintln(w, "  --synthetic-calibration-report  print the recovery report and exit")
 	fmt.Fprintln(w, "  --synthetic-dark|flat|bias      REFUSED: see --synthetic-calibration")
@@ -3045,6 +3060,8 @@ func parseExifTIFF(data []byte, e *exifData) {
 type processingReport struct {
 	Version            string
 	Timestamp          time.Time
+	CommandLine        string
+	ResolvedFlags      []string
 	InputDir           string
 	OutputDir          string
 	Discovered         int
@@ -3069,10 +3086,18 @@ type processingReport struct {
 	BPMPath            string
 	BPMPixelCount      int
 	SelfFlatApplied    bool
+	SelfFlatModel      string
 	SelfFlatFrames     int
 	SelfFlatPath       string
 	SelfFlatCenterEdge float64
 	SelfFlatResidual   float64
+	SelfFlatDegree     int
+	SelfFlatCellSize   int
+	SelfFlatValidCells int
+	SelfFlatTotalCells int
+	SelfFlatMaskedFrac float64
+	SelfFlatMin        float64
+	SelfFlatMax        float64
 	MasterExports      []string
 	PostProcessApplied bool
 	BGDegree           int
@@ -3104,10 +3129,193 @@ func (e *errWriter) printf(format string, args ...any) {
 	_, e.err = fmt.Fprintf(e.w, format, args...)
 }
 
+func quoteReportArg(s string) string {
+	if s == "" || strings.ContainsAny(s, " \t\"'\\") {
+		return strconv.Quote(s)
+	}
+	return s
+}
+
+func formatCommandLine(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = quoteReportArg(a)
+	}
+	return strings.Join(parts, " ")
+}
+
+func resolvedFlagLines(o runOptions) []string {
+	var lines []string
+	add := func(s string) { lines = append(lines, s) }
+	method := o.Method
+	if method == "" {
+		method = "sigma"
+	}
+	add("--method " + method)
+	if o.Workers > 0 {
+		add(fmt.Sprintf("--workers %d", o.Workers))
+	}
+	if o.OutputDir != "" {
+		add("--output " + quoteReportArg(o.OutputDir))
+	}
+	if o.Recursive {
+		add("--recursive")
+	}
+	if o.Overwrite {
+		add("--overwrite")
+	}
+	if o.Limit > 0 {
+		add(fmt.Sprintf("--limit %d", o.Limit))
+	}
+	if o.Scale > 1 {
+		add(fmt.Sprintf("--scale %d", o.Scale))
+	}
+	if !o.Register {
+		add("--no-register")
+	}
+	if o.NoAffine {
+		add("--no-affine")
+	}
+	if o.StackOnly {
+		add("--stack-only")
+	}
+	if o.PostOnly {
+		add("--post-only")
+	}
+	if !o.PostProcess && !o.StackOnly && !o.PostOnly {
+		add("--no-postprocess")
+	}
+	if o.DarkFile != "" {
+		add("--dark " + quoteReportArg(o.DarkFile))
+	}
+	if o.FlatFile != "" {
+		add("--flat " + quoteReportArg(o.FlatFile))
+	}
+	if o.BiasFile != "" {
+		add("--bias " + quoteReportArg(o.BiasFile))
+	}
+	if o.CalibRoot != "" {
+		add("--calib-root " + quoteReportArg(o.CalibRoot))
+	}
+	if o.BPMFile != "" {
+		add("--bpm " + quoteReportArg(o.BPMFile))
+	}
+	if o.BlackLevel != "" {
+		add("--black-level " + o.BlackLevel)
+	}
+	if o.ExportMasters {
+		add("--export-masters")
+	}
+	if o.NoSelfFlat {
+		add("--no-self-flat")
+	}
+	if o.SelfFlat {
+		add("--self-flat")
+		model := o.SelfFlatModel
+		if model == "" {
+			model = "registered"
+		}
+		add("--self-flat-model " + model)
+	}
+	if o.Normalize {
+		add("--normalize")
+	}
+	if o.LocalNormalize {
+		add("--local-normalize")
+		if o.LNTileSize > 0 && o.LNTileSize != 256 {
+			add(fmt.Sprintf("--ln-tile-size %d", o.LNTileSize))
+		}
+	}
+	if o.SigmaClipThreshold > 0 && o.SigmaClipThreshold != 3 {
+		add(fmt.Sprintf("--sigma-clip %g", o.SigmaClipThreshold))
+	}
+	if o.SigmaClipIters > 0 && o.SigmaClipIters != 2 {
+		add(fmt.Sprintf("--sigma-clip-iters %d", o.SigmaClipIters))
+	}
+	if o.TileSize > 0 {
+		add(fmt.Sprintf("--tile-size %d", o.TileSize))
+	}
+	if o.Force {
+		add("--force")
+	}
+	if o.CreateTIFF {
+		add("--tiff")
+	}
+	if o.WritePNG {
+		add("--png")
+	}
+	if o.WriteBMP {
+		add("--bmp")
+	}
+	if o.NoCache {
+		add("--no-cache")
+	}
+	if o.KeepCache {
+		add("--keep-cache")
+	}
+	if o.CacheDir != "" {
+		add("--cache-dir " + quoteReportArg(o.CacheDir))
+	}
+	if o.NoExif {
+		add("--no-exif")
+	}
+	if o.PlateSolve {
+		add("--plate-solve")
+	}
+	if o.PlateCenter != "" {
+		add("--plate-center " + quoteReportArg(o.PlateCenter))
+	}
+	if o.GaiaOffline {
+		add("--gaia-offline")
+	}
+	if o.MaskBG {
+		add("--mask-bg")
+	}
+	if o.BGDegree > 0 && o.BGDegree != 2 {
+		add(fmt.Sprintf("--bg-degree %d", o.BGDegree))
+	}
+	if o.NoAutoStretch {
+		add("--no-auto-stretch")
+	}
+	if o.NoDenoise {
+		add("--no-denoise")
+	}
+	if o.NoCurves {
+		add("--no-curves")
+	}
+	if o.NoSharpen {
+		add("--no-sharpen")
+	}
+	if o.NoColorCalib {
+		add("--no-color-calib")
+	}
+	if !o.AddSpikes && o.PostProcess {
+		add("--no-spikes")
+	}
+	return lines
+}
+
 func (r *processingReport) writeTo(w io.Writer) error {
 	ew := &errWriter{w: w}
 	ew.printf("SkyStacker %s\n", r.Version)
 	ew.printf("Generated: %s\n\n", r.Timestamp.Format(time.RFC3339))
+	cmd := r.CommandLine
+	if cmd == "" {
+		cmd = "(not recorded)"
+	}
+	ew.printf("Command line:\n  %s\n\n", cmd)
+	ew.printf("Resolved flags:\n")
+	if len(r.ResolvedFlags) == 0 {
+		ew.printf("  (none recorded)\n")
+	} else {
+		for _, f := range r.ResolvedFlags {
+			ew.printf("  %s\n", f)
+		}
+	}
+	ew.printf("\n")
 	ew.printf("Input directory:  %s\n", r.InputDir)
 	ew.printf("Output directory: %s\n\n", r.OutputDir)
 	ew.printf("Discovered files: %d\n", r.Discovered)
@@ -3146,8 +3354,15 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		ew.printf("Bad pixel map: %s (%d pixels masked)\n", r.BPMPath, r.BPMPixelCount)
 	}
 	if r.SelfFlatApplied {
-		ew.printf("Self-flat: %d frames, center/edge=%.4f, residual RMS=%.5f\n",
-			r.SelfFlatFrames, r.SelfFlatCenterEdge, r.SelfFlatResidual)
+		if r.SelfFlatModel == "grid" {
+			ew.printf("Self-flat: model=grid, %d frames, degree=%d, cell=%d, cells=%d/%d, masked=%.1f%%, center/edge=%.4f, fit RMS=%.5f, min=%.4f, max=%.4f\n",
+				r.SelfFlatFrames, r.SelfFlatDegree, r.SelfFlatCellSize,
+				r.SelfFlatValidCells, r.SelfFlatTotalCells, 100*r.SelfFlatMaskedFrac,
+				r.SelfFlatCenterEdge, r.SelfFlatResidual, r.SelfFlatMin, r.SelfFlatMax)
+		} else {
+			ew.printf("Self-flat: %d frames, center/edge=%.4f, residual RMS=%.5f\n",
+				r.SelfFlatFrames, r.SelfFlatCenterEdge, r.SelfFlatResidual)
+		}
 		if r.SelfFlatPath != "" {
 			ew.printf("Self-flat master: %s\n", r.SelfFlatPath)
 		}
@@ -3372,6 +3587,8 @@ type runOptions struct {
 	BPMFile              string
 	ExportMasters        bool
 	SelfFlat             bool
+	NoSelfFlat           bool
+	SelfFlatModel        string
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -3393,6 +3610,9 @@ type runOptions struct {
 	PlateCenter string
 	WritePNG    bool
 	WriteBMP    bool
+	// Args is the original command line, including the program name.
+	// Empty when the pipeline is called from a test.
+	Args []string
 	// Limit caps the number of discovered frames the pipeline decodes and
 	// accumulates. 0 = unlimited (default). Applied after discoverFiles and
 	// before the per-frame decode loop, so a huge session can be sampled
@@ -5067,9 +5287,17 @@ const selfFlatMinFrames = 15
 type selfFlatResult struct {
 	Frame       *frame
 	Frames      int
+	Model       string
 	CenterEdge  float64
 	ResidualRMS float64
 	Medians     [3]float64
+	Degree      int
+	CellSize    int
+	ValidCells  int
+	TotalCells  int
+	MaskedFrac  float64
+	Min         float64
+	Max         float64
 }
 
 // selfFlatEligible decides whether --self-flat can run. A loaded flat always
@@ -5296,6 +5524,649 @@ func applyFlatToFrame(f *frame, flat *frame, rect image.Rectangle) {
 					f.Pix[tp+c] /= d
 				}
 			}
+		}
+	}
+}
+
+const (
+	selfFlatGridDefaultCell  = 64
+	selfFlatGridDegree       = 4
+	selfFlatGridQuantile     = 25.0
+	selfFlatGridDilateRadius = 12
+	selfFlatGridMaskSigma    = 2.5
+	selfFlatGridMinCellFrac  = 0.30
+)
+
+// selfFlatGridEligible decides whether the sensor-space grid self-flat can run.
+// Unlike v1, it does not require star registration to build the flat.
+func selfFlatGridEligible(totalFrames int, hasRealFlat bool) (bool, string) {
+	if hasRealFlat {
+		return false, "--self-flat ignored: a loaded flat master takes precedence"
+	}
+	if totalFrames < selfFlatMinFrames {
+		return false, fmt.Sprintf("--self-flat needs at least %d frames, got %d; using the normal stack", selfFlatMinFrames, totalFrames)
+	}
+	return true, ""
+}
+
+type selfFlatGridFrame struct {
+	vals   []float32 // len cols*rows*3; < 0 means invalid
+	counts []int32   // len cols*rows
+}
+
+// selfFlatGridAccumulator collects per-frame, per-cell low quantiles of
+// source-masked, median-normalized sensor frames during Pass 1.
+type selfFlatGridAccumulator struct {
+	w, h         int
+	cellSize     int
+	cols, rows   int
+	dilateR      int
+	frames       []selfFlatGridFrame
+	totalPixels  int64
+	maskedPixels int64
+}
+
+func newSelfFlatGridAccumulator(w, h, cellSize int) *selfFlatGridAccumulator {
+	if cellSize <= 0 {
+		cellSize = selfFlatGridDefaultCell
+	}
+	for cellSize > 16 && ((w+cellSize-1)/cellSize < 6 || (h+cellSize-1)/cellSize < 6) {
+		cellSize /= 2
+	}
+	cols := (w + cellSize - 1) / cellSize
+	rows := (h + cellSize - 1) / cellSize
+	minDim := w
+	if h < minDim {
+		minDim = h
+	}
+	dilateR := selfFlatGridDilateRadius
+	if minDim/10 < dilateR {
+		dilateR = minDim / 10
+	}
+	if dilateR < 1 {
+		dilateR = 1
+	}
+	return &selfFlatGridAccumulator{
+		w:        w,
+		h:        h,
+		cellSize: cellSize,
+		cols:     cols,
+		rows:     rows,
+		dilateR:  dilateR,
+	}
+}
+
+func dilateMaskBox(src []bool, w, h, r int) []bool {
+	if r <= 0 {
+		out := make([]bool, len(src))
+		copy(out, src)
+		return out
+	}
+	horiz := make([]bool, w*h)
+	for y := 0; y < h; y++ {
+		row := y * w
+		cnt := 0
+		limit := r
+		if limit >= w {
+			limit = w - 1
+		}
+		for x := 0; x <= limit; x++ {
+			if src[row+x] {
+				cnt++
+			}
+		}
+		for x := 0; x < w; x++ {
+			horiz[row+x] = cnt > 0
+			rem := x - r
+			if rem >= 0 && src[row+rem] {
+				cnt--
+			}
+			add := x + r + 1
+			if add < w && src[row+add] {
+				cnt++
+			}
+		}
+	}
+	out := make([]bool, w*h)
+	for x := 0; x < w; x++ {
+		cnt := 0
+		limit := r
+		if limit >= h {
+			limit = h - 1
+		}
+		for y := 0; y <= limit; y++ {
+			if horiz[y*w+x] {
+				cnt++
+			}
+		}
+		for y := 0; y < h; y++ {
+			out[y*w+x] = cnt > 0
+			rem := y - r
+			if rem >= 0 && horiz[rem*w+x] {
+				cnt--
+			}
+			add := y + r + 1
+			if add < h && horiz[add*w+x] {
+				cnt++
+			}
+		}
+	}
+	return out
+}
+
+func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
+	if f == nil || f.Width != a.w || f.Height != a.h || len(f.Pix) != a.w*a.h*3 {
+		return
+	}
+	n := a.w * a.h
+	stride := n/20000 + 1
+	lums := make([]float32, 0, n/stride+1)
+	for p := 0; p < n; p += stride {
+		r, g, b := f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2]
+		if r < 0 || g < 0 || b < 0 || r >= 0.98 || g >= 0.98 || b >= 0.98 {
+			continue
+		}
+		lums = append(lums, 0.2126*r+0.7152*g+0.0722*b)
+	}
+	if len(lums) == 0 {
+		return
+	}
+	medL := medianInPlace(lums)
+	madL := madOf(lums, medL)
+	sigmaL := 1.4826 * float64(madL)
+	thresh := float64(medL) + selfFlatGridMaskSigma*sigmaL
+	if sigmaL <= 1e-7 {
+		thresh = 1e9
+	}
+
+	invalidMask := make([]bool, n)
+	brightMask := make([]bool, n)
+	for p := 0; p < n; p++ {
+		r, g, b := f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2]
+		if r < 0 || g < 0 || b < 0 {
+			invalidMask[p] = true
+			continue
+		}
+		if r >= 0.98 || g >= 0.98 || b >= 0.98 {
+			brightMask[p] = true
+			continue
+		}
+		lum := 0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)
+		if lum > thresh {
+			brightMask[p] = true
+		}
+	}
+	dilated := dilateMaskBox(brightMask, a.w, a.h, a.dilateR)
+	mask := make([]bool, n)
+	var maskedCnt int64
+	for p := 0; p < n; p++ {
+		if invalidMask[p] || dilated[p] {
+			mask[p] = true
+			maskedCnt++
+		}
+	}
+	a.totalPixels += int64(n)
+	a.maskedPixels += maskedCnt
+
+	var chanMed [3]float64
+	for c := 0; c < 3; c++ {
+		vals := make([]float32, 0, n/stride+1)
+		for p := 0; p < n; p += stride {
+			if mask[p] {
+				continue
+			}
+			v := f.Pix[p*3+c]
+			if v > 0 {
+				vals = append(vals, v)
+			}
+		}
+		if len(vals) < 64 {
+			vals = vals[:0]
+			for p := 0; p < n; p += stride {
+				v := f.Pix[p*3+c]
+				if v > 0 {
+					vals = append(vals, v)
+				}
+			}
+		}
+		m := float64(medianInPlace(vals))
+		if m <= 0 {
+			m = 1.0
+		}
+		chanMed[c] = m
+	}
+
+	nCells := a.cols * a.rows
+	gf := selfFlatGridFrame{
+		vals:   make([]float32, nCells*3),
+		counts: make([]int32, nCells),
+	}
+	for i := range gf.vals {
+		gf.vals[i] = -1
+	}
+
+	processRow := func(cy int) {
+		y0 := cy * a.cellSize
+		y1 := y0 + a.cellSize
+		if y1 > a.h {
+			y1 = a.h
+		}
+		maxCap := (y1 - y0) * a.cellSize
+		buf := make([]float32, 0, maxCap)
+		for cx := 0; cx < a.cols; cx++ {
+			x0 := cx * a.cellSize
+			x1 := x0 + a.cellSize
+			if x1 > a.w {
+				x1 = a.w
+			}
+			area := (x1 - x0) * (y1 - y0)
+			minValid := int(selfFlatGridMinCellFrac * float64(area))
+			if minValid < 1 {
+				minValid = 1
+			}
+			cellIdx := cy*a.cols + cx
+			validInCell := 0
+			for y := y0; y < y1; y++ {
+				row := y * a.w
+				for x := x0; x < x1; x++ {
+					if !mask[row+x] {
+						validInCell++
+					}
+				}
+			}
+			if validInCell < minValid {
+				continue
+			}
+			gf.counts[cellIdx] = int32(validInCell)
+			for c := 0; c < 3; c++ {
+				buf = buf[:0]
+				invMed := float32(1.0 / chanMed[c])
+				for y := y0; y < y1; y++ {
+					row := y * a.w
+					for x := x0; x < x1; x++ {
+						p := row + x
+						if mask[p] {
+							continue
+						}
+						v := f.Pix[p*3+c]
+						if v >= 0 {
+							buf = append(buf, v*invMed)
+						}
+					}
+				}
+				if len(buf) < minValid {
+					gf.vals[cellIdx*3+c] = -1
+					continue
+				}
+				sort.Slice(buf, func(i, j int) bool { return buf[i] < buf[j] })
+				gf.vals[cellIdx*3+c] = percentile(buf, selfFlatGridQuantile)
+			}
+		}
+	}
+
+	if workers <= 1 || a.rows < 2 {
+		for cy := 0; cy < a.rows; cy++ {
+			processRow(cy)
+		}
+	} else {
+		if workers > a.rows {
+			workers = a.rows
+		}
+		var nextRow int32
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					cy := int(atomic.AddInt32(&nextRow, 1) - 1)
+					if cy >= a.rows {
+						return
+					}
+					processRow(cy)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+
+	a.frames = append(a.frames, gf)
+}
+
+func chebyshevBasis1D(t float64, deg int, out []float64) {
+	out[0] = 1.0
+	if deg >= 1 {
+		out[1] = t
+	}
+	for k := 2; k <= deg; k++ {
+		out[k] = 2.0*t*out[k-1] - out[k-2]
+	}
+}
+
+func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error) {
+	nFrames := len(a.frames)
+	if nFrames < selfFlatMinFrames {
+		return nil, fmt.Errorf("self-flat grid: need at least %d frames, got %d", selfFlatMinFrames, nFrames)
+	}
+	nCells := a.cols * a.rows
+	deg := selfFlatGridDegree
+	nTerms := (deg + 1) * (deg + 1)
+
+	cellMed := make([]float64, nCells*3)
+	cellWgt := make([]float64, nCells*3)
+	cellValid := make([]bool, nCells*3)
+	buf := make([]float32, 0, nFrames)
+
+	for cellIdx := 0; cellIdx < nCells; cellIdx++ {
+		for c := 0; c < 3; c++ {
+			buf = buf[:0]
+			var wSum float64
+			for fi := 0; fi < nFrames; fi++ {
+				v := a.frames[fi].vals[cellIdx*3+c]
+				if v > 0 {
+					buf = append(buf, v)
+					wSum += float64(a.frames[fi].counts[cellIdx])
+				}
+			}
+			if len(buf) < selfFlatMinFrames {
+				continue
+			}
+			cellMed[cellIdx*3+c] = float64(medianInPlace(buf))
+			cellWgt[cellIdx*3+c] = wSum
+			cellValid[cellIdx*3+c] = true
+		}
+	}
+
+	var coeffs [3][]float64
+	var tu [selfFlatGridDegree + 1]float64
+	var tv [selfFlatGridDegree + 1]float64
+	phi := make([]float64, nTerms)
+
+	for c := 0; c < 3; c++ {
+		A := make([][]float64, nTerms)
+		for i := 0; i < nTerms; i++ {
+			A[i] = make([]float64, nTerms)
+		}
+		b := make([]float64, nTerms)
+		validForChan := 0
+		for cy := 0; cy < a.rows; cy++ {
+			y0 := cy * a.cellSize
+			y1 := y0 + a.cellSize
+			if y1 > a.h {
+				y1 = a.h
+			}
+			cyCenter := 0.5 * float64(y0+y1-1)
+			v := 0.0
+			if a.h > 1 {
+				v = 2.0*cyCenter/float64(a.h-1) - 1.0
+			}
+			chebyshevBasis1D(v, deg, tv[:])
+			for cx := 0; cx < a.cols; cx++ {
+				cellIdx := cy*a.cols + cx
+				if !cellValid[cellIdx*3+c] {
+					continue
+				}
+				validForChan++
+				x0 := cx * a.cellSize
+				x1 := x0 + a.cellSize
+				if x1 > a.w {
+					x1 = a.w
+				}
+				cxCenter := 0.5 * float64(x0+x1-1)
+				u := 0.0
+				if a.w > 1 {
+					u = 2.0*cxCenter/float64(a.w-1) - 1.0
+				}
+				chebyshevBasis1D(u, deg, tu[:])
+				idx := 0
+				for p := 0; p <= deg; p++ {
+					for q := 0; q <= deg; q++ {
+						phi[idx] = tu[p] * tv[q]
+						idx++
+					}
+				}
+				w := cellWgt[cellIdx*3+c]
+				val := cellMed[cellIdx*3+c]
+				for i := 0; i < nTerms; i++ {
+					wi := w * phi[i]
+					b[i] += wi * val
+					for j := i; j < nTerms; j++ {
+						A[i][j] += wi * phi[j]
+					}
+				}
+			}
+		}
+		if validForChan < nTerms {
+			return nil, fmt.Errorf("self-flat grid: only %d valid cells for channel %d (need >= %d)", validForChan, c, nTerms)
+		}
+		for i := 0; i < nTerms; i++ {
+			for j := 0; j < i; j++ {
+				A[i][j] = A[j][i]
+			}
+			A[i][i] += 1e-9
+		}
+		sol := solveLinear(A, b, nTerms)
+		allZero := true
+		for _, v := range sol {
+			if v != 0 {
+				allZero = false
+				break
+			}
+		}
+		if allZero {
+			return nil, fmt.Errorf("self-flat grid: singular polynomial fit for channel %d", c)
+		}
+		coeffs[c] = sol
+	}
+
+	tx := make([][selfFlatGridDegree + 1]float64, a.w)
+	for x := 0; x < a.w; x++ {
+		u := 0.0
+		if a.w > 1 {
+			u = 2.0*float64(x)/float64(a.w-1) - 1.0
+		}
+		chebyshevBasis1D(u, deg, tx[x][:])
+	}
+	ty := make([][selfFlatGridDegree + 1]float64, a.h)
+	for y := 0; y < a.h; y++ {
+		v := 0.0
+		if a.h > 1 {
+			v = 2.0*float64(y)/float64(a.h-1) - 1.0
+		}
+		chebyshevBasis1D(v, deg, ty[y][:])
+	}
+
+	pix := make([]float32, a.w*a.h*3)
+	var chanSum [3]float64
+	evalRow := func(y int) [3]float64 {
+		var rowSum [3]float64
+		yv := &ty[y]
+		rowBase := y * a.w * 3
+		for x := 0; x < a.w; x++ {
+			xu := &tx[x]
+			for c := 0; c < 3; c++ {
+				cc := coeffs[c]
+				var sum float64
+				idx := 0
+				for p := 0; p <= deg; p++ {
+					xp := xu[p]
+					for q := 0; q <= deg; q++ {
+						sum += cc[idx] * xp * yv[q]
+						idx++
+					}
+				}
+				if sum < 0.05 {
+					sum = 0.05
+				}
+				pix[rowBase+x*3+c] = float32(sum)
+				rowSum[c] += sum
+			}
+		}
+		return rowSum
+	}
+	if workers <= 1 || a.h < 2 {
+		for y := 0; y < a.h; y++ {
+			rs := evalRow(y)
+			for c := 0; c < 3; c++ {
+				chanSum[c] += rs[c]
+			}
+		}
+	} else {
+		var nextY int32
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		nw := workers
+		if nw > a.h {
+			nw = a.h
+		}
+		for w := 0; w < nw; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var local [3]float64
+				for {
+					y := int(atomic.AddInt32(&nextY, 1) - 1)
+					if y >= a.h {
+						break
+					}
+					rs := evalRow(y)
+					for c := 0; c < 3; c++ {
+						local[c] += rs[c]
+					}
+				}
+				mu.Lock()
+				for c := 0; c < 3; c++ {
+					chanSum[c] += local[c]
+				}
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+	}
+
+	var chanMeans [3]float64
+	nPix := float64(a.w * a.h)
+	for c := 0; c < 3; c++ {
+		chanMeans[c] = chanSum[c] / nPix
+		if chanMeans[c] <= 0 {
+			return nil, fmt.Errorf("self-flat grid: non-positive channel %d mean %.5f", c, chanMeans[c])
+		}
+	}
+
+	minL, maxL := math.Inf(1), math.Inf(-1)
+	for p := 0; p < a.w*a.h; p++ {
+		var lum float64
+		for c := 0; c < 3; c++ {
+			v := float64(pix[p*3+c]) / chanMeans[c]
+			if v < 0.1 {
+				v = 0.1
+			} else if v > 10.0 {
+				v = 10.0
+			}
+			pix[p*3+c] = float32(v)
+			lum += v
+		}
+		lum /= 3.0
+		if lum < minL {
+			minL = lum
+		}
+		if lum > maxL {
+			maxL = lum
+		}
+	}
+
+	validCells := 0
+	var fitSumSq float64
+	var fitCount int
+	for cy := 0; cy < a.rows; cy++ {
+		y0 := cy * a.cellSize
+		y1 := y0 + a.cellSize
+		if y1 > a.h {
+			y1 = a.h
+		}
+		cyCenter := 0.5 * float64(y0+y1-1)
+		v := 0.0
+		if a.h > 1 {
+			v = 2.0*cyCenter/float64(a.h-1) - 1.0
+		}
+		chebyshevBasis1D(v, deg, tv[:])
+		for cx := 0; cx < a.cols; cx++ {
+			cellIdx := cy*a.cols + cx
+			if !cellValid[cellIdx*3] || !cellValid[cellIdx*3+1] || !cellValid[cellIdx*3+2] {
+				continue
+			}
+			validCells++
+			x0 := cx * a.cellSize
+			x1 := x0 + a.cellSize
+			if x1 > a.w {
+				x1 = a.w
+			}
+			cxCenter := 0.5 * float64(x0+x1-1)
+			u := 0.0
+			if a.w > 1 {
+				u = 2.0*cxCenter/float64(a.w-1) - 1.0
+			}
+			chebyshevBasis1D(u, deg, tu[:])
+			for c := 0; c < 3; c++ {
+				var pred float64
+				idx := 0
+				for p := 0; p <= deg; p++ {
+					for q := 0; q <= deg; q++ {
+						pred += coeffs[c][idx] * tu[p] * tv[q]
+						idx++
+					}
+				}
+				pred /= chanMeans[c]
+				obs := cellMed[cellIdx*3+c] / chanMeans[c]
+				d := obs - pred
+				fitSumSq += d * d
+				fitCount++
+			}
+		}
+	}
+	fitRMS := 0.0
+	if fitCount > 0 {
+		fitRMS = math.Sqrt(fitSumSq / float64(fitCount))
+	}
+	maskedFrac := 0.0
+	if a.totalPixels > 0 {
+		maskedFrac = float64(a.maskedPixels) / float64(a.totalPixels)
+	}
+
+	f := &frame{Width: a.w, Height: a.h, Pix: pix}
+	return &selfFlatResult{
+		Frame:       f,
+		Frames:      nFrames,
+		Model:       "grid",
+		CenterEdge:  centerEdgeRatio(f),
+		ResidualRMS: fitRMS,
+		Medians:     chanMeans,
+		Degree:      deg,
+		CellSize:    a.cellSize,
+		ValidCells:  validCells,
+		TotalCells:  nCells,
+		MaskedFrac:  maskedFrac,
+		Min:         minL,
+		Max:         maxL,
+	}, nil
+}
+
+// applySensorFlat divides a sensor-coordinate frame by a full-frame flat.
+func applySensorFlat(f *frame, flat *frame) {
+	if f == nil || flat == nil || f.Width != flat.Width || f.Height != flat.Height {
+		return
+	}
+	divideSliceByFlat(f.Pix, flat)
+}
+
+// divideSliceByFlat divides an interleaved RGB float32 buffer by a full-frame flat.
+func divideSliceByFlat(pix []float32, flat *frame) {
+	if flat == nil || len(pix) != len(flat.Pix) {
+		return
+	}
+	for i, d := range flat.Pix {
+		if d > 1e-6 && pix[i] >= 0 {
+			pix[i] /= d
 		}
 	}
 }
@@ -5860,6 +6731,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return err
 		}
 	}
+	synthNotes := applyDefaultSyntheticCalib(&opts, biasFrame != nil, darkFrame != nil, flatFrame != nil, len(candidates))
+	for _, n := range synthNotes {
+		logf("%s", n)
+	}
 
 	// ============== Pass 1: decode, detect stars, accumulate unregistered
 	unregAcc := newAccumulator(refW, refH)
@@ -5892,6 +6767,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	bpmMaskedCount := 0
 	bpmCounted := false
+	selfFlatModel := opts.SelfFlatModel
+	if selfFlatModel == "" {
+		selfFlatModel = "registered"
+	}
+	var gridAcc *selfFlatGridAccumulator
+	if opts.SelfFlat && selfFlatModel == "grid" {
+		if ok, why := selfFlatGridEligible(len(candidates), flatFrame != nil); ok {
+			gridAcc = newSelfFlatGridAccumulator(refW, refH, selfFlatGridDefaultCell)
+		} else {
+			logf("WARNING: %s", why)
+		}
+	}
 	starLists := make([][]star, len(candidates))
 	var accepted []candidate
 	for i, c := range candidates {
@@ -5921,6 +6808,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				bpmMaskedCount = n
 				bpmCounted = true
 			}
+		}
+		if gridAcc != nil {
+			gridAcc.addFrame(f, workers)
 		}
 		if maxPix == nil {
 			maxPix = make([]float32, len(f.Pix))
@@ -6229,10 +7119,32 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	selfFlatActive := false
 	selfFlatApplied := false
 	if opts.SelfFlat {
-		var why string
-		selfFlatActive, why = selfFlatEligible(registeredCount, registrationOn, flatFrame != nil)
-		if !selfFlatActive {
-			logf("WARNING: %s", why)
+		if selfFlatModel == "grid" {
+			if ok, why := selfFlatGridEligible(len(accepted), flatFrame != nil); !ok {
+				logf("WARNING: %s", why)
+				gridAcc = nil
+			} else if gridAcc != nil {
+				sr, sferr := gridAcc.finalize(workers)
+				gridAcc = nil
+				if sferr != nil {
+					logf("WARNING: --self-flat (grid) failed, continuing without it: %v", sferr)
+				} else if sr.CenterEdge < 0.5 || sr.CenterEdge > 5.0 || sr.Min < 0.2 || sr.Max > 5.0 {
+					logf("WARNING: --self-flat (grid) rejected: implausible center/edge=%.3f min=%.3f max=%.3f",
+						sr.CenterEdge, sr.Min, sr.Max)
+				} else {
+					selfFlat = sr
+					selfFlatApplied = true
+					logf("Self-flat (grid): %d frames, degree=%d, cell=%d, cells=%d/%d, masked=%.1f%%, center/edge=%.4f, fit RMS=%.5f, min=%.4f, max=%.4f",
+						sr.Frames, sr.Degree, sr.CellSize, sr.ValidCells, sr.TotalCells, 100*sr.MaskedFrac,
+						sr.CenterEdge, sr.ResidualRMS, sr.Min, sr.Max)
+				}
+			}
+		} else {
+			var why string
+			selfFlatActive, why = selfFlatEligible(registeredCount, registrationOn, flatFrame != nil)
+			if !selfFlatActive {
+				logf("WARNING: %s", why)
+			}
 		}
 	}
 	var needsNormalize bool
@@ -6264,6 +7176,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				logf("WARNING: normalization disabled (could not load reference): %v", rerr)
 				needsNormalize = false
 			} else {
+				if selfFlatApplied && selfFlatModel == "grid" {
+					applySensorFlat(refFrame, selfFlat.Frame)
+				}
 				normRefGlobal = computeNormStats(refFrame)
 				if opts.LocalNormalize {
 					normNTX = (refW + ts - 1) / ts
@@ -6330,6 +7245,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 			if bpmPoints != nil {
 				applyBadPixelMap(f, bpmPoints, opts.Scale)
+			}
+			if selfFlatApplied && selfFlatModel == "grid" {
+				applySensorFlat(f, selfFlat.Frame)
 			}
 			var resampled *frame
 			if transforms[i].aff != nil {
@@ -6587,7 +7505,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	// Arithmetic-mean stacking skipped accumulation while the flat was being
 	// derived. Accumulate now, applying the flat when it is available.
-	if opts.Method == "mean" && opts.SelfFlat && len(spillPaths2) > 0 {
+	if opts.Method == "mean" && opts.SelfFlat && selfFlatModel == "registered" && len(spillPaths2) > 0 {
 		regAcc = newAccumulator(refW, refH)
 		validCount = make([]int32, refW*refH)
 		for _, sp := range spillPaths2 {
@@ -6618,6 +7536,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			opts.Method, tr, it, opts.TileSize, workers, unregWeights, nil, nil)
 		if rerr != nil {
 			return fmt.Errorf("reduce unregistered: %w", rerr)
+		}
+		if selfFlatApplied && selfFlatModel == "grid" {
+			divideSliceByFlat(sum1, selfFlat.Frame)
+			divideSliceByFlat(mean1, selfFlat.Frame)
 		}
 		unregSumPix = sum1
 		unregMeanPix = mean1
@@ -6819,13 +7741,28 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				sumMax = 1.0
 			}
 		} else {
-			sumMax = unregAcc.maxValue()
-			if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) {
+			sumPix = append([]float32(nil), unregAcc.Pix...)
+			if selfFlatApplied && selfFlatModel == "grid" {
+				divideSliceByFlat(sumPix, selfFlat.Frame)
+			}
+			sumMax = 0
+			for _, v := range sumPix {
+				if v > sumMax {
+					sumMax = v
+				}
+			}
+			if math.IsNaN(float64(sumMax)) || math.IsInf(float64(sumMax), 0) || sumMax <= 0 {
 				sumMax = 1.0
 			}
-			sumPix = unregAcc.Pix
-			unregAcc.divideByCount(unregValidCount)
-			meanPix = unregAcc.Pix
+			meanPix = append([]float32(nil), sumPix...)
+			for i := range meanPix {
+				c := unregValidCount[i/3]
+				if c > 0 {
+					meanPix[i] /= float32(c)
+				} else {
+					meanPix[i] = 0
+				}
+			}
 		}
 		sumDivisor := float32(1.0)
 		if sumMax > 1.0 {
@@ -6935,6 +7872,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		"JPEG inputs are gamma-encoded (sRGB-like); samples were averaged in encoded space, not linear light.",
 		"All JPG outputs are display previews, not scientific outputs.",
 	}
+	notes = append(notes, synthNotes...)
 	if darkFrame == nil && flatFrame == nil && biasFrame == nil && !selfFlatApplied {
 		notes = append(notes, "No calibration (dark, flat, bias) was performed.")
 	} else {
@@ -6955,9 +7893,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	notes = append(notes, masterNotes...)
 	if selfFlatApplied {
-		notes = append(notes, fmt.Sprintf(
-			"Self-flat: derived from %d registered frames by a sigma-clipped mean in reference coordinates and applied after registration (center/edge=%.4f, residual RMS=%.5f). This is a relative illumination correction, not a sensor-level flat; astrophysical structure common to all frames can bias it, and it cannot repair pre-alignment sensor defects.",
-			selfFlat.Frames, selfFlat.CenterEdge, selfFlat.ResidualRMS))
+		if selfFlat.Model == "grid" {
+			notes = append(notes, fmt.Sprintf(
+				"Self-flat (grid): derived from %d unregistered frames in sensor coordinates (degree-%d Chebyshev, %d px cells, %d/%d valid cells, mask fraction %.1f%%) and applied before resampling (center/edge=%.4f, fit RMS=%.5f, min=%.4f, max=%.4f). This is a relative illumination model, not a sensor-level flat: it cannot correct dust, and a stable sky gradient may be absorbed.",
+				selfFlat.Frames, selfFlat.Degree, selfFlat.CellSize, selfFlat.ValidCells, selfFlat.TotalCells,
+				100*selfFlat.MaskedFrac, selfFlat.CenterEdge, selfFlat.ResidualRMS, selfFlat.Min, selfFlat.Max))
+		} else {
+			notes = append(notes, fmt.Sprintf(
+				"Self-flat: derived from %d registered frames by a sigma-clipped mean in reference coordinates and applied after registration (center/edge=%.4f, residual RMS=%.5f). This is a relative illumination correction, not a sensor-level flat; astrophysical structure common to all frames can bias it, and it cannot repair pre-alignment sensor defects.",
+				selfFlat.Frames, selfFlat.CenterEdge, selfFlat.ResidualRMS))
+		}
 	}
 	if regRejPix != nil || unregRejPix != nil {
 		notes = append(notes,
@@ -7026,10 +7971,27 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	selfFlatFrames := 0
 	selfFlatCenter := 0.0
 	selfFlatResidual := 0.0
+	selfFlatDegree := 0
+	selfFlatCellSize := 0
+	selfFlatValidCells := 0
+	selfFlatTotalCells := 0
+	selfFlatMaskedFrac := 0.0
+	selfFlatMin := 0.0
+	selfFlatMax := 0.0
 	if selfFlat != nil {
 		selfFlatFrames = selfFlat.Frames
 		selfFlatCenter = selfFlat.CenterEdge
 		selfFlatResidual = selfFlat.ResidualRMS
+		selfFlatDegree = selfFlat.Degree
+		selfFlatCellSize = selfFlat.CellSize
+		selfFlatValidCells = selfFlat.ValidCells
+		selfFlatTotalCells = selfFlat.TotalCells
+		selfFlatMaskedFrac = selfFlat.MaskedFrac
+		selfFlatMin = selfFlat.Min
+		selfFlatMax = selfFlat.Max
+		if selfFlat.Model != "" {
+			selfFlatModel = selfFlat.Model
+		}
 	}
 	outputFiles := append(append(append([]string{},
 		append(appendIf(opts.CreateTIFF, sumTiff), appendIf(step0Path != "", step0Path)...)...),
@@ -7042,6 +8004,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	rep := &processingReport{
 		Version:            version,
 		Timestamp:          start,
+		CommandLine:        formatCommandLine(opts.Args),
+		ResolvedFlags:      resolvedFlagLines(opts),
 		InputDir:           inputDir,
 		OutputDir:          outputDir,
 		Discovered:         len(files),
@@ -7066,10 +8030,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		BPMPath:            opts.BPMFile,
 		BPMPixelCount:      bpmMaskedCount,
 		SelfFlatApplied:    selfFlatApplied,
+		SelfFlatModel:      selfFlatModel,
 		SelfFlatFrames:     selfFlatFrames,
 		SelfFlatPath:       selfFlatRawPath,
 		SelfFlatCenterEdge: selfFlatCenter,
 		SelfFlatResidual:   selfFlatResidual,
+		SelfFlatDegree:     selfFlatDegree,
+		SelfFlatCellSize:   selfFlatCellSize,
+		SelfFlatValidCells: selfFlatValidCells,
+		SelfFlatTotalCells: selfFlatTotalCells,
+		SelfFlatMaskedFrac: selfFlatMaskedFrac,
+		SelfFlatMin:        selfFlatMin,
+		SelfFlatMax:        selfFlatMax,
 		MasterExports:      masterExports,
 		OutputFiles:        outputFiles,
 		Workers:            workers,
@@ -8724,7 +9696,7 @@ func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("User-Agent",
-			"skystacker/0.5.1 (+https://github.com/computerphysicslab/skystacker)")
+			"skystacker/"+version+" (+https://github.com/computerphysicslab/skystacker)")
 		endpoint := gaiaSyncEndpoint(mirror)
 		ctx, cancel := context.WithTimeout(context.Background(), gaiaQueryTimeout)
 		startAttempt := time.Now()
@@ -10787,7 +11759,7 @@ type syntheticCalibComponent struct {
 // entry is non-empty so a half-filled row fails the build.
 var syntheticCalibComponents = []syntheticCalibComponent{
 	{"bias pedestal", "partial", "camera black-level in EXIF or FITS header",
-		"EXIF/header pedestal subtraction is automatic; for a full bias map pass --bias"},
+		"automatic metadata pedestal when no --bias is supplied; spatial pattern needs --bias"},
 	{"spatial bias pattern", "no", "at least one real bias frame",
 		"--bias (individual file or folder)"},
 	{"read noise", "no", "statistical model only; cannot be recovered from lights",
@@ -10798,8 +11770,8 @@ var syntheticCalibComponents = []syntheticCalibComponent{
 		"sigma-clipping + stacked_rejection_map.jpg; or --bpm (Tier 2)"},
 	{"amp glow", "no", "a real dark frame; the glow is exposure- and temperature-dependent",
 		"--dark"},
-	{"vignetting", "partial", "multiple dithered lights; --local-normalize recovers the fixed component",
-		"--local-normalize (empirical, not synthetic)"},
+	{"vignetting", "partial", "multiple dithered lights; a smooth self-flat recovers the fixed component",
+		"automatic --self-flat --self-flat-model=grid when no --flat is supplied"},
 	{"dust shadows", "no", "a real flat frame taken with the same optical train",
 		"--flat"},
 	{"pixel-response non-uniformity", "no", "a real flat frame; dithering averages it out but does not recover it",
@@ -10831,6 +11803,35 @@ func formatSyntheticCalibReport() string {
 	b.WriteString("\nThese recover the FIXED component (vignetting direction, sky-glow\n")
 	b.WriteString("drift) but cannot recover dust shadows, hot-pixel maps or amp glow.\n")
 	return b.String()
+}
+
+// applyDefaultSyntheticCalib fills the only calibration components that can
+// be recovered when the user supplied no matching frames. It never fabricates
+// a dark frame or a spatial bias/flat master.
+func applyDefaultSyntheticCalib(opts *runOptions, hasBias, hasDark, hasFlat bool, nFrames int) []string {
+	if opts == nil {
+		return nil
+	}
+	var notes []string
+	if !hasBias && opts.BlackLevel == "" {
+		opts.BlackLevel = "auto"
+		notes = append(notes, "Synthetic bias: no bias frames found; subtracting the metadata pedestal when EXIF/FITS provides one. The spatial bias pattern is not synthesized.")
+	} else if !hasBias && opts.BlackLevel == "off" {
+		notes = append(notes, "Synthetic bias: skipped (--black-level off). A spatial bias map still requires real --bias frames.")
+	}
+	if !hasDark {
+		notes = append(notes, "Synthetic dark: not applied. Dark current, hot pixels and amp glow cannot be fabricated from the lights; pass --dark.")
+	}
+	if !hasFlat && !opts.NoSelfFlat && !opts.SelfFlat {
+		if nFrames >= selfFlatMinFrames {
+			opts.SelfFlat = true
+			opts.SelfFlatModel = "grid"
+			notes = append(notes, "Synthetic flat: no flat frames found; applying --self-flat --self-flat-model=grid. This estimates smooth illumination only and does not correct dust.")
+		} else {
+			notes = append(notes, fmt.Sprintf("Synthetic flat: not applied (%d lights, need %d). Pass --flat or add frames.", nFrames, selfFlatMinFrames))
+		}
+	}
+	return notes
 }
 
 // checkSyntheticCalibRefusal returns an error if the user asked for a
@@ -11068,6 +12069,211 @@ func testSelfFlatRecovery() error {
 	corner := sr.Frame.Pix[(1*w+1)*3]
 	if center <= corner {
 		return fmt.Errorf("self-flat center %.3f not brighter than corner %.3f", center, corner)
+	}
+	return nil
+}
+
+func syntheticVignette(w, h int, x, y int) float32 {
+	dx := (float64(x) - float64(w-1)/2) / (float64(w) / 2)
+	dy := (float64(y) - float64(h-1)/2) / (float64(h) / 2)
+	return float32(0.80 - 0.10*(dx*dx+dy*dy))
+}
+
+func testSelfFlatGridRecovery() error {
+	const w, h = 128, 96
+	const frames = 20
+	acc := newSelfFlatGridAccumulator(w, h, selfFlatGridDefaultCell)
+	for i := 0; i < frames; i++ {
+		pix := make([]float32, w*h*3)
+		sx := 8 + (i*17)%(w-16)
+		sy := 8 + (i*13)%(h-16)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				v := syntheticVignette(w, h, x, y)
+				p := (y*w + x) * 3
+				pix[p], pix[p+1], pix[p+2] = v, v, v
+			}
+		}
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				p := ((sy+dy)*w + (sx + dx)) * 3
+				pix[p], pix[p+1], pix[p+2] = 5, 5, 5
+			}
+		}
+		acc.addFrame(&frame{Width: w, Height: h, Pix: pix}, 1)
+	}
+	sr, err := acc.finalize(1)
+	if err != nil {
+		return err
+	}
+	if sr.Model != "grid" || sr.Frames != frames || sr.Frame.Width != w || sr.Frame.Height != h {
+		return fmt.Errorf("grid result model=%s frames=%d size=%dx%d", sr.Model, sr.Frames, sr.Frame.Width, sr.Frame.Height)
+	}
+	var sum float64
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			sum += float64(syntheticVignette(w, h, x, y))
+		}
+	}
+	truthMean := sum / float64(w*h)
+	var sumSq float64
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			got := float64(sr.Frame.Pix[(y*w+x)*3])
+			exp := float64(syntheticVignette(w, h, x, y)) / truthMean
+			d := got - exp
+			sumSq += d * d
+		}
+	}
+	rms := math.Sqrt(sumSq / float64(w*h))
+	if rms > 0.05 {
+		return fmt.Errorf("grid self-flat RMS %.4f exceeds 0.05 (cells=%d/%d fit=%.4f min=%.3f max=%.3f center=%.3f corner=%.3f mask=%.2f)",
+			rms, sr.ValidCells, sr.TotalCells, sr.ResidualRMS, sr.Min, sr.Max,
+			sr.Frame.Pix[(h/2*w+w/2)*3], sr.Frame.Pix[0], sr.MaskedFrac)
+	}
+	return nil
+}
+
+func testSelfFlatGridApplication() error {
+	const w, h = 32, 8
+	pix := make([]float32, w*h*3)
+	flatPix := make([]float32, w*h*3)
+	for x := 0; x < w; x++ {
+		f := float32(0.6 + 0.4*float64(x)/float64(w-1))
+		for y := 0; y < h; y++ {
+			p := (y*w + x) * 3
+			pix[p], pix[p+1], pix[p+2] = f*0.5, f*0.5, f*0.5
+			flatPix[p], flatPix[p+1], flatPix[p+2] = f, f, f
+		}
+	}
+	fr := &frame{Width: w, Height: h, Pix: append([]float32(nil), pix...)}
+	applySensorFlat(fr, &frame{Width: w, Height: h, Pix: flatPix})
+	for i, v := range fr.Pix {
+		if math.Abs(float64(v-0.5)) > 1e-4 {
+			return fmt.Errorf("sensor-space division pixel %d = %.5f, want 0.5", i, v)
+		}
+	}
+	shifted := make([]float32, len(pix))
+	for i := range shifted {
+		shifted[i] = -1
+	}
+	for y := 0; y < h; y++ {
+		for x := 4; x < w; x++ {
+			shifted[(y*w+x)*3] = pix[(y*w+(x-4))*3]
+			shifted[(y*w+x)*3+1] = pix[(y*w+(x-4))*3+1]
+			shifted[(y*w+x)*3+2] = pix[(y*w+(x-4))*3+2]
+		}
+	}
+	applySensorFlat(&frame{Width: w, Height: h, Pix: shifted}, &frame{Width: w, Height: h, Pix: flatPix})
+	var bad int
+	for x := 8; x < w-4; x++ {
+		if math.Abs(float64(shifted[x*3]-0.5)) > 0.02 {
+			bad++
+		}
+	}
+	if bad == 0 {
+		return errors.New("applying the sensor flat after a shift should leave a measurable residual")
+	}
+	return nil
+}
+
+func testSelfFlatGridNoRegistration() error {
+	if ok, _ := selfFlatGridEligible(20, false); !ok {
+		return errors.New("grid self-flat should not require registration")
+	}
+	if ok, _ := selfFlatGridEligible(20, true); ok {
+		return errors.New("a loaded flat must win over the grid self-flat")
+	}
+	if ok, _ := selfFlatGridEligible(10, false); ok {
+		return errors.New("grid self-flat should reject fewer than 15 frames")
+	}
+	return nil
+}
+
+func testDefaultSyntheticCalib() error {
+	opts := runOptions{}
+	notes := applyDefaultSyntheticCalib(&opts, false, false, false, 20)
+	if opts.BlackLevel != "auto" || !opts.SelfFlat || opts.SelfFlatModel != "grid" {
+		return fmt.Errorf("expected auto pedestal and grid self-flat, got black=%q self=%v model=%q", opts.BlackLevel, opts.SelfFlat, opts.SelfFlatModel)
+	}
+	joined := strings.Join(notes, "\n")
+	if !strings.Contains(joined, "Synthetic dark: not applied") {
+		return fmt.Errorf("missing dark refusal: %s", joined)
+	}
+	opts = runOptions{NoSelfFlat: true, BlackLevel: "off"}
+	applyDefaultSyntheticCalib(&opts, false, false, false, 20)
+	if opts.SelfFlat || opts.BlackLevel != "off" {
+		return fmt.Errorf("opt-out ignored: %+v", opts)
+	}
+	opts = runOptions{SelfFlat: true, SelfFlatModel: "registered"}
+	applyDefaultSyntheticCalib(&opts, false, false, true, 20)
+	if opts.SelfFlatModel != "registered" {
+		return errors.New("an explicit registered self-flat must not be replaced")
+	}
+	opts = runOptions{}
+	applyDefaultSyntheticCalib(&opts, false, false, false, 5)
+	if opts.SelfFlat {
+		return errors.New("self-flat should not auto-enable below 15 frames")
+	}
+	return nil
+}
+
+func testReportRecordsFlags() error {
+	lines := resolvedFlagLines(runOptions{
+		Method: "mean", Workers: 4, OutputDir: "/tmp/out",
+		SelfFlat: true, SelfFlatModel: "grid", StackOnly: true,
+		Limit: 20, Register: true, ExportMasters: true,
+		CalibRoot: "/data/calib",
+	})
+	text := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"--method mean", "--workers 4", "--output /tmp/out",
+		"--self-flat", "--self-flat-model grid", "--limit 20",
+		"--stack-only", "--export-masters", "--calib-root /data/calib",
+	} {
+		if !strings.Contains(text, want) {
+			return fmt.Errorf("resolved flags missing %q\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "--no-register") {
+		return errors.New("resolved flags listed --no-register for a registered run")
+	}
+	cmd := formatCommandLine([]string{"skystacker", "--self-flat", "My Dir"})
+	if !strings.Contains(cmd, "skystacker --self-flat ") || !strings.Contains(cmd, `"My Dir"`) {
+		return fmt.Errorf("command line not quoted: %s", cmd)
+	}
+	var buf bytes.Buffer
+	rep := &processingReport{
+		Version: version, Timestamp: time.Now(),
+		CommandLine: cmd, ResolvedFlags: lines,
+	}
+	if err := rep.writeTo(&buf); err != nil {
+		return err
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Command line:\n  "+cmd) || !strings.Contains(out, "--self-flat-model grid") {
+		return fmt.Errorf("report.txt did not record the command flags:\n%s", out)
+	}
+	return nil
+}
+
+func testSelfFlatModelDefault() error {
+	opts, err := parseArgs([]string{"--self-flat"})
+	if err != nil {
+		return err
+	}
+	if opts.SelfFlatModel != "registered" {
+		return fmt.Errorf("default model %q, want registered", opts.SelfFlatModel)
+	}
+	opts, err = parseArgs([]string{"--self-flat-model", "grid"})
+	if err != nil {
+		return err
+	}
+	if opts.SelfFlatModel != "grid" {
+		return fmt.Errorf("model %q, want grid", opts.SelfFlatModel)
+	}
+	if _, err := parseArgs([]string{"--self-flat-model", "nope"}); err == nil {
+		return errors.New("unknown --self-flat-model should be rejected")
 	}
 	return nil
 }
@@ -11345,6 +12551,12 @@ func runSelfTests() int {
 		{"synthetic calib parse args", testSyntheticCalibParseArgs},
 		{"self-flat eligibility", testSelfFlatEligible},
 		{"self-flat recovery", testSelfFlatRecovery},
+		{"self-flat grid recovery", testSelfFlatGridRecovery},
+		{"self-flat grid application", testSelfFlatGridApplication},
+		{"self-flat grid no registration", testSelfFlatGridNoRegistration},
+		{"self-flat model default", testSelfFlatModelDefault},
+		{"report records flags", testReportRecordsFlags},
+		{"default synthetic calibration", testDefaultSyntheticCalib},
 		{"calibration master export", testExportCalibrationMasters},
 	}
 	failures := 0
@@ -14808,6 +16020,7 @@ func testReportContains() error {
 	out := buf.String()
 	for _, want := range []string{
 		"SkyStacker", "Registration:", "Notes:",
+		"Command line:", "Resolved flags:",
 		"No star registration or calibration",
 	} {
 		if !strings.Contains(out, want) {
@@ -18012,6 +19225,7 @@ func main() {
 		os.Exit(1)
 	}
 	err = runPipeline(context.Background(), runOptions{
+		Args:                 os.Args,
 		InputDir:             opts.InputDir,
 		OutputDir:            opts.OutputDir,
 		Workers:              opts.Workers,
@@ -18022,6 +19236,7 @@ func main() {
 		DarkFile:             opts.DarkFile,
 		FlatFile:             opts.FlatFile,
 		BiasFile:             opts.BiasFile,
+		CalibRoot:            opts.CalibRoot,
 		Method:               opts.Method,
 		MaskBG:               opts.MaskBG,
 		PostProcess:          opts.PostProcess,
@@ -18076,6 +19291,8 @@ func main() {
 		BPMFile:              opts.BPMFile,
 		ExportMasters:        opts.ExportMasters,
 		SelfFlat:             opts.SelfFlat,
+		NoSelfFlat:           opts.NoSelfFlat,
+		SelfFlatModel:        opts.SelfFlatModel,
 		CreateTIFF:           opts.CreateTIFF,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,

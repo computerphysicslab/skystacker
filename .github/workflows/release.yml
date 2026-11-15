@@ -25,6 +25,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
           VERSION: ${{ github.ref_name }}
         run: |
           EXT=""
@@ -47,3 +48,12 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          generate_release_notes: true
+          body: |
+            Static, dependency-free binaries (`CGO_ENABLED=0`) for Linux, macOS and Windows, amd64 and arm64.
+
+            Pick the archive matching your OS and CPU. On Apple Silicon use `darwin_arm64`; on Intel Macs use `darwin_amd64`. Windows is `skystacker_windows_amd64.exe` (or `arm64` on ARM Windows).
+
+            JPG, PNG, BMP and native FITS do not need extra tools. CR2/CR3 still need `dcraw` and ImageMagick on the machine that runs the command; those decoders are not bundled.
+
+            Verify `SHA256SUMS.txt` before running. macOS Gatekeeper and Windows SmartScreen may warn on an unsigned download; the binary is a single static executable and does not install anything.

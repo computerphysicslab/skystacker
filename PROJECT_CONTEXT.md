@@ -1,7 +1,7 @@
 # SkyStacker — project context (last updated 2026-11-15)
 
 ## Version
-v0.5.1 (single-file Go program, `main.go`)
+v0.6.0 (single-file Go program, `main.go`)
 
 ## Build, test, install
 ```
@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 169 passing.** Update this number after any test change.
+**Self-test count: 175 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -1197,3 +1197,314 @@ visible in the previews). `gofmt -l main.go` empty, `go vet ./...` clean, and
 - Scientific caveat: a self-flat built from lights can absorb extended
   nebulosity (observed on M42); see
   `research/04-calibration-and-self-flat.md`.
+
+### Self-flat revision analysis (2026-11-15, no code change)
+
+- **v1 is unsafe on extended emission.** The current `--self-flat` is built
+  from `spillPaths2` (registered/reference coordinates), so aligned stars
+  and nebulosity look like illumination. Orion-135mm reaches ~1.9 around
+  M42 and can produce dark halos. The effect is not literally dividing the
+  stack by itself, but the scene is a common component and is suppressed.
+- **Specified successor:** sensor-space, full-frame estimator from
+  calibrated *unregistered* frames. Per-frame robust normalisation; source
+  mask + 10-15 px dilation; 64/96 px cells; robust cell background
+  (SExtractor mode, low quantile as diagnostic); 5x5 median/MAD cell
+  rejection; degree-3/4 Chebyshev/Legendre fit with IRLS Huber/Tukey;
+  normalise and validate; apply before resampling. Correct the
+  unregistered mean/median/sigma by post-division. This removes the v1
+  mean re-accumulation and the `flatCorrection`/`frameScales` reduction
+  parameters.
+- **Documented limits:** a stable sky gradient is degenerate with the flat
+  and will be absorbed; a large nebula with ~13 px dithers remains
+  partially degenerate; dust is out of scope; the sRGB-encoded pipeline
+  makes the division approximate (gamma-aware correction is Phase 5).
+- **Roadmap:** `ROADMAP_SYNTHETIC_CALIBRATION.md` §2.3, phases 0-7.
+  Phase 0 is this analysis; Phase 1 is the sensor-space prototype with
+  `--self-flat-model=registered|grid` for A/B. Default stays `registered`
+  until the Phase 4 acceptance tests pass, then `grid`.
+- **Self-test count unchanged: 169.** No implementation or test changes in
+  this revision. `gofmt -l main.go` is empty, `go vet ./...` is clean, and
+  `/home/jips/.local/bin/skystacker --selftest` prints
+  `all 169 self-tests passed`.
+- **Docs updated:** `research/04-calibration-and-self-flat.md` §9-14,
+  `ROADMAP_SYNTHETIC_CALIBRATION.md` §2.3, `README.md`,
+  `TECHNICAL_SPEC.md`, `prompt-ai.txt`, and this context block.
+- **Next session:** implement Phase 1 only after user approval; do not
+  commit these docs unless asked.
+
+## Consolidated context snapshot (2026-11-15)
+
+This is the current handoff. Earlier session logs are retained as history;
+where they disagree with this snapshot, this snapshot wins. Nothing in this
+document authorizes a commit or push.
+
+### Project and environment
+
+- SkyStacker is a local-first astrophotography engine: a single Go file
+  (`main.go`, ~18k lines), standard library only, no external Go modules.
+- Repository: `~/datos/datos-juan/proyectos/SkyStacker/`
+  (`https://github.com/computerphysicslab/skystacker`).
+- Version in the header: v0.5.1. Linux, bash, Go toolchain installed.
+- The repo is usually clean; generated binaries, `assets/Orion-135mm/`, and
+  `NEXT_SESSION_PROMPT.md` are gitignored. `prompt-ai.txt` is tracked.
+- `research/` and `PROJECT_CONTEXT.md` are append-only: add sections, never
+  delete or shorten prior findings.
+
+### Canonical build, test, install
+
+```bash
+gofmt -w main.go
+go vet ./...
+go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o /home/jips/.local/bin/skystacker .
+/home/jips/.local/bin/skystacker --selftest
+```
+
+- Canonical binary: `/home/jips/.local/bin/skystacker`.
+- `~/.bashrc` aliases `skystacker` to that path. An old interactive shell
+  may need `unalias skystacker` or `source ~/.bashrc`.
+- Do not leave `./skystacker` or `~/go/bin/skystacker` behind; remove stale
+  binaries after installing.
+- `/usr/local/bin` requires sudo; not installed there.
+- Tests are embedded self-tests, not `go test` files. `go test ./...` says
+  “no test files”; use `--selftest`.
+- Baseline: **169 self-tests passing**. `gofmt -l main.go` empty;
+  `go vet ./...` clean.
+
+### Non-negotiable constraints
+
+- Never weaken the section-E calibration refusal contract
+  (`testSyntheticCalib*`).
+- Do not touch `computeFrameQuality` or the `--sigma-clip` defaults without
+  an explicit request.
+- Never delete or overwrite original photo files.
+- Do not write into `assets/Orion-135mm/0_skystacker_results/`; use `/tmp`
+  for E2E runs.
+- Do not commit, amend, push, or open PRs unless explicitly asked.
+- Code, comments, and docs are in English; final user-facing reports are in
+  Spanish.
+- Do not add dependencies and do not split `main.go` unless asked.
+
+### Pipeline summary
+
+1. Discover and decode inputs (JPG native; CR2 via dcraw; FITS via
+   ImageMagick/native paths).
+2. Optional calibration with `--dark`, `--flat`, `--bias`, or
+   `--calib-root`; `--export-masters` writes scientific `.f32raw` plus a
+   `.jpg` preview.
+3. Pass 1: calibrate, auto black level, BPM, accumulate unregistered mean,
+   detect stars/register, optionally spill frames for tiled reduction.
+4. Pass 2: resample registered frames, optional normalization, accumulate
+   or spill; tiled median/sigma reduction; safe crop.
+5. Post-processing: 8 steps, background removal through curves/HDR/mix and
+   optional diffraction spikes.
+6. `report.txt` records settings, frame diagnostics, crop, warnings and
+   calibration/self-flat diagnostics.
+
+Key registration facts: adaptive high-pass radius, multi-sigma star retry,
+40-star triangle matching, RANSAC similarity plus optional 6-DOF affine,
+bilinear resampling. Stacking: streaming mean, tiled median/sigma with MAD
+rejection and disk spill. `--scale N` downsamples.
+
+### Current `--self-flat` v1 (shipped, limited)
+
+- `selfFlatEligible` requires registration, at least 15 registered frames,
+  and no loaded real flat (a real flat wins).
+- Built from `spillPaths2`, i.e. frames already resampled into reference
+  coordinates, after Pass 2. `buildSelfFlat` runs a one-iteration
+  sigma-clipped mean with per-frame median normalization.
+- `normalizeSelfFlat` normalizes per channel to median 1, clamps to
+  `[0.05, 20]`; center/edge must be in `[0.5, 5]`.
+- The v1 master is crop-sized (Orion: 2395x1583), not full-frame. It is
+  applied after registration; only the registered stack is corrected.
+- The arithmetic-mean path spills registered frames to `spillPaths2`,
+  derives the flat, then re-accumulates the mean with `applyFlatToFrame`.
+- `reduceTilesStack`/`reduceTile` carry `frameScales` and a
+  `flat *flatCorrection` parameter; the main reductions pass `nil`.
+- `selfFlatResult` currently stores `Frame`, `Frames`, `CenterEdge`,
+  `ResidualRMS`, `Medians`; `report.txt` exposes `SelfFlatFrames`,
+  `SelfFlatCenterEdge`, `SelfFlatResidual`.
+- Orion-135mm (66 JPG, 2400x1600, no calibration): center/edge 1.2512,
+  residual RMS 0.19360, corrected mean center/border 1.000 vs 1.134
+  uncorrected. The flat itself reaches ~1.9 around M42 and can create dark
+  halos.
+- Why v1 fails: aligned stars and nebulosity are common to every
+  registered frame, so sigma clipping treats them as illumination. With
+  ~13 px dithers and a large nebula, temporal rejection cannot separate
+  them. This is not literally “dividing the stack by itself”, but the
+  correlation causes over-subtraction.
+- E2E sigma run (`--method sigma --limit 20`): center/edge 1.2497,
+  corrected center/border 1.000. Outputs were in `/tmp`, not the repo.
+
+### Scientific limits to keep visible
+
+- A stable sky gradient is degenerate with the multiplicative flat and
+  will be absorbed by a 2D polynomial. A radial model is more identifiable.
+- A large nebula with small dithers remains partially degenerate; masking
+  and a low-degree model reduce but do not eliminate the bias.
+- Dust shadows are high-frequency and out of scope for a polynomial
+  self-flat; a real flat is required.
+- The pipeline works on sRGB-encoded values. If the flat is estimated and
+  applied consistently in encoded space, the first-order factor cancels,
+  but the transfer function is nonlinear; gamma-aware correction is a
+  separate phase.
+- The self-flat is a fallback for sessions without flats, never a
+  substitute when a real flat exists.
+
+### Specified sensor-space revision (not yet implemented)
+
+- Build from calibrated **unregistered** frames in sensor coordinates.
+- Per-frame per-channel robust normalization; luminance source mask
+  (`median + 2.5*MAD`), saturation/BPM mask, 10-15 px dilation.
+- Coarse grid (64 or 96 px). Per cell: robust background (SExtractor mode
+  `2.5*median - 1.5*mean`, low quantile as diagnostic), 5x5 median/MAD
+  cell rejection.
+- Fit degree-3/4 Chebyshev/Legendre per channel with IRLS
+  Huber/Tukey; optional radial model; normalize and validate min/max,
+  center/edge, fit RMS.
+- Full-frame master. Apply after calibration/BPM and **before**
+  `resampleToReference*`; post-divide unregistered mean/median/sigma
+  outputs (equivalent because the flat is constant per pixel).
+- Temporary flag `--self-flat-model=registered|grid`; default remains
+  `registered` until Phase 4 acceptance tests pass, then `grid`.
+- Eventually remove `flatCorrection`, the `flat`/`frameScales` reduction
+  parameters, and the v1 mean re-accumulation.
+- Detailed algorithm, integration map, validation plan and phases:
+  `research/04-calibration-and-self-flat.md` §9-14 and
+  `ROADMAP_SYNTHETIC_CALIBRATION.md` §2.3.
+
+### Phase 1 implementation contract (next code session)
+
+- Implement only the sensor-space prototype; keep v1 behind
+  `--self-flat-model=registered`.
+- For `grid`, use a streaming `selfFlatAccumulator` in the Pass 1 loop
+  after `calibrate`/black-level/BPM. Reading `spillPaths1` is acceptable
+  only if it does not force an extra spill for `mean`.
+- Per frame/channel: robust median normalization; luminance mask and
+  dilation; 64 px cells; 25th percentile of unmasked normalized pixels;
+  require enough unmasked samples per cell. Across frames: median of the
+  per-frame quantiles, at least 15 valid frames.
+- Degree-4 Chebyshev/Legendre least-squares fit per channel, weighted by
+  valid sample counts; solve normal equations in stdlib. Evaluate on the
+  full `refW x refH` grid.
+- Normalize per channel, clamp `[0.1, 10]`, reject implausible
+  center/edge or min/max. Write a full-frame master and `report.txt`
+  diagnostics (`Model=grid`, degree, cell, valid cells, mask fraction,
+  fit RMS, min/max, center/edge).
+- Apply before resampling in Pass 2; correct the registered stack and
+  post-divide the unregistered mean (median/sigma if straightforward).
+- Tests: synthetic known vignetting + moving stars, recovery within 0.05
+  RMS; application-order test; build without registration; flag default
+  and unknown-value rejection; keep the three existing self-flat tests.
+- Acceptance: `gofmt`/`go vet` clean, self-test total updated, E2E Orion
+  A/B in `/tmp`, M42 dome strongly reduced, no commit unless asked.
+
+### Roadmap
+
+- Phase 0: analysis and guardrails (done, docs only).
+- Phase 1: sensor-space prototype, basic mask, cell quantile, OLS,
+  full-frame application. **Next.**
+- Phase 2: SExtractor mode, 5x5 rejection, mode/quantile consistency.
+- Phase 3: IRLS polynomial, radial/2D comparison, fit diagnostics.
+- Phase 4: integration/cleanup, all methods, `--no-register`, default
+  `grid`, docs.
+- Phase 5: gamma-aware correction.
+- Phase 6: real-flat validation with OrionNebula/Flame.
+- Phase 7: dust/defect handling, optional and out of scope.
+
+### Current repository and docs state
+
+- `HEAD` and `origin/main` are `a457a58`; no commit has been made since.
+- Working tree currently has documentation edits only:
+  `PROJECT_CONTEXT.md`, `README.md`, `ROADMAP_SYNTHETIC_CALIBRATION.md`,
+  `TECHNICAL_SPEC.md`, `prompt-ai.txt`,
+  `research/04-calibration-and-self-flat.md`.
+- `NEXT_SESSION_PROMPT.md` is gitignored and was rewritten for Phase 1.
+- `main.go` has **not** been changed for the sensor-space model yet.
+- Recent commits: `a457a58` (`prompt-ai.txt`), `9a43a54` (remove backups
+  and patch), `b003fa7` (user commit, included the then-current work).
+- `assets/Orion-135mm/` contains the 66 JPG test set and an existing
+  `0_skystacker_results/` that must not be overwritten.
+
+### External datasets (outside the repo, do not commit)
+
+- `/home/jips/datos/Astro/datasets/OrionNebula/`: 134 CR2 lights, 22 darks,
+  17 flats, 5 biases, Canon 40D; CR2 needs `dcraw -4 -T`.
+- `/home/jips/datos/Astro/datasets/04_emission_nebula_Flame/`: 45 FITS
+  lights, 2 darks, 1 flat, 1 bias, 3056x2048; FITS is faster for E2E.
+- Use `/tmp` for converted data and outputs.
+
+### Key files
+
+- `main.go`: flags, pipeline, calibration, registration, reduction,
+  `buildSelfFlat`, `normalizeSelfFlat`, `reduceTilesStack`, report,
+  self-tests.
+- `research/04-calibration-and-self-flat.md`: science, v1 results,
+  sensor-space design, integration map, validation, roadmap.
+- `ROADMAP_SYNTHETIC_CALIBRATION.md`: Tier 2.2 shipped, Tier 2.3 revision.
+- `PROJECT_CONTEXT.md`: this snapshot and session history.
+- `README.md`, `TECHNICAL_SPEC.md`: user-facing caveats and planned work.
+- `prompt-ai.txt`: persistent build/install/hygiene instructions.
+- `NEXT_SESSION_PROMPT.md`: gitignored Phase 1 implementation prompt.
+
+### Open decisions before/while implementing
+
+- Prototype source: streaming accumulator vs. `spillPaths1`.
+- Basic mask in Phase 1 vs. deferring all masking to Phase 2.
+- Exact cell validity thresholds and across-frame quantile.
+- Whether to correct unregistered median/sigma in Phase 1 or defer.
+- Whether `--self-flat-model` unknown values fail hard (preferred) or
+  fall back to `registered`.
+- Keep the default `registered` until Phase 4; do not switch early.
+
+### Phase 1 implemented (2026-11-15)
+
+- `--self-flat-model=grid` builds a full-frame sensor-space flat in Pass 1
+  (`selfFlatGridAccumulator`) and applies it before resampling. Default is
+  still `registered`. Unknown model values are rejected.
+- Estimator: per-channel median normalisation, luminance mask
+  `median+2.5*MAD` plus saturation, 12 px dilation, 64 px cells, 25th
+  percentile, across-frame median, degree-4 Chebyshev least squares.
+  Not IRLS and not 5x5 rejection.
+- Unregistered median/sigma outputs are post-divided. The no-register mean
+  path copies the accumulator before dividing, so
+  `stacked_no_correction_mean` stays uncorrected.
+- Tests: 169 → **173**. New: `testSelfFlatGridRecovery`,
+  `testSelfFlatGridApplication`, `testSelfFlatGridNoRegistration`,
+  `testSelfFlatModelDefault`. Section-E tests unchanged.
+  `gofmt`/`go vet` clean. Canonical binary rebuilt at
+  `/home/jips/.local/bin/skystacker`; `--selftest` prints
+  `all 173 self-tests passed`.
+- Orion smoke (`/tmp/orion_grid`, `--method mean --stack-only --limit 20
+  --self-flat-model=grid`): master 2400x1600, center/edge 1.2449, fit RMS
+  0.01337, min 0.4855, max 1.2081, 391/950 cells, mask 67.6%. The v1 M42
+  peak is gone. The mask fraction is too high for a default; Phase 2 next.
+- Not committed.
+
+### Report command line (2026-11-15)
+
+- `report.txt` now starts with `Command line:` (the original `os.Args`,
+  shell-quoted) and `Resolved flags:` (effective settings that differ from
+  the built-in defaults, plus `--method` and `--workers`).
+- `--calib-root` was parsed into `cliOptions` but never copied into
+  `runOptions`. That copy is now made, so the flag both works and appears
+  in the report.
+- Test: `testReportRecordsFlags`. Self-test count was 174; see the 0.6.0 note.
+- Coverage: do not add a `go test -cover` harness. The suite is `--selftest`
+  inside `main`, so `go test` reports no tests. More tests are worthwhile
+  only for wiring and scientific gates (grid Pass 1/2, mask fraction,
+  report fields), not for line coverage.
+
+### v0.6.0 default recoverable calibration and static release
+
+- If no bias frames are present, the metadata pedestal is subtracted
+  (`--black-level auto`). `--black-level off` opts out. Spatial bias is
+  not synthesized.
+- If no dark frames are present, no dark is fabricated. The report says so.
+- If no flat frames are present and there are at least 15 lights,
+  `--self-flat --self-flat-model=grid` is applied. `--no-self-flat` opts out.
+  Dust is not corrected.
+- `--synthetic-dark/flat/bias` remain refused. Test:
+  `testDefaultSyntheticCalib`. Self-test count **175**.
+- Release binaries are static (`CGO_ENABLED=0`) for linux/darwin/windows
+  amd64 and arm64, attached to the GitHub release by `.github/workflows/release.yml`.
