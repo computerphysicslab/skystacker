@@ -643,3 +643,17 @@ relax the source mask on extended emission and add the 5x5 cell rejection
 before this model becomes the default. The low corner (0.49) is also a
 reminder that degree-4 extrapolation over masked regions needs the Phase 3
 robust fit and the radial-model comparison.
+
+## 16. Implementation status (v0.6.0, 2026-11-15)
+
+Registered self-tests: 177. Do not treat every `func test*` as a registered
+case.
+
+Implemented in `main.go`: `--export-masters`, `--bpm`, v1 `--self-flat`,
+Phase 1 `--self-flat-model=grid`, and the default recoverable path (metadata
+pedestal + grid self-flat when no user masters exist). Darks are still not
+fabricated. `--synthetic-dark/flat/bias` remain refused.
+
+Not implemented: Phase 2 mask relaxation and 5x5 cell rejection, Phase 3
+IRLS, gamma-aware division, and real-flat validation. The Orion grid smoke
+run still masked 67.6% of pixels. That is the next calibration task.

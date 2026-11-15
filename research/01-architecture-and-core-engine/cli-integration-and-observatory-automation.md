@@ -176,3 +176,10 @@ skystacker_results/
    * `32` = Database Missing
    * `33` = Database Read Error
    * `34` = Header Update Failure
+
+## Status at v0.6.0
+
+Operational CLI flags include calibration, `--self-flat`, `--bpm`,
+`--plate-solve`, `--comet-center`, and SER input. Observatory automation,
+return-code protocols, and live APIs in this document are design notes, not
+shipped behavior. Release binaries are static `CGO_ENABLED=0` builds.

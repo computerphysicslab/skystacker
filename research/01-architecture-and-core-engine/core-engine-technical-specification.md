@@ -585,3 +585,11 @@ Where $T_{bv}$ transforms instrumental color differences into standard color ind
 | **Phase 4** | **AAVSO Scientific Reporting** | Automated export of variable star photometry reports. | Formats research data for submission to scientific databases. |
 | **Phase 4** | **Real-Time Live API** | REST / gRPC live streaming API for observatory control systems. | Enables remote observatory automation. |
 | **Phase 4** | **Compressed FITS Ingestion** | Direct tile read/write support for `.fits.fz` Rice compression. | Reduces storage footprint and disk I/O throughput requirements. |
+
+## Concordance with v0.6.0
+
+`main.go` is still one file. Shipped relative to this design: native FITS,
+debayer, calibration masters, self-flat, SER input, pixel-mode comet stack,
+Gaia/HEALPix, TAN WCS. Not shipped: compressed FITS, XISF, drizzle, live
+API, SIP applied in the resampler. See `TECHNICAL_SPEC.md` for the short
+current spec.

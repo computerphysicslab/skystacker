@@ -46,13 +46,13 @@ The pre-`A1a.5` branch structure (`za <= 2/3 → equatorial`) misassigned points
 
 ## 3. Regenerating the Reference Test Fixture
 
-To regenerate `testdata/healpix_reference.json` after a `healpy` upgrade or a refactor of SkyStacker's pixel math:
+To regenerate `assets/testdata/healpix_reference.json` after a `healpy` upgrade or a refactor of SkyStacker's pixel math:
 
 ```bash
 python3 -m venv /tmp/healpix-venv
 /tmp/healpix-venv/bin/pip install healpy==1.16.5
 /tmp/healpix-venv/bin/python scripts/healpix/generate_fixture.py \
-    > testdata/healpix_reference.json
+    > assets/testdata/healpix_reference.json
 ```
 
 Run the Go self-test suite to verify exact agreement:
@@ -61,7 +61,7 @@ Run the Go self-test suite to verify exact agreement:
 ./skystacker --selftest
 ```
 
-The following self-tests consume `testdata/healpix_reference.json`:
+The following self-tests consume `assets/testdata/healpix_reference.json`:
 * `testHealpixNside16Match`
 * `testHealpixNside256Match`
 * `testHealpixCornersMatch`
@@ -76,3 +76,9 @@ The diagnostic calibration run that confirmed the `theta`/`phi` convention and e
 * **Part 2 (Face-scan verification):**
   * Declination scan at $\text{RA}=0^\circ$ mapping $\text{Dec} \rightarrow \text{face}$.
   * Right Ascension scan at $\text{Dec}=32.6^\circ$ confirming transitions across faces `4`, `0`, and `5`.
+
+## Implementation status (v0.6.0)
+
+The nested HEALPix helpers are in `main.go` and covered by `testHealpix*`.
+The fixture path is `assets/testdata/healpix_reference.json`. This document
+remains the verification log, not a pending implementation task.

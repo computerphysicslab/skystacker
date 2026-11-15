@@ -136,3 +136,14 @@
 98. **Code Smell Refactoring** — Systematic code cleanup eliminating anti-patterns to improve performance and maintainability.
 99. **`CGO_ENABLED=0` Native Compilation** — Build setting disabling C bindings to produce pure statically compiled Go binaries.
 100. **Audit Telemetry Log (`telemetry_audit.log`)** — Structured JSON execution trace recording rejection counts, HFD metrics, and system performance.
+
+## Terms active in v0.6.0
+
+- **STF / MTF** — screen transfer function / midtones transfer function used by auto-stretch.
+- **SIP** — simple imaging polynomial; fitted and stored, not applied while resampling.
+- **TAN WCS** — gnomonic projection used by `--plate-solve`.
+- **HEALPix nested** — Gaia tile index. Fixtures in `assets/testdata/`.
+- **Self-flat** — relative illumination model from the lights. `registered` is v1; `grid` is the Phase 1 sensor-space prototype.
+- **MAD** — median absolute deviation used by sigma clipping and cell statistics.
+- **IRLS** — iteratively reweighted least squares. Specified for self-flat Phase 3, not implemented.
+- **`.f32raw`** — raw little-endian float32 RGB with an 8-byte width/height header.

@@ -101,3 +101,9 @@ To integrate this specification seamlessly into `SkyStacker` or similar Go/Pytho
 4. **Mandatory Unit Tests:**
    * `testWCSCatalogOverlay`: Validates pixel-to-sky and sky-to-pixel round-trip accuracy within $0.05$ pixels.
    * `testUnassociatedSourceFlagging`: Verifies correct identification and isolation of synthetic injected transient sources against a mock Gaia catalog.
+
+## Status: future research, not in v0.6.0
+
+`testWCSCatalogOverlay` and `testUnassociatedSourceFlagging` are specified
+here and are not registered in `runSelfTests`. Catalog annotation and
+anomaly flagging are not implemented.

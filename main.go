@@ -199,6 +199,13 @@ type cliOptions struct {
 	WritePNG         bool
 	WriteBMP         bool
 	Limit            int
+	CometCenter      string
+	CometRate        string
+	CometOn          bool
+	CometX           float64
+	CometY           float64
+	CometRateX       float64
+	CometRateY       float64
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -280,6 +287,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.WritePNG, "png", false, "write stacked_mean.png alongside the JPEGs")
 	fs.BoolVar(&o.WriteBMP, "bmp", false, "write stacked_mean.bmp alongside the JPEGs")
 	fs.IntVar(&o.Limit, "limit", 0, "process at most N discovered frames (0 = unlimited)")
+	fs.StringVar(&o.CometCenter, "comet-center", "", "comet position in the reference frame, X,Y pixels")
+	fs.StringVar(&o.CometRate, "comet-rate", "", "comet motion in reference pixels per second, dX,dY")
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
@@ -322,7 +331,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -453,6 +462,24 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.Limit < 0 {
 		return nil, fmt.Errorf("--limit must be >= 0, got %d", o.Limit)
 	}
+	if o.CometCenter != "" {
+		x, y, err := parseFloatPair(o.CometCenter, "--comet-center")
+		if err != nil {
+			return nil, err
+		}
+		o.CometOn = true
+		o.CometX, o.CometY = x, y
+	}
+	if o.CometRate != "" {
+		x, y, err := parseFloatPair(o.CometRate, "--comet-rate")
+		if err != nil {
+			return nil, err
+		}
+		o.CometRateX, o.CometRateY = x, y
+	}
+	if o.CometRate != "" && !o.CometOn {
+		return nil, errors.New("--comet-rate requires --comet-center X,Y")
+	}
 	rest := fs.Args()
 	if len(rest) > 1 {
 		return nil, fmt.Errorf("unexpected arguments: %v", rest[1:])
@@ -492,6 +519,34 @@ func parseRADecArg(s, flagName string) (raRad, decRad float64, err error) {
 		return 0, 0, fmt.Errorf("%s: Dec must be in [-90, 90], got %g", flagName, decDeg)
 	}
 	return raDeg * math.Pi / 180, decDeg * math.Pi / 180, nil
+}
+
+func parseFloatPair(s, flagName string) (float64, float64, error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("%s expects two comma-separated numbers, got %q", flagName, s)
+	}
+	a, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%s: %w", flagName, err)
+	}
+	b, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%s: %w", flagName, err)
+	}
+	return a, b, nil
+}
+
+func cometDelta(dtSec, rateX, rateY float64) (float64, float64) {
+	return rateX * dtSec, rateY * dtSec
+}
+
+func parseEXIFTime(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006:01:02 15:04:05", s)
+	return t, err == nil
 }
 
 func printUsage(w io.Writer) {
@@ -581,6 +636,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
+	fmt.Fprintln(w, "  --comet-center X,Y comet pixel in the reference frame")
+	fmt.Fprintln(w, "  --comet-rate dX,dY comet motion in reference pixels per second")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
@@ -634,7 +691,7 @@ func discoverFiles(root string, recursive bool, exclude []string) ([]string, err
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" {
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" || ext == ".ser" {
 			files = append(files, abs)
 		}
 		return nil
@@ -933,7 +990,172 @@ func decodeCR2File(path string, targetW, targetH int) (*frame, error) {
 	return frameFromImage(img)
 }
 
+const serHeaderSize = 178
+
+type serHeader struct {
+	Width, Height int
+	PixelDepth    int
+	FrameCount    int
+	ColorID       int
+	LittleEndian  bool
+}
+
+func splitSERFrame(path string) (string, int, bool) {
+	file, frag, ok := strings.Cut(path, "#frame=")
+	if !ok {
+		return path, 0, false
+	}
+	n, err := strconv.Atoi(frag)
+	if err != nil || n < 0 {
+		return path, 0, false
+	}
+	return file, n, true
+}
+
+func readSERHeader(path string) (serHeader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return serHeader{}, err
+	}
+	defer f.Close()
+	var buf [serHeaderSize]byte
+	if _, err := io.ReadFull(f, buf[:]); err != nil {
+		return serHeader{}, fmt.Errorf("ser header: %w", err)
+	}
+	if string(buf[:14]) != "LUCAM-RECORDER" {
+		return serHeader{}, fmt.Errorf("ser: %s is not a SER file", path)
+	}
+	h := serHeader{
+		ColorID:      int(binary.LittleEndian.Uint32(buf[18:22])),
+		LittleEndian: binary.LittleEndian.Uint32(buf[22:26]) != 0,
+		Width:        int(binary.LittleEndian.Uint32(buf[26:30])),
+		Height:       int(binary.LittleEndian.Uint32(buf[30:34])),
+		PixelDepth:   int(binary.LittleEndian.Uint32(buf[34:38])),
+		FrameCount:   int(binary.LittleEndian.Uint32(buf[38:42])),
+	}
+	if h.Width <= 0 || h.Height <= 0 || h.FrameCount <= 0 {
+		return serHeader{}, fmt.Errorf("ser: invalid geometry %dx%d x %d", h.Width, h.Height, h.FrameCount)
+	}
+	if h.PixelDepth != 8 && h.PixelDepth != 16 {
+		return serHeader{}, fmt.Errorf("ser: unsupported pixel depth %d", h.PixelDepth)
+	}
+	switch h.ColorID {
+	case 0, 8, 9, 10, 11, 100, 101:
+	default:
+		return serHeader{}, fmt.Errorf("ser: unsupported color id %d", h.ColorID)
+	}
+	return h, nil
+}
+
+func serPlanes(colorID int) int {
+	if colorID == 100 || colorID == 101 {
+		return 3
+	}
+	return 1
+}
+
+func serFrameBytes(h serHeader) int {
+	bpp := 1
+	if h.PixelDepth > 8 {
+		bpp = 2
+	}
+	return h.Width * h.Height * serPlanes(h.ColorID) * bpp
+}
+
+func decodeSERFrame(path string, index int) (*frame, error) {
+	h, err := readSERHeader(path)
+	if err != nil {
+		return nil, err
+	}
+	if index < 0 || index >= h.FrameCount {
+		return nil, fmt.Errorf("ser: frame %d out of range (count %d)", index, h.FrameCount)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	nbytes := serFrameBytes(h)
+	if _, err := f.Seek(int64(serHeaderSize+index*nbytes), io.SeekStart); err != nil {
+		return nil, err
+	}
+	raw := make([]byte, nbytes)
+	if _, err := io.ReadFull(f, raw); err != nil {
+		return nil, fmt.Errorf("ser frame %d: %w", index, err)
+	}
+	pix := make([]float32, h.Width*h.Height*3)
+	planes := serPlanes(h.ColorID)
+	scale := float32(255)
+	if h.PixelDepth > 8 {
+		scale = float32(int(1)<<uint(h.PixelDepth) - 1)
+	}
+	readSample := func(off int) float32 {
+		if h.PixelDepth <= 8 {
+			return float32(raw[off]) / scale
+		}
+		var v uint16
+		if h.LittleEndian {
+			v = binary.LittleEndian.Uint16(raw[off : off+2])
+		} else {
+			v = binary.BigEndian.Uint16(raw[off : off+2])
+		}
+		return float32(v) / scale
+	}
+	step := 1
+	if h.PixelDepth > 8 {
+		step = 2
+	}
+	for i := 0; i < h.Width*h.Height; i++ {
+		base := i * planes * step
+		var r, g, b float32
+		switch {
+		case h.ColorID == 101:
+			b, g, r = readSample(base), readSample(base+step), readSample(base+2*step)
+		case planes == 3:
+			r, g, b = readSample(base), readSample(base+step), readSample(base+2*step)
+		default:
+			r = readSample(base)
+			g, b = r, r
+		}
+		pix[i*3], pix[i*3+1], pix[i*3+2] = r, g, b
+	}
+	return &frame{Width: h.Width, Height: h.Height, Pix: pix}, nil
+}
+
+func expandSERFiles(files []string) ([]string, error) {
+	out := make([]string, 0, len(files))
+	for _, path := range files {
+		if strings.ToLower(filepath.Ext(path)) != ".ser" {
+			out = append(out, path)
+			continue
+		}
+		h, err := readSERHeader(path)
+		if err != nil {
+			return nil, err
+		}
+		for i := 0; i < h.FrameCount; i++ {
+			out = append(out, fmt.Sprintf("%s#frame=%d", path, i))
+		}
+	}
+	return out, nil
+}
+
+func inputFileExt(path string) string {
+	file, _, ok := splitSERFrame(path)
+	if ok {
+		path = file
+	}
+	return strings.ToLower(filepath.Ext(path))
+}
+
 func decodeImageConfig(path string) (image.Config, error) {
+	if file, _, ok := splitSERFrame(path); ok {
+		h, err := readSERHeader(file)
+		if err != nil {
+			return image.Config{}, err
+		}
+		return image.Config{Width: h.Width, Height: h.Height}, nil
+	}
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".cr2" || ext == ".cr3" {
 		return decodeCR2Config(path)
@@ -967,6 +1189,16 @@ func decodeImageConfig(path string) (image.Config, error) {
 }
 
 func decodeImageFile(path string, targetW, targetH int) (*frame, error) {
+	if file, index, ok := splitSERFrame(path); ok {
+		frm, err := decodeSERFrame(file, index)
+		if err != nil {
+			return nil, err
+		}
+		if targetW > 0 && targetH > 0 && (frm.Width != targetW || frm.Height != targetH) {
+			return resizeFrame(frm, targetW, targetH), nil
+		}
+		return frm, nil
+	}
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".cr2" || ext == ".cr3" {
 		return decodeCR2File(path, targetW, targetH)
@@ -1958,9 +2190,16 @@ func sampleBilinear(f *frame, x, y float64) (r, g, b float32, ok bool) {
 // coordinate system. Pixels with no source are marked -1. sim maps
 // source -> reference, so its inverse maps reference -> source.
 func resampleToReference(f *frame, sim similarity, refW, refH, workers int) *frame {
+	return resampleToReferenceShift(f, sim, 0, 0, refW, refH, workers)
+}
+
+// resampleToReferenceShift is resampleToReference plus a reference-frame
+// translation. A positive (dx, dy) pulls the content that star alignment
+// would have placed at (x+dx, y+dy) back to (x, y). Used to freeze a comet.
+func resampleToReferenceShift(f *frame, sim similarity, dx, dy float64, refW, refH, workers int) *frame {
 	inv := sim.inverse()
 	return resampleToReferenceFn(f, func(x, y float64) (float64, float64) {
-		p := inv.apply(point2D{x, y})
+		p := inv.apply(point2D{x + dx, y + dy})
 		return p.X, p.Y
 	}, refW, refH, workers)
 }
@@ -1970,9 +2209,13 @@ func resampleToReference(f *frame, sim similarity, refW, refH, workers int) *fra
 // affine model; otherwise resampleToReference with the similarity model
 // is the right call.
 func resampleToReferenceAffine(f *frame, aff affine, refW, refH, workers int) *frame {
+	return resampleToReferenceAffineShift(f, aff, 0, 0, refW, refH, workers)
+}
+
+func resampleToReferenceAffineShift(f *frame, aff affine, dx, dy float64, refW, refH, workers int) *frame {
 	inv := aff.inverse()
 	return resampleToReferenceFn(f, func(x, y float64) (float64, float64) {
-		p := inv.apply(point2D{x, y})
+		p := inv.apply(point2D{x + dx, y + dy})
 		return p.X, p.Y
 	}, refW, refH, workers)
 }
@@ -3170,6 +3413,12 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Limit > 0 {
 		add(fmt.Sprintf("--limit %d", o.Limit))
 	}
+	if o.CometOn {
+		add(fmt.Sprintf("--comet-center %g,%g", o.CometX, o.CometY))
+		if o.CometRateX != 0 || o.CometRateY != 0 {
+			add(fmt.Sprintf("--comet-rate %g,%g", o.CometRateX, o.CometRateY))
+		}
+	}
 	if o.Scale > 1 {
 		add(fmt.Sprintf("--scale %d", o.Scale))
 	}
@@ -3617,7 +3866,12 @@ type runOptions struct {
 	// accumulates. 0 = unlimited (default). Applied after discoverFiles and
 	// before the per-frame decode loop, so a huge session can be sampled
 	// for a quick end-to-end smoke test without waiting for every sub.
-	Limit int
+	Limit      int
+	CometOn    bool
+	CometX     float64
+	CometY     float64
+	CometRateX float64
+	CometRateY float64
 }
 
 func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
@@ -6418,6 +6672,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if err != nil {
 		return err
 	}
+	files, err = expandSERFiles(files)
+	if err != nil {
+		return err
+	}
 	if len(files) == 0 {
 		return fmt.Errorf("no image files (JPG/PNG/RAW/FITS) found in %s", lightInputDir)
 	}
@@ -7107,6 +7365,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	// ============== Pass 2: resample + accumulate registered
 	var regAcc *accumulator
+	var cometAcc *accumulator
+	var cometValid []int32
+	var cometFrames int
 	var validCount []int32
 	var cropRect image.Rectangle
 	var frameDiags []frameDiag
@@ -7210,6 +7471,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		regAcc = newAccumulator(refW, refH)
 		validCount = make([]int32, refW*refH)
+		if opts.CometOn {
+			cometAcc = newAccumulator(refW, refH)
+			cometValid = make([]int32, refW*refH)
+			logf("Comet stack: freezing pixel (%.1f, %.1f) at rate (%.4f, %.4f) px/s",
+				opts.CometX, opts.CometY, opts.CometRateX, opts.CometRateY)
+		}
 		if opts.Method != "mean" || selfFlatActive {
 			spillDir2 = filepath.Join(outputDir, "_work", "_spill2")
 			if err := os.MkdirAll(spillDir2, 0o755); err != nil {
@@ -7254,6 +7521,26 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				resampled = resampleToReferenceAffine(f, *transforms[i].aff, refW, refH, workers)
 			} else {
 				resampled = resampleToReference(f, transforms[i].sim, refW, refH, workers)
+			}
+			if cometAcc != nil {
+				dt := 0.0
+				if tRef, okRef := parseEXIFTime(accepted[refIdx].exif.DateTimeOriginal); okRef {
+					if t, ok := parseEXIFTime(c.exif.DateTimeOriginal); ok {
+						dt = t.Sub(tRef).Seconds()
+					}
+				}
+				dx, dy := cometDelta(dt, opts.CometRateX, opts.CometRateY)
+				var cometFrame *frame
+				if transforms[i].aff != nil {
+					cometFrame = resampleToReferenceAffineShift(f, *transforms[i].aff, dx, dy, refW, refH, workers)
+				} else {
+					cometFrame = resampleToReferenceShift(f, transforms[i].sim, dx, dy, refW, refH, workers)
+				}
+				if err := cometAcc.addFrameMasked(cometFrame, workers, cometValid); err != nil {
+					return fmt.Errorf("comet accumulate %s: %w", c.path, err)
+				}
+				cometFrames++
+				cometFrame.Pix = nil
 			}
 			f.Pix = nil
 			// Normalization (opt-in, requires registration). Applies to
@@ -7585,6 +7872,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			if err := writeSpillFrame(selfFlatRawPath, selfFlat.Frame); err != nil {
 				return fmt.Errorf("write self-flat master: %w", err)
 			}
+			jpgPath := filepath.Join(outputDir, "master_self_flat.jpg")
+			if err := writeFileAtomic(jpgPath, func(w io.Writer) error {
+				return writeMasterPreviewJPEG(w, selfFlat.Frame)
+			}); err != nil {
+				return fmt.Errorf("write self-flat preview: %w", err)
+			}
+			logf("Self-flat master written: %s and %s", selfFlatRawPath, jpgPath)
 		}
 	}
 	var masterExports, masterNotes []string
@@ -7850,6 +8144,24 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}); err != nil {
 		return fmt.Errorf("write no_correction_mean jpg: %w", err)
 	}
+	cometRawPath := ""
+	cometJPGPath := ""
+	if cometAcc != nil && cometFrames > 0 {
+		cometAcc.divideByCount(cometValid)
+		cometRawPath = filepath.Join(outputDir, "stacked_comet.f32raw")
+		cometJPGPath = filepath.Join(outputDir, "stacked_comet.jpg")
+		logf("Writing comet stack (%d frames)", cometFrames)
+		if err := writeFileAtomic(cometRawPath, func(w io.Writer) error {
+			return writeRawFloat32RGB(w, refW, refH, cometAcc.Pix)
+		}); err != nil {
+			return fmt.Errorf("write comet stack: %w", err)
+		}
+		if err := writeFileAtomic(cometJPGPath, func(w io.Writer) error {
+			return writePreviewJPEG(w, refW, refH, cometAcc.Pix)
+		}); err != nil {
+			return fmt.Errorf("write comet preview: %w", err)
+		}
+	}
 
 	// Post-processing pipeline
 	var postOutputs []string
@@ -7999,7 +8311,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	), append(postOutputs, reportTxt)...)
 	outputFiles = append(outputFiles, masterExports...)
 	if selfFlatRawPath != "" && !opts.ExportMasters {
-		outputFiles = append(outputFiles, selfFlatRawPath)
+		outputFiles = append(outputFiles, selfFlatRawPath, filepath.Join(outputDir, "master_self_flat.jpg"))
+	}
+	if cometRawPath != "" {
+		outputFiles = append(outputFiles, cometRawPath, cometJPGPath)
+		notes = append(notes, fmt.Sprintf("Comet stack: %d frames aligned so the reference comet pixel (%.1f, %.1f) stays fixed. Rate is (%.4f, %.4f) reference pixels per second from EXIF DateTimeOriginal. Stars trail in stacked_comet; the star stack is unchanged.",
+			cometFrames, opts.CometX, opts.CometY, opts.CometRateX, opts.CometRateY))
 	}
 	rep := &processingReport{
 		Version:            version,
@@ -8479,7 +8796,7 @@ func testHealpixNested() error {
 	// round-trip-only (want = -1) until the within-face interleave
 	// discrepancy against healpy is resolved (follow-up A1a.5).
 	// Reference from healpy 1.16.5 ang2pix(256, pi/2-dec, ra, nest=True),
-	// cross-checked against testdata/healpix_reference.json.
+	// cross-checked against assets/testdata/healpix_reference.json.
 	cases := []struct {
 		nside   int
 		ra, dec float64
@@ -8530,7 +8847,7 @@ func testHealpixNested() error {
 }
 
 // healpixRefAng2Pix is one entry in the "ang2pix" array of
-// testdata/healpix_reference.json.
+// assets/testdata/healpix_reference.json.
 type healpixRefAng2Pix struct {
 	Nside int     `json:"nside"`
 	RA    float64 `json:"ra"`
@@ -8552,7 +8869,7 @@ type healpixFixture struct {
 }
 
 func loadHealpixFixture() (*healpixFixture, error) {
-	data, err := os.ReadFile("testdata/healpix_reference.json")
+	data, err := os.ReadFile("assets/testdata/healpix_reference.json")
 	if err != nil {
 		return nil, err
 	}
@@ -10607,7 +10924,7 @@ func testSolvePlateSeededCacheBothParities() error {
 	return nil
 }
 
-// loadGaiaPlateFixture reads testdata/gaia_plate_fixture.json and returns
+// loadGaiaPlateFixture reads assets/testdata/gaia_plate_fixture.json and returns
 // (trueWCS, frameStars, gaiaStars). frameStars are the fixture's true
 // (RA,Dec) projected through trueWCS to pixel coordinates; gaiaStars are
 // the raw sky coordinates. A test that runs solvePlate on frameStars with
@@ -10615,7 +10932,7 @@ func testSolvePlateSeededCacheBothParities() error {
 // to within its tolerance.
 func loadGaiaPlateFixture() (wcsTan, []star, []gaiaStar, error) {
 	var zero wcsTan
-	data, err := os.ReadFile("testdata/gaia_plate_fixture.json")
+	data, err := os.ReadFile("assets/testdata/gaia_plate_fixture.json")
 	if err != nil {
 		return zero, nil, nil, err
 	}
@@ -12218,6 +12535,121 @@ func testDefaultSyntheticCalib() error {
 	return nil
 }
 
+func writeTestSER(path string, w, h int, frames [][]byte, colorID int) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	hdr := make([]byte, serHeaderSize)
+	copy(hdr[:14], "LUCAM-RECORDER")
+	binary.LittleEndian.PutUint32(hdr[18:22], uint32(colorID))
+	binary.LittleEndian.PutUint32(hdr[22:26], 1)
+	binary.LittleEndian.PutUint32(hdr[26:30], uint32(w))
+	binary.LittleEndian.PutUint32(hdr[30:34], uint32(h))
+	binary.LittleEndian.PutUint32(hdr[34:38], 8)
+	binary.LittleEndian.PutUint32(hdr[38:42], uint32(len(frames)))
+	if _, err := f.Write(hdr); err != nil {
+		return err
+	}
+	for _, fr := range frames {
+		if _, err := f.Write(fr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func testSERDecode() error {
+	dir, err := os.MkdirTemp("", "skystacker-ser-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 4, 2
+	a := bytes.Repeat([]byte{10}, w*h)
+	b := bytes.Repeat([]byte{200}, w*h)
+	path := filepath.Join(dir, "clip.ser")
+	if err := writeTestSER(path, w, h, [][]byte{a, b}, 0); err != nil {
+		return err
+	}
+	hdr, err := readSERHeader(path)
+	if err != nil {
+		return err
+	}
+	if hdr.Width != w || hdr.Height != h || hdr.FrameCount != 2 || hdr.PixelDepth != 8 {
+		return fmt.Errorf("header %+v", hdr)
+	}
+	f0, err := decodeSERFrame(path, 0)
+	if err != nil {
+		return err
+	}
+	if f0.Width != w || f0.Height != h || math.Abs(float64(f0.Pix[0]-10.0/255)) > 1e-5 {
+		return fmt.Errorf("frame 0 pixel %.5f", f0.Pix[0])
+	}
+	f1, err := decodeSERFrame(path, 1)
+	if err != nil {
+		return err
+	}
+	if math.Abs(float64(f1.Pix[0]-200.0/255)) > 1e-5 {
+		return fmt.Errorf("frame 1 pixel %.5f", f1.Pix[0])
+	}
+	expanded, err := expandSERFiles([]string{path, filepath.Join(dir, "still.jpg")})
+	if err != nil {
+		return err
+	}
+	if len(expanded) != 3 || !strings.HasSuffix(expanded[0], "#frame=0") || !strings.HasSuffix(expanded[1], "#frame=1") {
+		return fmt.Errorf("expand: %v", expanded)
+	}
+	if _, err := decodeSERFrame(path, 2); err == nil {
+		return errors.New("out-of-range SER frame should fail")
+	}
+	found, err := discoverFiles(dir, false, nil)
+	if err != nil {
+		return err
+	}
+	if len(found) != 1 || filepath.Base(found[0]) != "clip.ser" {
+		return fmt.Errorf("discoverFiles did not find the SER: %v", found)
+	}
+	return nil
+}
+
+func testCometTranslation() error {
+	const w, h = 16, 8
+	src := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range src.Pix {
+		src.Pix[i] = 0.1
+	}
+	// Comet has moved +3 px in x relative to the reference.
+	sx, sy := 11, 4
+	src.Pix[(sy*w+sx)*3] = 1
+	src.Pix[(sy*w+sx)*3+1] = 1
+	src.Pix[(sy*w+sx)*3+2] = 1
+	dx, dy := cometDelta(3, 1, 0)
+	if dx != 3 || dy != 0 {
+		return fmt.Errorf("delta %.2f,%.2f", dx, dy)
+	}
+	out := resampleToReferenceShift(src, identitySimilarity, dx, dy, w, h, 1)
+	got := out.Pix[(sy*w+8)*3]
+	if math.Abs(float64(got-1)) > 0.05 {
+		return fmt.Errorf("comet not frozen at x=8, got %.3f", got)
+	}
+	if math.Abs(float64(out.Pix[(sy*w+sx)*3]-0.1)) > 0.05 {
+		return fmt.Errorf("comet still at the trailed position")
+	}
+	opts, err := parseArgs([]string{"--comet-center", "8,4", "--comet-rate", "1,0"})
+	if err != nil {
+		return err
+	}
+	if !opts.CometOn || opts.CometX != 8 || opts.CometRateX != 1 {
+		return fmt.Errorf("flags not parsed: %+v", opts)
+	}
+	if _, err := parseArgs([]string{"--comet-rate", "1,0"}); err == nil {
+		return errors.New("--comet-rate without --comet-center should fail")
+	}
+	return nil
+}
+
 func testReportRecordsFlags() error {
 	lines := resolvedFlagLines(runOptions{
 		Method: "mean", Workers: 4, OutputDir: "/tmp/out",
@@ -12557,6 +12989,8 @@ func runSelfTests() int {
 		{"self-flat model default", testSelfFlatModelDefault},
 		{"report records flags", testReportRecordsFlags},
 		{"default synthetic calibration", testDefaultSyntheticCalib},
+		{"ser decode", testSERDecode},
+		{"comet translation", testCometTranslation},
 		{"calibration master export", testExportCalibrationMasters},
 	}
 	failures := 0
@@ -19309,6 +19743,11 @@ func main() {
 		WritePNG:             opts.WritePNG,
 		WriteBMP:             opts.WriteBMP,
 		Limit:                opts.Limit,
+		CometOn:              opts.CometOn,
+		CometX:               opts.CometX,
+		CometY:               opts.CometY,
+		CometRateX:           opts.CometRateX,
+		CometRateY:           opts.CometRateY,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)

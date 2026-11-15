@@ -27,7 +27,7 @@ limited or workflow-dependent.
 
 | Tool | Dark / Flat / Bias | Bad-pixel map | Distortion corr. | Plate solving |
 |---|---|---|---|---|
-| **SkyStacker** | Yes | – | – | Partial (wired, seeded) |
+| **SkyStacker** | Yes | Yes (`--bpm`) | – | Partial (wired, seeded) |
 | **OriginStack** | Yes | – | – | Yes |
 | **DeepSkyStacker** | Yes | – | – | – |
 | **Siril** | Yes | Yes | Yes | Partial |
@@ -46,7 +46,7 @@ limited or workflow-dependent.
 
 | Tool | Mean / Med / Sigma | Weighted | Drizzle | Comet |
 |---|---|---|---|---|
-| **SkyStacker** | Yes | Yes | – | – |
+| **SkyStacker** | Yes | Yes | – | Partial (pixel rate) |
 | **OriginStack** | Yes | Yes | Yes | Yes |
 | **DeepSkyStacker** | Yes | Yes | x2 / x3 | Yes |
 | **Siril** | Yes | Yes | HST | Yes |
@@ -65,7 +65,7 @@ limited or workflow-dependent.
 
 | Tool | Built-in post | Scripting / CLI | Output formats | GPU |
 |---|---|---|---|---|
-| **SkyStacker** | Extensive | CLI only | TIFF / JPEG / PNG / BMP / raw | – |
+| **SkyStacker** | Extensive | CLI only | TIFF / JPEG / PNG / BMP / raw / SER in | – |
 | **OriginStack** | Extensive | CLI (Python) | FITS / JPG | Yes (CUDA) |
 | **DeepSkyStacker** | Minimal | CLI | TIFF / FITS | – |
 | **Siril** | Extensive | Scripts + CLI | FITS / TIFF / JPEG / SER | – |
@@ -99,10 +99,10 @@ limited or workflow-dependent.
 - No GUI.
 - No mosaic, no drizzle. TAN WCS plate solving is wired (`--plate-solve`, seeded via `--plate-center` or the reference frame's FITS `RA`/`DEC`, output in `plate_solution.json`), but SIP order-2 coefficients are only *fit* and *stored* — applying them to the resampler is still open, so `Distortion corr.` remains `–` above.
 - No deconvolution or PSF modelling.
-- No dedicated comet / moving-object stacking.
+- Comet stacking is pixel-mode only (`--comet-center`, `--comet-rate`); no RA/Dec ephemeris and no combined comet+stars frame.
 - No scripting beyond flags.
 - No GPU acceleration.
-- No XISF or SER input.
+- SER input is supported; XISF is not.
 - No multi-session / multi-filter automation.
 - Planetary / lunar / solar lucky imaging out of scope.
 

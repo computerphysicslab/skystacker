@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.0
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development
+**Status:** Active Development. Registered `--selftest` cases: 177. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -11,7 +11,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 
 ### Included
 - CLI executable `skystacker`, single Go file, standard library only.
-- Input formats: JPG/JPEG (native), CR2/CR3/FITS (via ImageMagick and dcraw at runtime).
+- Input formats: JPG/JPEG/PNG (native), FITS (native, with ImageMagick fallback), SER (8/16-bit mono, Bayer-as-gray, RGB/BGR), CR2/CR3 (dcraw + ImageMagick at runtime).
 - Star detection, triangle matching, RANSAC similarity transforms, optional 6-DOF affine refinement.
 - Calibration frames (dark, flat, bias; individual files or auto-discovered folder trees via `--calib-root`).
 - Stacking methods: mean (streaming), median (tiled), sigma-clipping (tiled, MAD-based, weighted).

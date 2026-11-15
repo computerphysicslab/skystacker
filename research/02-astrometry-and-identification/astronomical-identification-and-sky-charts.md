@@ -370,3 +370,10 @@ type AstronomicalObject struct {
 ### E. Astronomical Visualization and Interoperability
 19. Bonnarel, F. et al. (2000). *The ALADIN interactive sky atlas: A reference tool for identification of astronomical sources.* A&AS, 143, 33. [DOI](https://doi.org/10.1051/aas:2000331).
 20. Fernique, P. et al. (2015). *Hierarchical progressive surveys: Multi-resolution HEALPix data structures for astronomical images, catalogues, and 3-dimensional data cubes.* A&A, 578, A114. [DOI](https://doi.org/10.1051/0004-6361/201526075).
+
+## Implementation status (v0.6.0)
+
+In `main.go`: Gaia ADQL client, HEALPix nested queries, TAN WCS fit, and
+`plate_solution.json` via `--plate-solve`. Not in v0.6.0: sky-chart
+rendering, multi-catalogue annotation, and transient overlays. Those remain
+research.

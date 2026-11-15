@@ -1,5 +1,10 @@
 # Synthetic calibration frames for SkyStacker
 
+> Status note (v0.6.0): this file is earlier research. The operational
+> summary is `04-calibration-and-self-flat.md` §16 and
+> `ROADMAP_SYNTHETIC_CALIBRATION.md`. Do not fabricate darks or spatial
+> flats from this document.
+
 ## Deep-research pass (2026-11-14)
 
 This section supersedes the seed document below it. It was written after

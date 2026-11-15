@@ -136,3 +136,13 @@ Ordered by practical impact for typical users:
 ---
 
 *This synthesis is intended to be the living entry point for the research folder. Update it when major implementation milestones are reached.*
+
+## Transfer status at v0.6.0 (2026-11-15)
+
+In production in `main.go`: native FITS read/debayer, Gaia TAP + HEALPix
+nested queries, TAN WCS plate solving (`plate_solution.json`), star/transform
+cache version 2, calibration masters, self-flat v1 and grid Phase 1, SER
+input, pixel-mode comet stacking. SIP is fit and stored, not applied.
+Catalog annotation, drizzle, XISF, and RA/Dec comet ephemeris are still
+research. Registered self-tests: 177. Persistent fixtures live in
+`assets/testdata/`.

@@ -1508,3 +1508,31 @@ rejection and disk spill. `--scale N` downsamples.
   `testDefaultSyntheticCalib`. Self-test count **175**.
 - Release binaries are static (`CGO_ENABLED=0`) for linux/darwin/windows
   amd64 and arm64, attached to the GitHub release by `.github/workflows/release.yml`.
+
+### Test fixtures live under assets (2026-11-15)
+
+- Persistent fixtures are in `assets/testdata/`, not a top-level `testdata/`
+  or `test_data/`. Current files: `healpix_reference.json`,
+  `gaia_plate_fixture.json`. Self-tests read them as
+  `assets/testdata/<file>` from the repository root.
+- Any new committed file needed by a test (JSON, FITS, SER, image) goes in
+  `assets/testdata/`. Do not recreate `testdata/` at the repo root.
+- Generated fixtures may still use `os.MkdirTemp`. Large local datasets such
+  as `assets/Orion-135mm/` stay gitignored and are not required by `--selftest`.
+- Do not add a `go test -cover` harness. Add a self-test only when a behavior
+  or a fixture path can regress. Current gaps that do not need new assets:
+  comet output wiring in Pass 2, SER `#frame=` through `decodeImageFile`,
+  and the grid self-flat mask fraction. `testSERDecode` now also checks that
+  `discoverFiles` accepts `.ser`.
+
+### Documentation sync (2026-11-15)
+
+- An external review counted 180 `func test*` names and treated that as the
+  self-test total. That is wrong. `runSelfTests` registers **177** cases.
+  Phase 2 of the grid self-flat is not implemented; the extra cases are
+  report flags, default synthetic calibration, SER, and comet translation.
+- Docs updated to that fact: `prompt-ai.txt` (historical prompts removed;
+  `./skystacker` may stay, gitignored), `NEXT_SESSION_PROMPT.md` (Phase 2
+  still next), `COMPARISON.md`, `README.md`, `TECHNICAL_SPEC.md`, and
+  append-only status notes in `research/`. History in this file was not
+  deleted.

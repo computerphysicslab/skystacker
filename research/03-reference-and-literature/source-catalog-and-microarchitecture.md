@@ -201,3 +201,9 @@ By partitioning images into L2-cache-friendly spatial tiles, SkyStacker maximize
 98. Directed Acyclic Graph (DAG)
 99. Non-linear post-processing
 100. Starless Workflows
+
+## v0.6.0 map
+
+`main.go` remains a single file. Logical blocks now include FITS decode and
+debayer, Gaia/HEALPix, TAN WCS, calibration masters, self-flat, SER, and
+comet translation. There is no package split. Registered self-tests: 177.

@@ -591,7 +591,7 @@ The following capabilities have been implemented in `0.5.0`–`0.5.1`:
 - **Local normalization correction (`--local-normalize`)**: Applies tile-based `scale + offset` normalization with bilinear interpolation across the field to handle spatially varying gradients and transparency shifts.
 - **Star / transform cache**: Re-runs skip Pass 1 star detection and Pass 2 registration using cached JSON metadata under `<output>/_work/cache/` (override with `--cache-dir`, disable with `--no-cache`).
 - **Adaptive rejection & diagnostic maps**: MAD-based sigma clipping (default `3.0σ`, `2` iterations) alongside per-pixel rejection and weight maps (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`, plus unregistered counterparts and full-frame `stacked_coverage_map.jpg`) for cosmic-ray and hot-pixel inspection.
-- **Gaia DR3 data-access layer & TAN WCS plate solving**: HEALPix nested geometry (verified against `healpy` up to `nside=256`; reference fixtures in `testdata/healpix_reference.json`), ESA Gaia TAP client with 180 s timeout and 5 s heartbeat, persistent OS user cache (`gaia_cache/`), `--test-gaia RA,DEC` diagnostic, and `--plate-solve` writing `plate_solution.json`.
+- **Gaia DR3 data-access layer & TAN WCS plate solving**: HEALPix nested geometry (verified against `healpy` up to `nside=256`; reference fixtures in `assets/testdata/healpix_reference.json`), ESA Gaia TAP client with 180 s timeout and 5 s heartbeat, persistent OS user cache (`gaia_cache/`), `--test-gaia RA,DEC` diagnostic, and `--plate-solve` writing `plate_solution.json`.
 
 ---
 
@@ -599,8 +599,8 @@ The following capabilities have been implemented in `0.5.0`–`0.5.1`:
 
 ### Tier 1 — Small, self-contained (`S`)
 
-- **SER video input**: Add `.ser` to `discoverFiles`; `decodeSER` reads the header (width, height, pixel depth, frame count) and yields frames one at a time, pairing with the existing streaming/tiled path. Test: `testSERDecode`.
-- **Automatic comet / moving-object tracking**: Dual registration (star-aligned + comet-aligned). New `--comet-center X,Y` or `--comet RA,DEC --comet-rate dRA,dDec`; per-frame predicted comet pixel position from ephemeris + EXIF `DateTimeOriginal`; reuse the existing resampler with a per-frame translation so the comet is sharp and stars trail. Emit `stacked_comet.f32raw` + preview; combined comet+stars output is a stretch goal. Closes a `COMPARISON.md` gap. Test: `testCometTranslation`.
+- **SER video input** (shipped): `.ser` is discovered and expanded to one frame per `#frame=N`. `readSERHeader` / `decodeSERFrame` support 8/16-bit mono, Bayer-as-gray and RGB/BGR. Test: `testSERDecode`.
+- **Comet tracking** (shipped, pixel mode): `--comet-center X,Y --comet-rate dX,dY` (reference pixels per second, timed by EXIF `DateTimeOriginal`). Writes `stacked_comet.f32raw` and `stacked_comet.jpg`. The star stack is unchanged. RA/Dec ephemeris mode is not implemented. Test: `testCometTranslation`.
 
 ### Tier 2 — Medium, a day each (`M`)
 
@@ -644,7 +644,7 @@ The following capabilities have been implemented in `0.5.0`–`0.5.1`:
 | **Distribution & Runtime** | Single cross-platform Go binary (MIT License), CLI-only, zero external runtime dependencies (aside from optional `dcraw`/`ImageMagick` for RAW decoding) |
 | **Core Stacking & Calibration** | Dark/Flat/Bias + synthetic self-flat; Mean/Median/Quality-weighted Sigma clipping; global & local per-tile normalization; end-to-end `float32` |
 | **Built-in Post-Processing** | 8-step pipeline (polynomial background extraction, star removal, STF auto-stretch, guided + chroma denoise, curves, HDR blend, weighted mixes, diffraction spikes) |
-| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no comet tracking, no PSF deconvolution, no GPU acceleration, and SIP distortion is fitted/stored rather than applied during resampling |
+| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no PSF deconvolution, no GPU acceleration. Comet tracking is pixel-mode only. SER input exists; XISF does not. SIP distortion is fitted/stored rather than applied during resampling |
 
 See [COMPARISON.md](COMPARISON.md) for a detailed matrix comparing SkyStacker against DeepSkyStacker, Siril, Astro Pixel Processor, PixInsight, Sequator, ASTAP, IRIS, Nebulosity, MaxIm DL, AstroImageJ, Starry Landscape Stacker, and AutoStakkert!.
 

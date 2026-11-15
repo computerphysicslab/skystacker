@@ -85,3 +85,8 @@ Reads the `float32` raw mean stack and generates a sequence of intermediate prev
 ## 5. Overall Assessment
 
 `v0.4.1` is a capable, well-structured single-binary stacker featuring a thoughtfully designed registration engine and a transparent multi-step post-processing chain. It is clearly geared toward practical, reproducible deep-sky imaging rather than scientific photometry.
+
+## ARCHIVED / HISTORICAL SNAPSHOT — v0.4.1
+
+Do not treat this file as the current architecture. The running source is
+v0.6.0. See `TECHNICAL_SPEC.md` and `PROJECT_CONTEXT.md`.
