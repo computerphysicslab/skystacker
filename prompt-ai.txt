@@ -1,0 +1,55 @@
+SkyStacker — persistent instructions for AI agents
+==================================================
+
+Scope
+-----
+These instructions apply to every future session in this repository. Read
+this file together with PROJECT_CONTEXT.md and NEXT_SESSION_PROMPT.md before
+touching code.
+
+Build, install and aliases
+--------------------------
+- The canonical executable is /home/jips/.local/bin/skystacker. It is on the
+  user's PATH and must always be current.
+- Never rely on a repository-local binary. The shell used to have
+  `alias skystacker='~/datos/.../SkyStacker/skystacker'`, which silently ran
+  a stale build; that alias is now pinned to the canonical path.
+- After every code change, run:
+      cd /home/jips/datos/datos-juan/proyectos/SkyStacker
+      gofmt -w main.go
+      go vet ./...
+      go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        -o /home/jips/.local/bin/skystacker .
+      /home/jips/.local/bin/skystacker --selftest
+  Expect `all 169 self-tests passed` unless the test count intentionally
+  changed.
+- Remove old binaries: no ./skystacker in the repo (it is gitignored) and no
+  duplicate /home/jips/go/bin/skystacker. Keep exactly one canonical copy.
+- Verify with:
+      type -a skystacker
+      skystacker --help | grep -E -- '--self-flat|--export-masters'
+- /usr/local/bin requires sudo (no passwordless sudo). If a true system-wide
+  install is wanted, the user must run:
+      sudo install -m 0755 /home/jips/.local/bin/skystacker /usr/local/bin/skystacker
+
+Repository hygiene
+------------------
+- Never commit *.bak, *.patch, or other backup artifacts. Delete them.
+- Commit and push only when the user explicitly asks.
+- Before reporting completion: gofmt clean, go vet clean, self-tests green.
+- research/ is append-only: add sections, never delete or shorten history.
+- Do not overwrite assets/Orion-135mm/0_skystacker_results/ unless asked;
+  prefer a fresh --output directory.
+
+Current calibration features
+----------------------------
+- --export-masters writes master_<kind>.f32raw (scientific) plus
+  master_<kind>.jpg (preview only) for every loaded master.
+- --self-flat derives a relative flat from >=15 registered dithered lights
+  and applies it after registration. A loaded flat wins; registration is
+  mandatory.
+- assets/Orion-135mm has no dark/flat/bias, so only master_self_flat is
+  possible there:
+      skystacker --self-flat --export-masters --overwrite
+- A self-flat built from lights can absorb extended nebulosity (M42); inspect
+  master_self_flat.f32raw and read research/04-calibration-and-self-flat.md.
