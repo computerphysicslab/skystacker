@@ -117,7 +117,8 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 ### Frame Registration
 
 - **Automatic star detection**: Identifies 8-connected components above `sigma * noise` (default `5.0σ`, with automatic multi-sigma retries at `4.0`, `3.5`, and `3.0` if fewer than 20 stars are found), where `noise` is the MAD of a high-pass residual (box blur radius `clamp(min(W,H)/200, 8, 24)`).
-- **Reference-frame selection**: Automatically picks the frame with the highest number of detected stars.
+- **Reference-frame selection**: Automatically picks the frame with the highest number of detected stars, or uses an external image with `--reference-crop`.
+- **Reference-frame crop (`--reference-crop`)**: Detects stars in the supplied reference image, matches each light by triangle pattern, and warps it in memory into the reference pixel frame. The output has exactly the reference dimensions; source files are never modified. Works with rotation and scale differences (0.5×–2×), and with a single light (`--limit 1`) to produce a standalone cropped frame. This is the automatic counterpart of Fitswork's manual two-star crop.
 - **Triangle-based pattern matching**: Constructs triangles from the top **40** brightest stars using scale-invariant side-ratio descriptors `(short/long, mid/long)` bucketed on a `0.01` grid with `0.02` tolerance.
 - **Geometric transform estimation**: Computes a closed-form similarity transform (rotation, scale, translation) via least squares with RANSAC-style inlier filtering, plus optional full 6-DOF affine refinement (retained only when residual error drops by ≥ 10% with ≥ 15 inliers).
 - **Sub-pixel resampling & safe crop**: Uses bilinear sub-pixel resampling and computes the largest fully valid overlapping rectangle (`findSafeCrop`, maximal-rectangle-in-histogram).
@@ -332,6 +333,24 @@ Or let SkyStacker auto-discover `Bias/`, `Darks/`, and `Flats/` subdirectories u
 
 > **Tip:** Match calibration frames to your light frames in camera model, sensor temperature, exposure duration, ISO/gain, and optical train.
 
+### Reference-Frame Crop Example
+
+```bash
+# Stack a session but keep exactly the framing of a reference image.
+./skystacker \
+  --reference-crop ./reference/M31-framing.jpg \
+  ./M31-session/lights
+
+# Crop one image to the reference frame without stacking a session.
+./skystacker \
+  --reference-crop ./reference/M31-framing.jpg \
+  --limit 1 \
+  --stack-only \
+  ./single-exposure
+```
+
+The reference image is star-matched automatically; the light frames are warped in memory and the originals are never modified. The frame-exact result is also written as `reference_crop.f32raw` and `reference_crop.jpg`.
+
 ### Normalization & Plate Solving Example
 
 ```bash
@@ -364,6 +383,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--recursive` | Search input subdirectories recursively | `false` |
 | `--overwrite` | Permit replacing existing files in the output directory | `false` |
 | `--no-register` | Disable star-based registration | `false` |
+| `--reference-crop string` | Warp every light into the star-matched pixel frame of this reference image; output size equals the reference size | — |
 | `--scale int` | Downscaling factor (`2` halves each dimension, `4` quarters it) | `1` |
 | `--force` | Bypass pre-flight out-of-memory and disk-space safety checks (not recommended) | `false` |
 | `--no-exif` | Skip EXIF exposure summary in `report.txt` | `false` |
@@ -584,7 +604,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.0**, 177 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.0**, 178 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.0`:
 
@@ -594,6 +614,7 @@ The following capabilities have been implemented through `0.6.0`:
 - **Star / transform cache**: Re-runs skip Pass 1 star detection and Pass 2 registration using cached JSON metadata under `<output>/_work/cache/` (override with `--cache-dir`, disable with `--no-cache`).
 - **Adaptive rejection & diagnostic maps**: MAD-based sigma clipping (default `3.0σ`, `2` iterations) alongside per-pixel rejection and weight maps (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`, plus unregistered counterparts and full-frame `stacked_coverage_map.jpg`) for cosmic-ray and hot-pixel inspection.
 - **Gaia DR3 data-access layer & TAN WCS plate solving**: HEALPix nested geometry (verified against `healpy` up to `nside=256`; reference fixtures in `assets/testdata/healpix_reference.json`), ESA Gaia TAP client with 180 s timeout and 5 s heartbeat, persistent OS user cache (`gaia_cache/`), `--test-gaia RA,DEC` diagnostic, and `--plate-solve` writing `plate_solution.json`.
+- **Reference-frame crop**: `--reference-crop PATH` detects stars in the reference image, matches each light by triangle pattern, and warps it in memory into the reference pixel frame. The output is exactly the reference dimensions, including rotation and scale differences. A single light (`--limit 1`) yields one cropped frame. Test: `testReferenceCropAlignment`.
 - **SER video input**: `.ser` is discovered and expanded to one frame per `#frame=N`. `readSERHeader` / `decodeSERFrame` support 8/16-bit mono, Bayer-as-gray and RGB/BGR. Test: `testSERDecode`.
 - **Comet tracking (pixel mode)**: `--comet-center X,Y --comet-rate dX,dY` (reference pixels per second, timed by EXIF `DateTimeOriginal`). Writes `stacked_comet.f32raw` and `stacked_comet.jpg`. The star stack is unchanged. Test: `testCometTranslation`.
 - **Bad-pixel map**: `--bpm PATH` loads a FITS or `x,y` text map and marks those pixels invalid before stacking. Test: `testBPMMasksPixels`.

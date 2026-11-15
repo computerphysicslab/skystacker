@@ -22,6 +22,7 @@ limited or workflow-dependent.
 | **AstroImageJ** | GPL | Java (all OS) | GUI + macros |
 | **Starry Landscape Stacker** | Paid | macOS | GUI |
 | **AutoStakkert!** | Free | Windows | GUI + CLI |
+| **Fitswork** | Freeware | Windows | GUI |
 
 ## Calibration and registration
 
@@ -41,6 +42,7 @@ limited or workflow-dependent.
 | **AstroImageJ** | Partial | – | – | – |
 | **Starry Landscape Stacker** | Dark, Flat | – | Yes | – |
 | **AutoStakkert!** | – | – | – | – |
+| **Fitswork** | Yes | – | Partial (manual) | – |
 
 ## Stacking methods
 
@@ -60,6 +62,7 @@ limited or workflow-dependent.
 | **AstroImageJ** | Yes | – | – | – |
 | **Starry Landscape Stacker** | Yes | – | – | – |
 | **AutoStakkert!** | Lucky-imaging | – | – | – |
+| **Fitswork** | Yes | Partial | – | Partial (2-star) |
 
 ## Post-processing and automation
 
@@ -79,6 +82,33 @@ limited or workflow-dependent.
 | **AstroImageJ** | Photometry | Macros | FITS / TIFF / PNG | – |
 | **Starry Landscape Stacker** | Minimal | – | TIFF / JPEG | – |
 | **AutoStakkert!** | Minimal | CLI | TIFF / PNG | – |
+| **Fitswork** | Extensive | – | FITS / TIFF / JPEG / BMP / PNG | – |
+
+## Post-processing software comparison
+
+This table focuses on what happens after the frames are stacked. It is
+included because Fitswork is a long-standing reference for interactive
+astronomical post-processing, and because its reference-frame crop
+(two manually picked stars) is the direct precedent for SkyStacker's
+automatic `--reference-crop`.
+
+| Tool | License | Platforms | Interface | Calibration | Star alignment | Crop to reference frame | Deconvolution | Mosaic | Scripting |
+|---|---|---|---|---|---|---|---|---|---|
+| **SkyStacker** | MIT | Win / Mac / Linux | CLI | Yes | Automatic star-pattern | **Yes, automatic (`--reference-crop`)** | – | – | CLI flags |
+| **Fitswork** | Freeware | Windows | GUI | Yes | Manual 2-star + pattern | **Yes (manual 2-star)** | Yes (Richardson–Lucy, Wiener) | Yes | – |
+| **PixInsight** | Paid | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (StarAlignment / DynamicCrop) | Yes | Yes | PJSR / Python |
+| **Siril** | GPLv3 | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (registration + crop) | Yes | Partial | Scripts + CLI |
+| **IRIS** | Free | Windows | GUI + CLI | Yes | Yes | Yes (manual) | Yes (RL) | Yes | Editor + CLI |
+| **Nebulosity** | Paid | Win / Mac | GUI | Yes | Yes | Partial | Partial | Partial | – |
+| **MaxIm DL** | Paid | Windows | GUI + COM | Yes | Yes | Yes | Yes | Yes | COM |
+| **ASTAP** | MPL 2.0 | Win / Linux | GUI + CLI | Yes | Yes | Partial | – | Yes | CLI |
+| **AstroImageJ** | GPL | Java (all OS) | GUI + macros | Yes | Yes | Partial | – | – | Macros |
+| **AutoStakkert!** | Free | Windows | GUI + CLI | – | Yes (lucky imaging) | Partial | – | – | CLI |
+
+The key difference: Fitswork requires the user to mark the same two stars
+in both images; SkyStacker detects the star field in both images, finds the
+similarity transform by triangle matching, and warps every light into the
+reference frame in memory. Source files are never modified.
 
 ## Where SkyStacker sits
 
@@ -93,6 +123,11 @@ limited or workflow-dependent.
   star removal, STF auto-stretch, guided denoise (incl. chroma), curves,
   HDR blend, four weighted mixes, diffraction spikes.
 - Transparent `report.txt` with per-frame diagnostics.
+- Automatic reference-frame crop (`--reference-crop`): every light is
+  star-matched to an external reference image and warped into its pixel
+  frame in memory. Unlike Fitswork's manual two-star workflow, no points
+  are picked by hand, and single-image runs produce the cropped frame
+  directly.
 
 **Gaps vs mature tools**
 
@@ -119,6 +154,7 @@ limited or workflow-dependent.
 - AstroImageJ — <https://www.astro.louisville.edu/software/astroimagej/>
 - Starry Landscape Stacker — <https://apps.apple.com/app/starry-landscape-stacker/id1446056095>
 - AutoStakkert! — <https://www.autostakkert.com>
+- Fitswork — <https://www.fitswork.de/software/softw_en.shtml>
 
 Feature summaries reflect public documentation as of late 2026. If a cell
 disagrees with your installed version, treat the vendor docs as authoritative.

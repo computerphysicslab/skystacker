@@ -657,3 +657,11 @@ fabricated. `--synthetic-dark/flat/bias` remain refused.
 Not implemented: Phase 2 mask relaxation and 5x5 cell rejection, Phase 3
 IRLS, gamma-aware division, and real-flat validation. The Orion grid smoke
 run still masked 67.6% of pixels. That is the next calibration task.
+
+### Addendum (2026-11-15): reference-frame crop
+
+Registered self-tests are now 178. `--reference-crop` was added: each light
+is star-matched to an external reference image and warped in memory into
+its pixel frame. This does not change the calibration status above; Phase 2
+of the self-flat is still the next calibration task. See `COMPARISON.md`
+for the Fitswork comparison.

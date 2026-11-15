@@ -172,6 +172,7 @@ type cliOptions struct {
 	SelfFlat             bool
 	NoSelfFlat           bool
 	SelfFlatModel        string
+	ReferenceCrop        string
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -230,6 +231,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.SelfFlat, "self-flat", false, "derive a relative flat from >=15 lights; on by default when no flat frames are found")
 	fs.BoolVar(&o.NoSelfFlat, "no-self-flat", false, "do not derive a self-flat when no flat frames are found")
 	fs.StringVar(&o.SelfFlatModel, "self-flat-model", "registered", "self-flat estimator: registered (v1) or grid (sensor-space)")
+	fs.StringVar(&o.ReferenceCrop, "reference-crop", "", "warp every light into the star-matched pixel frame of this reference image")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
 	var noAffine bool
 	fs.BoolVar(&noAffine, "no-affine", false, "disable full-affine refinement (similarity-only registration)")
@@ -331,7 +333,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -479,6 +481,18 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.CometRate != "" && !o.CometOn {
 		return nil, errors.New("--comet-rate requires --comet-center X,Y")
+	}
+	if o.ReferenceCrop != "" {
+		info, err := os.Stat(o.ReferenceCrop)
+		if err != nil {
+			return nil, fmt.Errorf("--reference-crop: %w", err)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("--reference-crop expects an image file, got directory %s", o.ReferenceCrop)
+		}
+		if !o.Register {
+			return nil, errors.New("--reference-crop requires registration (do not use --no-register)")
+		}
 	}
 	rest := fs.Args()
 	if len(rest) > 1 {
@@ -638,6 +652,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
 	fmt.Fprintln(w, "  --comet-center X,Y comet pixel in the reference frame")
 	fmt.Fprintln(w, "  --comet-rate dX,dY comet motion in reference pixels per second")
+	fmt.Fprintln(w, "  --reference-crop P warp every light into the star-matched frame of image P (output size = P)")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
@@ -3452,6 +3467,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.BPMFile != "" {
 		add("--bpm " + quoteReportArg(o.BPMFile))
 	}
+	if o.ReferenceCrop != "" {
+		add("--reference-crop " + quoteReportArg(o.ReferenceCrop))
+	}
 	if o.BlackLevel != "" {
 		add("--black-level " + o.BlackLevel)
 	}
@@ -3838,6 +3856,10 @@ type runOptions struct {
 	SelfFlat             bool
 	NoSelfFlat           bool
 	SelfFlatModel        string
+	// ReferenceCrop is a path to an image whose frame defines the output.
+	// Every light is matched to that image by star patterns and warped
+	// into its pixel frame in memory; the output is exactly refW x refH.
+	ReferenceCrop string
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -3872,6 +3894,44 @@ type runOptions struct {
 	CometY     float64
 	CometRateX float64
 	CometRateY float64
+}
+
+func isCR2Path(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".cr2" || ext == ".cr3"
+}
+
+// calibrationFrameCount returns how many files the dark, flat, and bias
+// folders will contribute, and how many of those are CR2/CR3. It mirrors
+// stackCalibrationFolder's discovery rules but does not decode anything.
+func calibrationFrameCount(opts runOptions) (total, raw int) {
+	for _, path := range []string{opts.DarkFile, opts.FlatFile, opts.BiasFile} {
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			total++
+			if isCR2Path(path) {
+				raw++
+			}
+			continue
+		}
+		files, err := discoverFiles(path, false, nil)
+		if err != nil {
+			continue
+		}
+		total += len(files)
+		for _, f := range files {
+			if isCR2Path(f) {
+				raw++
+			}
+		}
+	}
+	return total, raw
 }
 
 func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
@@ -4501,7 +4561,7 @@ func writeXfCacheOK(cacheDir, refPath, framePath string, scale int, sim similari
 	}
 }
 
-func frameLimiterFlags(d frameDiag, refW, refH int) []string {
+func frameLimiterFlags(d frameDiag, srcW, srcH, refW, refH int) []string {
 	var flags []string
 	if d.Quality < 30 {
 		flags = append(flags, "LOW QUALITY")
@@ -4523,15 +4583,16 @@ func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 	// frameDiag values built without Scale set (zero value): without
 	// it, expX/expY would be (cx, cy) instead of (0, 0) and every
 	// existing test fixture would start failing.
-	cx, cy := float64(refW)/2, float64(refH)/2
+	cx, cy := float64(srcW)/2, float64(srcH)/2
+	rcx, rcy := float64(refW)/2, float64(refH)/2
 	s := d.Scale
 	if s <= 0 || s > 10 {
 		s = 1.0
 	}
 	theta := d.RotationDeg * math.Pi / 180
 	cosT, sinT := math.Cos(theta), math.Sin(theta)
-	expX := cx*(1-s*cosT) + s*cy*sinT
-	expY := -s*cx*sinT + cy*(1-s*cosT)
+	expX := rcx - s*(cx*cosT-cy*sinT)
+	expY := rcy - s*(cx*sinT+cy*cosT)
 	driftX := d.OffsetX - expX
 	driftY := d.OffsetY - expY
 	if math.Abs(driftX) > 0.10*float64(refW) || math.Abs(driftY) > 0.10*float64(refH) {
@@ -4544,12 +4605,12 @@ func frameLimiterFlags(d frameDiag, refW, refH int) []string {
 // as a percentage of the reference. Unlike frameBoxInReference, which
 // returns the axis-aligned bounding box (huge for sheared transforms),
 // this returns the true parallelogram area via the shoelace formula.
-func computeFootprintPct(refW, refH int, apply func(point2D) point2D) float64 {
+func computeFootprintPct(srcW, srcH, refW, refH int, apply func(point2D) point2D) float64 {
 	pts := []point2D{
 		{0, 0},
-		{float64(refW - 1), 0},
-		{float64(refW - 1), float64(refH - 1)},
-		{0, float64(refH - 1)},
+		{float64(srcW - 1), 0},
+		{float64(srcW - 1), float64(srcH - 1)},
+		{0, float64(srcH - 1)},
 	}
 	var mapped [4]point2D
 	for i, p := range pts {
@@ -6644,6 +6705,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		filepath.Join(inputDir, "skystacker_results"),
 		filepath.Join(inputDir, "0_skystacker_results"),
 	}
+	if opts.ReferenceCrop != "" {
+		excludes = append(excludes, opts.ReferenceCrop)
+	}
 	if opts.CalibRoot == "" {
 		layout := detectCalibrationSubdirs(inputDir)
 		if layout.Light != "" {
@@ -6693,6 +6757,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		candidates []candidate
 		rejected   []rejection
 		refW, refH int
+		inW, inH   int
 	)
 
 	// Decode dimensions of every file. Files that fail to decode or
@@ -6728,8 +6793,25 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("no valid images (all %d candidates rejected)", len(files))
 	}
 
-	// Group decodable files by their scaled dimensions.
-	refW, refH = decodable[0].rawW/opts.Scale, decodable[0].rawH/opts.Scale
+	// Group decodable files by their scaled dimensions. inW/inH is the
+	// working resolution of the lights; refW/refH is the output frame.
+	// They differ only with --reference-crop, where the output frame comes
+	// from the reference image and not from the lights.
+	inW, inH = decodable[0].rawW/opts.Scale, decodable[0].rawH/opts.Scale
+	refW, refH = inW, inH
+	cropMode := opts.ReferenceCrop != ""
+	if cropMode {
+		rcfg, cerr := decodeImageConfig(opts.ReferenceCrop)
+		if cerr != nil {
+			return fmt.Errorf("--reference-crop: decode reference %s: %w", opts.ReferenceCrop, cerr)
+		}
+		if rcfg.Width <= 0 || rcfg.Height <= 0 {
+			return fmt.Errorf("--reference-crop: reference has invalid dimensions %dx%d", rcfg.Width, rcfg.Height)
+		}
+		refW, refH = rcfg.Width, rcfg.Height
+		logf("Reference crop: output frame %dx%d from %s (lights %dx%d)",
+			refW, refH, filepath.Base(opts.ReferenceCrop), inW, inH)
+	}
 	groups := make(map[dimKey][]string, len(decodable))
 	order := make([]dimKey, 0, len(decodable))
 	for _, d := range decodable {
@@ -6793,9 +6875,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 	logf("Stacking %d frame(s) at %dx%d using up to %d worker(s)",
-		len(candidates), refW, refH, workers)
+		len(candidates), inW, inH, workers)
 	if opts.SynthCalib {
 		logf("%s", formatSyntheticCalibReport())
+	}
+
+	// Resolve --calib-root before the time estimate so calibration
+	// frames are included in it.
+	if opts.CalibRoot != "" {
+		filterName := filepath.Base(inputDir) // e.g., "Luminance", "Red"
+		opts.BiasFile = filepath.Join(opts.CalibRoot, "Bias")
+		opts.DarkFile = filepath.Join(opts.CalibRoot, "Darks")
+		opts.FlatFile = filepath.Join(opts.CalibRoot, "Flats", filterName)
 	}
 
 	// Time estimation. Calibrated against two real sigma runs on
@@ -6816,7 +6907,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	//
 	// Median sits between mean and sigma: single sort per pixel (O(N log N))
 	// but only one pass (no MAD iterations), so alpha=1.18, k=0.88.
-	mpx := float64(refW*refH) / 1e6
+	procW, procH := inW, inH
+	if refW*refH > procW*procH {
+		procW, procH = refW, refH
+	}
+	mpx := float64(procW*procH) / 1e6
 	nf := float64(len(candidates))
 	var estSecs float64
 	switch opts.Method {
@@ -6831,11 +6926,22 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	// overhead per frame, which dominates pixel-level processing for
 	// typical sizes.
 	for _, c := range candidates {
-		ext := strings.ToLower(filepath.Ext(c.path))
-		if ext == ".cr2" || ext == ".cr3" {
+		if isCR2Path(c.path) {
 			estSecs += float64(len(candidates)) * 12.0
 			break
 		}
+	}
+	// Calibration frames are decoded and averaged before Pass 1. This
+	// was previously omitted, which made the estimate ~13x low for a
+	// dataset with 41 CR2 darks/flats/biases. Empirical cost at
+	// 2602x3908 is ~20 s per CR2 (dcraw + convert + in-process decode),
+	// versus ~12 s for a light because the calibration path has no
+	// resize/star-detection pipeline to amortise it. Non-RAW frames
+	// cost roughly their pixel size.
+	calibFrames, calibRAW := calibrationFrameCount(opts)
+	if calibFrames > 0 {
+		estSecs += float64(calibRAW) * 20.0
+		estSecs += float64(calibFrames-calibRAW) * (0.5 + 0.04*mpx)
 	}
 	// Post-processing: base ~15 s for loading the work file and writing
 	// the ten output JPEGs, plus ~5 s per denoise pass (guided filter is
@@ -6851,7 +6957,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			estSecs += 3.0
 		}
 	}
-	logf("Estimated processing time: ~%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second))
+	estNote := ""
+	if calibFrames > 0 {
+		estNote = fmt.Sprintf(" (includes %d calibration frame(s))", calibFrames)
+	}
+	logf("Estimated processing time: ~%s%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second), estNote)
 
 	// Memory estimation.
 	//
@@ -6862,7 +6972,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	// the only large live buffers are 2 x max/min + validCount +
 	// sumPix + meanPix + rejPix/wgtPix + one tile buffer. The tile buffer
 	// is capped at 256 MB inside reduceTilesStack.
-	frameMB := float64(refW*refH*3*4) / (1024 * 1024)
+	frameMB := float64(procW*procH*3*4) / (1024 * 1024)
 	var estMemMB int
 	var diskMB float64
 	if opts.Method == "median" || opts.Method == "sigma" {
@@ -6906,7 +7016,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			"Or close memory-hungry apps (Chrome, Firefox, Slack) and retry.",
 			estMemMB, realPeak, requiredMB, availMemMB, hint)
 	}
-	frameBytes := int64(refW) * int64(refH) * 3 * 4
+	frameBytes := int64(procW) * int64(procH) * 3 * 4
 	// Disk pre-flight: median/sigma spill two raw float32 frames per
 	// source frame to _work/_spill1 and _work/_spill2. If the output
 	// filesystem cannot hold the estimate (with 20% headroom), abort
@@ -6962,29 +7072,21 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	var starHits, xfHits int
 
-	// Auto-detect calibration frames if --calib-root is provided
-	if opts.CalibRoot != "" {
-		filterName := filepath.Base(inputDir) // e.g., "Luminance", "Red"
-		opts.BiasFile = filepath.Join(opts.CalibRoot, "Bias")
-		opts.DarkFile = filepath.Join(opts.CalibRoot, "Darks")
-		opts.FlatFile = filepath.Join(opts.CalibRoot, "Flats", filterName)
-	}
-
 	var darkFrame, flatFrame, biasFrame *frame
 	if opts.DarkFile != "" {
-		darkFrame, err = stackCalibrationFolder(opts.DarkFile, refW, refH)
+		darkFrame, err = stackCalibrationFolder(opts.DarkFile, inW, inH)
 		if err != nil {
 			return err
 		}
 	}
 	if opts.FlatFile != "" {
-		flatFrame, err = stackCalibrationFolder(opts.FlatFile, refW, refH)
+		flatFrame, err = stackCalibrationFolder(opts.FlatFile, inW, inH)
 		if err != nil {
 			return err
 		}
 	}
 	if opts.BiasFile != "" {
-		biasFrame, err = stackCalibrationFolder(opts.BiasFile, refW, refH)
+		biasFrame, err = stackCalibrationFolder(opts.BiasFile, inW, inH)
 		if err != nil {
 			return err
 		}
@@ -6995,8 +7097,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 
 	// ============== Pass 1: decode, detect stars, accumulate unregistered
-	unregAcc := newAccumulator(refW, refH)
-	unregValidCount := make([]int32, refW*refH)
+	unregAcc := newAccumulator(inW, inH)
+	unregValidCount := make([]int32, inW*inH)
 	var maxPix, minPix []float32
 	var spillPaths1 []string
 	var spillDir1, spillDir2 string
@@ -7032,7 +7134,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	var gridAcc *selfFlatGridAccumulator
 	if opts.SelfFlat && selfFlatModel == "grid" {
 		if ok, why := selfFlatGridEligible(len(candidates), flatFrame != nil); ok {
-			gridAcc = newSelfFlatGridAccumulator(refW, refH, selfFlatGridDefaultCell)
+			gridAcc = newSelfFlatGridAccumulator(inW, inH, selfFlatGridDefaultCell)
 		} else {
 			logf("WARNING: %s", why)
 		}
@@ -7044,7 +7146,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return err
 		}
 		logf("  [pass1 %d/%d] %s", i+1, len(candidates), filepath.Base(c.path))
-		f, err := decodeImageFile(c.path, refW, refH)
+		f, err := decodeImageFile(c.path, inW, inH)
 		if err != nil {
 			rejected = append(rejected, rejection{
 				Path:   c.path,
@@ -7139,19 +7241,39 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	var refStars []star
 
 	if registrationOn {
-		// Reference = frame with the most stars.
-		for i := 1; i < len(starLists); i++ {
-			if len(starLists[i]) > len(starLists[refIdx]) {
-				refIdx = i
+		if cropMode {
+			rf, rerr := decodeImageFile(opts.ReferenceCrop, refW, refH)
+			if rerr != nil {
+				return fmt.Errorf("--reference-crop: decode reference: %w", rerr)
 			}
+			refStars, _, _, _, _ = loadOrDetectStars(opts.ReferenceCrop, rf, cacheDir, 1)
+			rf.Pix = nil
+			logf("Reference crop frame: %s (%d stars, %dx%d)",
+				filepath.Base(opts.ReferenceCrop), len(refStars), refW, refH)
+		} else {
+			// Reference = frame with the most stars.
+			for i := 1; i < len(starLists); i++ {
+				if len(starLists[i]) > len(starLists[refIdx]) {
+					refIdx = i
+				}
+			}
+			refStars = starLists[refIdx]
+			logf("Reference frame: %s (%d stars)", filepath.Base(accepted[refIdx].path), len(refStars))
 		}
-		refStars = starLists[refIdx]
-		logf("Reference frame: %s (%d stars)", filepath.Base(accepted[refIdx].path), len(refStars))
 
 		if len(refStars) < 5 {
+			if cropMode {
+				return fmt.Errorf("--reference-crop: only %d stars detected in %s (need at least 5)", len(refStars), opts.ReferenceCrop)
+			}
 			logf("WARNING: reference frame has only %d stars; disabling registration", len(refStars))
 			registrationOn = false
 		} else {
+			refCachePath := accepted[refIdx].path
+			refSeedPath := accepted[refIdx].path
+			if cropMode {
+				refCachePath = opts.ReferenceCrop
+				refSeedPath = opts.ReferenceCrop
+			}
 			if opts.PlateSolve {
 				plateGaiaOffline = opts.GaiaOffline
 				seedRA, seedDec := 0.0, 0.0
@@ -7161,7 +7283,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 						seedRA, seedDec = r, d
 						seedSrc = "flag (--plate-center)"
 					}
-				} else if r, d, ok := referenceFITSSeed(accepted[refIdx].path); ok {
+				} else if r, d, ok := referenceFITSSeed(refSeedPath); ok {
 					seedRA, seedDec = r, d
 					seedSrc = "header (reference frame FITS RA/DEC)"
 				}
@@ -7176,11 +7298,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					plateSolutionOut = sol
 				}
 			}
-			registeredCount = 1
-			transforms[refIdx].starCount = len(refStars)
-			transforms[refIdx].inliers = len(refStars)
+			if cropMode {
+				registeredCount = 0
+			} else {
+				registeredCount = 1
+				transforms[refIdx].starCount = len(refStars)
+				transforms[refIdx].inliers = len(refStars)
+			}
 			for i := range accepted {
-				if i == refIdx {
+				if !cropMode && i == refIdx {
 					continue
 				}
 				if len(starLists[i]) < 3 {
@@ -7190,7 +7316,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					continue
 				}
 				// Phase A: transform cache. Skip RANSAC + affine on a hit.
-				if xc, hit := checkXfCache(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale); hit {
+				if xc, hit := checkXfCache(cacheDir, refCachePath, accepted[i].path, opts.Scale); hit {
 					xfHits++
 					if xc.RegFail {
 						regFailures = append(regFailures, xc.RegFailReason)
@@ -7220,7 +7346,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					regFailures = append(regFailures, reason)
 					transforms[i].valid = false
 					if !opts.NoAffine {
-						writeXfCacheFail(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, reason)
+						writeXfCacheFail(cacheDir, refCachePath, accepted[i].path, opts.Scale, reason)
 					}
 					continue
 				}
@@ -7259,7 +7385,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 						filepath.Base(accepted[i].path), scale, rotDeg, inliers)
 				}
 				if !opts.NoAffine {
-					writeXfCacheOK(cacheDir, accepted[refIdx].path, accepted[i].path, opts.Scale, sim, affRef, inliers)
+					writeXfCacheOK(cacheDir, refCachePath, accepted[i].path, opts.Scale, sim, affRef, inliers)
 				}
 				transforms[i] = frameTransform{
 					sim:       sim,
@@ -7271,9 +7397,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				registeredCount++
 			}
 			if cacheDir != "" {
-				logf("Cache: %d/%d star hits, %d/%d transform hits", starHits, len(accepted), xfHits, len(accepted)-1)
+				totalXf := len(accepted) - 1
+				if cropMode {
+					totalXf = len(accepted)
+				}
+				logf("Cache: %d/%d star hits, %d/%d transform hits", starHits, len(accepted), xfHits, totalXf)
 			}
-			if registeredCount < 2 {
+			if cropMode && registeredCount == 0 {
+				return fmt.Errorf("--reference-crop: no light frame could be matched to %s", filepath.Base(opts.ReferenceCrop))
+			}
+			if !cropMode && registeredCount < 2 {
 				logf("WARNING: only %d frame(s) registered; disabling registration", registeredCount)
 				registrationOn = false
 			}
@@ -7418,6 +7551,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		// reference frame's background is only meaningful once every frame
 		// is expressed in the reference coordinate system.
 		needsNormalize = opts.Normalize || opts.LocalNormalize
+		if needsNormalize && cropMode {
+			logf("WARNING: normalization is not available with --reference-crop; --normalize/--local-normalize ignored")
+			needsNormalize = false
+		}
 		if needsNormalize {
 			ts := opts.LNTileSize
 			if ts < 64 {
@@ -7426,7 +7563,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			var refFrame *frame
 			var rerr error
 			if len(spillPaths1) == len(accepted) {
-				refFrame, rerr = readSpillFrame(spillPaths1[refIdx], refW, refH)
+				refFrame, rerr = readSpillFrame(spillPaths1[refIdx], inW, inH)
 			} else {
 				refFrame, rerr = decodeImageFile(accepted[refIdx].path, refW, refH)
 				if rerr == nil {
@@ -7494,12 +7631,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			var f *frame
 			if len(spillPaths1) == len(accepted) {
 				// Fast path: reuse the spilled frame, no re-decode.
-				f, err = readSpillFrame(spillPaths1[i], refW, refH)
+				f, err = readSpillFrame(spillPaths1[i], inW, inH)
 				if err != nil {
 					return fmt.Errorf("reload spill1 %s: %w", c.path, err)
 				}
 			} else {
-				f, err = decodeImageFile(c.path, refW, refH)
+				// Decode in the light frame's own coordinates. refW/refH
+				// are equal to inW/inH unless reference-crop is active.
+				f, err = decodeImageFile(c.path, inW, inH)
 				if err != nil {
 					return fmt.Errorf("re-decode %s: %w", c.path, err)
 				}
@@ -7571,7 +7710,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		runtime.GC()
-		cropRect = findSafeCrop(validCount, refW, refH, int32(registeredCount))
+		if cropMode {
+			// The reference image is the requested output frame. Keep its
+			// full extent even where a warped light has no valid sample;
+			// those pixels are simply excluded from the mean.
+			cropRect = image.Rect(0, 0, refW, refH)
+		} else {
+			cropRect = findSafeCrop(validCount, refW, refH, int32(registeredCount))
+		}
 		logf("Crop: x=%d..%d, y=%d..%d (%dx%d)", cropRect.Min.X, cropRect.Max.X-1,
 			cropRect.Min.Y, cropRect.Max.Y-1, cropRect.Dx(), cropRect.Dy())
 		// Count pixels the validity mask excluded from the full-coverage
@@ -7599,7 +7745,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		frameDiags = make([]frameDiag, len(accepted))
 		for i := 0; i < len(accepted); i++ {
 			td := frameDiag{Path: accepted[i].path}
-			if i == refIdx {
+			if !cropMode && i == refIdx {
 				td.Note = "[ref]"
 			}
 			if !transforms[i].valid {
@@ -7631,11 +7777,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				td.Note = strings.TrimSpace(td.Note + " [affine]")
 			}
 			if transforms[i].aff != nil {
-				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReferenceAffine(refW, refH, *transforms[i].aff)
-				td.FootprintPct = computeFootprintPct(refW, refH, func(p point2D) point2D { return transforms[i].aff.apply(p) })
+				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReferenceAffine(inW, inH, *transforms[i].aff)
+				td.FootprintPct = computeFootprintPct(inW, inH, refW, refH, func(p point2D) point2D { return transforms[i].aff.apply(p) })
 			} else {
-				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReference(refW, refH, transforms[i].sim)
-				td.FootprintPct = computeFootprintPct(refW, refH, func(p point2D) point2D { return transforms[i].sim.apply(p) })
+				td.BoxMinX, td.BoxMinY, td.BoxMaxX, td.BoxMaxY = frameBoxInReference(inW, inH, transforms[i].sim)
+				td.FootprintPct = computeFootprintPct(inW, inH, refW, refH, func(p point2D) point2D { return transforms[i].sim.apply(p) })
 			}
 			bx0, by0 := td.BoxMinX, td.BoxMinY
 			bx1, by1 := td.BoxMaxX, td.BoxMaxY
@@ -7660,10 +7806,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		// Identify limiting frames
 		limiterNames := []string{}
 		for i := range frameDiags {
-			if i == refIdx || !transforms[i].valid {
+			if (!cropMode && i == refIdx) || !transforms[i].valid {
 				continue
 			}
-			flags := frameLimiterFlags(frameDiags[i], refW, refH)
+			flags := frameLimiterFlags(frameDiags[i], inW, inH, refW, refH)
 			if len(flags) > 0 {
 				frameDiags[i].Note = strings.TrimSpace(frameDiags[i].Note + " ** " + strings.Join(flags, ", ") + " **")
 				limiterNames = append(limiterNames, filepath.Base(frameDiags[i].Path))
@@ -7696,22 +7842,23 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			anyTranslationDrift := false
 			anyFieldRotation := false
 			for i := range frameDiags {
-				if i == refIdx || !transforms[i].valid {
+				if (!cropMode && i == refIdx) || !transforms[i].valid {
 					continue
 				}
 				d := frameDiags[i]
-				if len(frameLimiterFlags(d, refW, refH)) == 0 {
+				if len(frameLimiterFlags(d, inW, inH, refW, refH)) == 0 {
 					continue
 				}
-				cx, cy := float64(refW)/2, float64(refH)/2
+				cx, cy := float64(inW)/2, float64(inH)/2
+				rcx, rcy := float64(refW)/2, float64(refH)/2
 				s := d.Scale
 				if s <= 0 || s > 10 {
 					s = 1.0
 				}
 				theta := d.RotationDeg * math.Pi / 180
 				cosT, sinT := math.Cos(theta), math.Sin(theta)
-				expX := cx*(1-s*cosT) + s*cy*sinT
-				expY := -s*cx*sinT + cy*(1-s*cosT)
+				expX := rcx - s*(cx*cosT-cy*sinT)
+				expY := rcy - s*(cx*sinT+cy*cosT)
 				driftX := d.OffsetX - expX
 				driftY := d.OffsetY - expY
 				if math.Abs(driftX) > 0.10*float64(refW) || math.Abs(driftY) > 0.10*float64(refH) {
@@ -7736,6 +7883,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					"Crop rectangle is %dx%d (%.1f%% of the %dx%d reference). The following frames constrain the crop or have low registration quality: %s. A normal frame has scale~1.0 and rotation~0deg (translation-only alignment); frames with scale far from 1 or rotation far from 0 were typically fitted on only a few noise stars, which shrinks their actual footprint inside the reference and forces the safe crop to shrink to the common overlap. Removing these frames would yield a larger crop.",
 					cropRect.Dx(), cropRect.Dy(), cropPct, refW, refH, strings.Join(limiterNames, ", "))
 			}
+		}
+		if cropMode {
+			cropExplanation = fmt.Sprintf(
+				"Output frame is the full %dx%d reference image (%s). Lights were star-matched to it and warped in memory; pixels not covered by a light remain empty and are excluded from the mean.",
+				refW, refH, filepath.Base(opts.ReferenceCrop))
 		}
 		numAffine := 0
 		for i := range transforms {
@@ -7819,7 +7971,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		logf("Reducing unregistered stack (%s, %d frames, full frame)...",
 			opts.Method, len(spillPaths1))
 		sum1, mean1, rej1, wgt1, rerr := reduceTilesStack(
-			spillPaths1, refW, refH, image.Rect(0, 0, refW, refH),
+			spillPaths1, inW, inH, image.Rect(0, 0, inW, inH),
 			opts.Method, tr, it, opts.TileSize, workers, unregWeights, nil, nil)
 		if rerr != nil {
 			return fmt.Errorf("reduce unregistered: %w", rerr)
@@ -7838,7 +7990,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		// plain arithmetic mean, regardless of method.
 		if len(spillPaths2) == 0 {
 			// No registration: report reduction and write maps directly.
-			writeGrayscaleMaps(outputDir, refW, refH, rej1, wgt1, "")
+			writeGrayscaleMaps(outputDir, inW, inH, rej1, wgt1, "")
 			logf("Reduction complete (unregistered only)")
 		}
 
@@ -7921,6 +8073,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	var sumMax float32
 	var outW, outH int
 	var step0Path string
+	var refCropRawPath, refCropJPGPath string
 
 	if registrationOn {
 		outW, outH = cropRect.Dx(), cropRect.Dy()
@@ -7994,6 +8147,21 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}); err != nil {
 			return fmt.Errorf("write mean jpg: %w", err)
 		}
+		if cropMode {
+			refCropRawPath = filepath.Join(outputDir, "reference_crop.f32raw")
+			refCropJPGPath = filepath.Join(outputDir, "reference_crop.jpg")
+			logf("Writing reference-crop output (%dx%d)", outW, outH)
+			if err := writeFileAtomic(refCropRawPath, func(w io.Writer) error {
+				return writeRawFloat32RGB(w, outW, outH, meanPix)
+			}); err != nil {
+				return fmt.Errorf("write reference crop raw: %w", err)
+			}
+			if err := writeFileAtomic(refCropJPGPath, func(w io.Writer) error {
+				return writePreviewJPEG(w, outW, outH, meanPix)
+			}); err != nil {
+				return fmt.Errorf("write reference crop jpg: %w", err)
+			}
+		}
 		if opts.WritePNG {
 			pngPath := filepath.Join(outputDir, "stacked_mean.png")
 			if err := writeFileAtomic(pngPath, func(w io.Writer) error {
@@ -8014,13 +8182,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			writeGrayscaleMaps(outputDir, outW, outH, regRejPix, regWgtPix, "")
 		}
 		if regRejPix != nil {
-			writeGrayscaleMaps(outputDir, refW, refH, unregRejPix, unregWgtPix, "_unregistered")
+			writeGrayscaleMaps(outputDir, inW, inH, unregRejPix, unregWgtPix, "_unregistered")
 		}
 		if validCount != nil {
 			writeCoverageMap(outputDir, refW, refH, validCount, registeredCount, "")
 		}
 	} else {
-		outW, outH = refW, refH
+		outW, outH = inW, inH
 		var sumPix, meanPix []float32
 		if unregSumPix != nil {
 			sumPix = unregSumPix
@@ -8119,13 +8287,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	logf("Writing max (brightest pixels) preview")
 	if err := writeFileAtomic(maxJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, maxPix)
+		return writePreviewJPEG(w, inW, inH, maxPix)
 	}); err != nil {
 		return fmt.Errorf("write max jpg: %w", err)
 	}
 	logf("Writing min (darkest pixels) preview")
 	if err := writeFileAtomic(minJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, minPix)
+		return writePreviewJPEG(w, inW, inH, minPix)
 	}); err != nil {
 		return fmt.Errorf("write min jpg: %w", err)
 	}
@@ -8140,7 +8308,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	unregAcc.divideByCount(unregValidCount)
 	logf("Writing no-correction mean preview")
 	if err := writeFileAtomic(noCorrJPG, func(w io.Writer) error {
-		return writePreviewJPEG(w, refW, refH, unregAcc.Pix)
+		return writePreviewJPEG(w, inW, inH, unregAcc.Pix)
 	}); err != nil {
 		return fmt.Errorf("write no_correction_mean jpg: %w", err)
 	}
@@ -8232,7 +8400,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if registrationOn {
 		notes = append(notes,
 			fmt.Sprintf("Registration: %d of %d frames registered using a similarity model (rotation + uniform scale + translation).", registeredCount, len(accepted)),
-			fmt.Sprintf("Registered outputs (stacked_sum/mean) are cropped to the largest fully-valid region: %dx%d.", outW, outH),
+		)
+		if cropMode {
+			notes = append(notes,
+				fmt.Sprintf("Reference crop: lights were star-matched to %s and warped in memory into its %dx%d frame. Source files were not modified; uncovered pixels are excluded from the mean. The frame-exact result is reference_crop.f32raw / reference_crop.jpg.", filepath.Base(opts.ReferenceCrop), refW, refH),
+			)
+		} else {
+			notes = append(notes, fmt.Sprintf("Registered outputs (stacked_sum/mean) are cropped to the largest fully-valid region: %dx%d.", outW, outH))
+		}
+		notes = append(notes,
 			"stacked_no_correction_mean is the unregistered full-frame mean.",
 			fmt.Sprintf("Registered sum TIFF was divided by %g (global max of registered sum); multiply by %g to recover raw float32 sum.", sumMax, sumMax),
 		)
@@ -8310,6 +8486,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		sumJPG, meanJPG, noCorrJPG, maxJPG, minJPG,
 	), append(postOutputs, reportTxt)...)
 	outputFiles = append(outputFiles, masterExports...)
+	if refCropRawPath != "" {
+		outputFiles = append(outputFiles, refCropRawPath, refCropJPGPath)
+	}
 	if selfFlatRawPath != "" && !opts.ExportMasters {
 		outputFiles = append(outputFiles, selfFlatRawPath, filepath.Join(outputDir, "master_self_flat.jpg"))
 	}
@@ -11380,6 +11559,23 @@ func testStackCalibrationFolder() error {
 	if math.Abs(float64(m.Pix[0])-want) > 0.02 {
 		return fmt.Errorf("three files: R = %v, want ~%v", m.Pix[0], want)
 	}
+
+	// The time estimator counts calibration files without decoding them.
+	rawDir := filepath.Join(dir, "raw")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(rawDir, "a.CR2"), []byte("x"), 0o644); err != nil {
+		return err
+	}
+	opts := runOptions{DarkFile: dir, FlatFile: pngPath, BiasFile: rawDir}
+	total, raw := calibrationFrameCount(opts)
+	if total != 5 || raw != 1 {
+		return fmt.Errorf("calibrationFrameCount = (%d,%d), want (5,1)", total, raw)
+	}
+	if !isCR2Path("a.CR2") || !isCR2Path("b.cr3") || isCR2Path("c.jpg") {
+		return errors.New("isCR2Path extension check failed")
+	}
 	return nil
 }
 
@@ -11662,14 +11858,14 @@ func testPlaneGrid() error {
 func testFrameLimiterFootprintZero() error {
 	const refW, refH = 2400, 1600
 	d := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 0}
-	flags := frameLimiterFlags(d, refW, refH)
+	flags := frameLimiterFlags(d, refW, refH, refW, refH)
 	for _, f := range flags {
 		if f == "LOW FOOTPRINT" {
 			return fmt.Errorf("FootprintPct=0 should be sentinel, got flags %v", flags)
 		}
 	}
 	d.FootprintPct = 49.9
-	flags = frameLimiterFlags(d, refW, refH)
+	flags = frameLimiterFlags(d, refW, refH, refW, refH)
 	found := false
 	for _, f := range flags {
 		if f == "LOW FOOTPRINT" {
@@ -12650,6 +12846,84 @@ func testCometTranslation() error {
 	return nil
 }
 
+func testReferenceCropAlignment() error {
+	const refW, refH = 240, 220
+	var refStars []star
+	for gy := 0; gy < 6; gy++ {
+		for gx := 0; gx < 6; gx++ {
+			refStars = append(refStars, star{
+				X:    35 + float64(gx)*32,
+				Y:    30 + float64(gy)*31,
+				Flux: 500 + float64(gx*6+gy),
+			})
+		}
+	}
+	// Known map reference -> input: 0.9 scale, 4 deg rotation, small shift.
+	theta := 4.0 * math.Pi / 180
+	known := similarity{
+		SC: 0.9 * math.Cos(theta),
+		SS: 0.9 * math.Sin(theta),
+		Tx: 12,
+		Ty: -8,
+	}
+	inputStars := make([]star, len(refStars))
+	for i, s := range refStars {
+		p := known.apply(point2D{s.X, s.Y})
+		inputStars[i] = star{X: p.X, Y: p.Y, Flux: s.Flux}
+	}
+	sim, inliers, ok := matchStarsToReference(refStars, inputStars)
+	if !ok || inliers < 30 {
+		return fmt.Errorf("reference crop match failed: ok=%v inliers=%d", ok, inliers)
+	}
+	if math.Abs(sim.scale()-1/0.9) > 0.01 {
+		return fmt.Errorf("recovered scale %.5f, want %.5f", sim.scale(), 1/0.9)
+	}
+	if math.Abs(sim.rotation()*180/math.Pi+4.0) > 0.5 {
+		return fmt.Errorf("recovered rotation %.3f deg, want -4", sim.rotation()*180/math.Pi)
+	}
+
+	// Paint a bright marker at a known input position and warp a single
+	// frame into the reference frame. The marker must land on the matching
+	// reference pixel.
+	marker := refStars[21]
+	pIn := known.apply(point2D{marker.X, marker.Y})
+	in := &frame{Width: refW, Height: refH, Pix: make([]float32, refW*refH*3)}
+	cx, cy := int(math.Round(pIn.X)), int(math.Round(pIn.Y))
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			x, y := cx+dx, cy+dy
+			if x < 0 || y < 0 || x >= refW || y >= refH {
+				continue
+			}
+			i := (y*refW + x) * 3
+			in.Pix[i], in.Pix[i+1], in.Pix[i+2] = 1, 1, 1
+		}
+	}
+	out := resampleToReference(in, sim, refW, refH, 2)
+	v := out.Pix[(int(math.Round(marker.Y))*refW+int(math.Round(marker.X)))*3]
+	if v < 0.5 {
+		return fmt.Errorf("marker landed at %.3f, want a bright pixel at the reference star", v)
+	}
+
+	tmp, err := os.CreateTemp("", "skystacker-refcrop-*.png")
+	if err != nil {
+		return err
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+	opts, err := parseArgs([]string{"--reference-crop", tmp.Name(), "--limit", "1"})
+	if err != nil {
+		return err
+	}
+	if opts.ReferenceCrop != tmp.Name() || !opts.Register {
+		return fmt.Errorf("--reference-crop not parsed: %+v", opts)
+	}
+	if _, err := parseArgs([]string{"--reference-crop", tmp.Name(), "--no-register"}); err == nil {
+		return errors.New("--reference-crop with --no-register should fail")
+	}
+	return nil
+}
+
 func testReportRecordsFlags() error {
 	lines := resolvedFlagLines(runOptions{
 		Method: "mean", Workers: 4, OutputDir: "/tmp/out",
@@ -12991,6 +13265,7 @@ func runSelfTests() int {
 		{"default synthetic calibration", testDefaultSyntheticCalib},
 		{"ser decode", testSERDecode},
 		{"comet translation", testCometTranslation},
+		{"reference crop alignment", testReferenceCropAlignment},
 		{"calibration master export", testExportCalibrationMasters},
 	}
 	failures := 0
@@ -15805,7 +16080,7 @@ func testAffineQuality() error {
 	// computeFootprintPct maps (0,0)..(W-1,H-1), so identity covers
 	// (W-1)*(H-1) / (W*H) of the reference, not 100%. For 100x50 that is
 	// 99*49/5000 = 97.02%.
-	pct := computeFootprintPct(100, 50, func(p point2D) point2D { return p })
+	pct := computeFootprintPct(100, 50, 100, 50, func(p point2D) point2D { return p })
 	want := 100.0 * 99.0 * 49.0 / (100.0 * 50.0)
 	if math.Abs(pct-want) > 0.5 {
 		return fmt.Errorf("identity footprint = %v, want ~%.2f", pct, want)
@@ -15813,10 +16088,18 @@ func testAffineQuality() error {
 
 	// Half-size uniform scale: footprint is 0.25x the identity footprint.
 	half := affine{A: 0.5, B: 0, D: 0, E: 0.5}
-	pctHalf := computeFootprintPct(100, 50, func(p point2D) point2D { return half.apply(p) })
+	pctHalf := computeFootprintPct(100, 50, 100, 50, func(p point2D) point2D { return half.apply(p) })
 	wantHalf := 0.25 * want
 	if math.Abs(pctHalf-wantHalf) > 0.5 {
 		return fmt.Errorf("half-scale footprint = %v, want ~%.2f", pctHalf, wantHalf)
+	}
+
+	// The source and reference frames may differ (reference-crop). The
+	// denominator must use the reference area, not the source area.
+	scale07 := similarity{SC: 0.7, SS: 0}
+	pctScaled := computeFootprintPct(100, 50, 70, 35, func(p point2D) point2D { return scale07.apply(p) })
+	if math.Abs(pctScaled-want) > 0.5 {
+		return fmt.Errorf("scaled source footprint = %v, want ~%.2f", pctScaled, want)
 	}
 
 	return nil
@@ -16174,13 +16457,13 @@ func testFrameLimiterFlags() error {
 	const refW, refH = 2400, 1600
 	// Normal frame: no flags.
 	normal := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: 5, OffsetY: -8}
-	if flags := frameLimiterFlags(normal, refW, refH); len(flags) != 0 {
+	if flags := frameLimiterFlags(normal, refW, refH, refW, refH); len(flags) != 0 {
 		return fmt.Errorf("normal frame got flags: %v", flags)
 	}
 
 	// LOW FOOTPRINT fires when the actual footprint < 50%.
 	lowFoot := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 40}
-	flagsLF := frameLimiterFlags(lowFoot, refW, refH)
+	flagsLF := frameLimiterFlags(lowFoot, refW, refH, refW, refH)
 	hasLF := false
 	for _, f := range flagsLF {
 		if f == "LOW FOOTPRINT" {
@@ -16192,7 +16475,7 @@ func testFrameLimiterFlags() error {
 	}
 	// M42-style 677 px horizontal drift on a 2400 px wide reference.
 	drifted := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: -677, OffsetY: 10}
-	flags := frameLimiterFlags(drifted, refW, refH)
+	flags := frameLimiterFlags(drifted, refW, refH, refW, refH)
 	found := false
 	for _, f := range flags {
 		if f == "LARGE OFFSET" {
@@ -16204,7 +16487,7 @@ func testFrameLimiterFlags() error {
 	}
 	// Vertical drift > 10% of refH.
 	vertical := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: 0, OffsetY: 200}
-	flags = frameLimiterFlags(vertical, refW, refH)
+	flags = frameLimiterFlags(vertical, refW, refH, refW, refH)
 	found = false
 	for _, f := range flags {
 		if f == "LARGE OFFSET" {
@@ -16216,7 +16499,7 @@ func testFrameLimiterFlags() error {
 	}
 	// Under threshold must not fire.
 	under := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: 220, OffsetY: 100}
-	flags = frameLimiterFlags(under, refW, refH)
+	flags = frameLimiterFlags(under, refW, refH, refW, refH)
 	for _, f := range flags {
 		if f == "LARGE OFFSET" {
 			return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
@@ -16224,7 +16507,7 @@ func testFrameLimiterFlags() error {
 	}
 	// LOW QUALITY still works.
 	lowQ := frameDiag{Quality: 20, BoxPct: 95, FootprintPct: 95, OffsetX: 0, OffsetY: 0}
-	flags = frameLimiterFlags(lowQ, refW, refH)
+	flags = frameLimiterFlags(lowQ, refW, refH, refW, refH)
 	hasLowQ := false
 	for _, f := range flags {
 		if f == "LOW QUALITY" {
@@ -16236,7 +16519,7 @@ func testFrameLimiterFlags() error {
 	}
 	// LOW BOX%% still works.
 	lowBox := frameDiag{Quality: 80, BoxPct: 40, FootprintPct: 95, OffsetX: 0, OffsetY: 0}
-	flags = frameLimiterFlags(lowBox, refW, refH)
+	flags = frameLimiterFlags(lowBox, refW, refH, refW, refH)
 	hasLowBox := false
 	for _, f := range flags {
 		if f == "LOW BOX%" {
@@ -16261,7 +16544,7 @@ func testFrameLimiterFlagsRotationAware() error {
 		OffsetX:     440.2,
 		OffsetY:     -415.6,
 	}
-	if flags := frameLimiterFlags(polaris, 2256, 1504); len(flags) != 0 {
+	if flags := frameLimiterFlags(polaris, 2256, 1504, 2256, 1504); len(flags) != 0 {
 		return fmt.Errorf("Polaris IMG_7272 should not be flagged, got: %v", flags)
 	}
 
@@ -16274,7 +16557,7 @@ func testFrameLimiterFlagsRotationAware() error {
 		OffsetX:     740.0,
 		OffsetY:     -415.6,
 	}
-	flags := frameLimiterFlags(drifted, 2256, 1504)
+	flags := frameLimiterFlags(drifted, 2256, 1504, 2256, 1504)
 	found := false
 	for _, f := range flags {
 		if f == "LARGE OFFSET" {
@@ -16294,7 +16577,7 @@ func testFrameLimiterFlagsRotationAware() error {
 		OffsetX:     677.0,
 		OffsetY:     10.0,
 	}
-	flags = frameLimiterFlags(m42, 2400, 1600)
+	flags = frameLimiterFlags(m42, 2400, 1600, 2400, 1600)
 	found = false
 	for _, f := range flags {
 		if f == "LARGE OFFSET" {
@@ -16313,7 +16596,7 @@ func testFrameLimiterFlagsRotationAware() error {
 		OffsetX:     220.0,
 		OffsetY:     100.0,
 	}
-	flags = frameLimiterFlags(under, 2400, 1600)
+	flags = frameLimiterFlags(under, 2400, 1600, 2400, 1600)
 	for _, f := range flags {
 		if f == "LARGE OFFSET" {
 			return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
@@ -19727,6 +20010,7 @@ func main() {
 		SelfFlat:             opts.SelfFlat,
 		NoSelfFlat:           opts.NoSelfFlat,
 		SelfFlatModel:        opts.SelfFlatModel,
+		ReferenceCrop:        opts.ReferenceCrop,
 		CreateTIFF:           opts.CreateTIFF,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,

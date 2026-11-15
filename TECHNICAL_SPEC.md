@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.0
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 177. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 178. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -44,6 +44,11 @@ Flags are accepted before or after the positional input directory. Default input
 - `--recursive`, `--overwrite`, `--force`.
 - `--scale` (default 1; downscale factor).
 - `--no-register`, `--stack-only`, `--post-only`.
+- `--reference-crop PATH`: detect stars in `PATH`, match each light by
+  triangle pattern, and warp it in memory into the reference frame. The
+  output size is exactly the reference image size, independent of the
+  light dimensions. Requires registration. `--limit 1` produces a single
+  cropped frame. Source files are never written.
 
 ### Calibration
 - `--dark`, `--flat`, `--bias` (individual files or folders).

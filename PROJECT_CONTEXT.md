@@ -1536,3 +1536,36 @@ rejection and disk spill. `--scale N` downsamples.
   still next), `COMPARISON.md`, `README.md`, `TECHNICAL_SPEC.md`, and
   append-only status notes in `research/`. History in this file was not
   deleted.
+
+### Reference-frame crop (2026-11-15)
+
+- Added `--reference-crop PATH`. The reference image defines the output
+  frame. Each light is decoded at its own working size (`inW`/`inH`), stars
+  are matched with `matchStarsToReference`, and the frame is warped with
+  `resampleToReference` into the reference size (`refW`/`refH`).
+- Pass 1 and the unregistered stack stay in input coordinates; registered
+  accumulators, self-flat v1, coverage, and reduced stacks use reference
+  coordinates. Do not change the spill-1 dimension back to `refW`/`refH`.
+- `--limit 1` produces a single cropped frame. `--reference-crop` requires
+  registration and disables `--normalize`/`--local-normalize` for now.
+- Verified on Orion: 70% reference recovered scale 0.6999; 80% + 3°
+  reference recovered scale 0.7999 and rotation 3.00°. Single- and
+  three-frame runs output the exact reference dimensions.
+- Registered self-tests: 178 (`testReferenceCropAlignment`).
+- `COMPARISON.md` now has a post-processing software table that includes
+  Fitswork and contrasts its manual two-star crop with the automatic
+  star-pattern crop.
+- Follow-up fixes: the mean fast path re-decoded at `refW`/`refH`, which
+  double-scaled the light in crop mode (about half the frame uncovered);
+  it now decodes at `inW`/`inH`. `computeFootprintPct` now takes separate
+  source and reference dimensions, and the frame-limiter offset check uses
+  the reference center, so crop mode no longer reports a false
+  `LARGE OFFSET`. A regression check uses a 0.7-scaled source against a
+  smaller reference.
+- Time estimate now includes calibration masters. It previously counted only
+  lights, so a run with 41 CR2 darks/flats/biases estimated ~1 min but took
+  ~13.5 min. `calibrationFrameCount` resolves the same folders as
+  `stackCalibrationFolder` without decoding and adds ~20 s per CR2
+  (empirical) plus a small per-pixel cost for non-RAW frames. The
+  `--calib-root` path resolution moved before the estimate for this reason.
+  Verified on a 1-light/3-calibration subset: estimated 2m0s, actual 1m32s.
