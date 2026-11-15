@@ -167,6 +167,9 @@ type cliOptions struct {
 	SynthBias            bool
 	SynthCalibReport     bool
 	BlackLevel           string
+	BPMFile              string
+	ExportMasters        bool
+	SelfFlat             bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -214,6 +217,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.FlatFile, "flat", "", "path to flat frame for calibration")
 	fs.StringVar(&o.BiasFile, "bias", "", "path to bias frame or folder for calibration")
 	fs.StringVar(&o.CalibRoot, "calib-root", "", "auto-detect Bias/Darks/Flats inside this root folder")
+	fs.BoolVar(&o.ExportMasters, "export-masters", false, "export loaded calibration masters as master_<kind>.f32raw + .jpg")
+	fs.BoolVar(&o.SelfFlat, "self-flat", false, "derive a relative flat from >=15 registered dithered lights (requires registration)")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
 	var noAffine bool
 	fs.BoolVar(&noAffine, "no-affine", false, "disable full-affine refinement (similarity-only registration)")
@@ -291,6 +296,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.SynthBias, "synthetic-bias", false, "generate a synthetic bias frame (REFUSED by default; see --synthetic-calibration)")
 	fs.BoolVar(&o.SynthCalibReport, "synthetic-calibration-report", false, "print the synthetic-calibration guardrail report to stdout and exit")
 	fs.StringVar(&o.BlackLevel, "black-level", "", "black-level pedestal: auto reads EXIF/FITS metadata")
+	fs.StringVar(&o.BPMFile, "bpm", "", "bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
@@ -312,7 +318,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -542,6 +548,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
 	fmt.Fprintln(w, `  --black-level string  black-level pedestal: "auto" reads EXIF BlackLevel / FITS BLACK_LVL and subtracts it (default: off)`)
+	fmt.Fprintln(w, "  --bpm string      bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs; coordinates are native pixels (default: off)")
+	fmt.Fprintln(w, "  --export-masters  write master_bias/dark/flat.f32raw + .jpg for inspection (default: off)")
+	fmt.Fprintln(w, "  --self-flat       derive a relative flat from >=15 registered dithered lights (requires registration)")
 	fmt.Fprintln(w, "  --synthetic-calibration         report what is recoverable from lights; never fabricates frames")
 	fmt.Fprintln(w, "  --synthetic-calibration-report  print the recovery report and exit")
 	fmt.Fprintln(w, "  --synthetic-dark|flat|bias      REFUSED: see --synthetic-calibration")
@@ -691,6 +700,111 @@ func detectBlackLevel(path string) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// BPM_V1_MARKER
+
+// badPixelPoint is a 0-based pixel coordinate in the input frame's native
+// resolution.
+type badPixelPoint struct{ X, Y int }
+
+// loadBadPixelMap reads a bad-pixel map. FITS/FIT files are treated as an
+// image whose non-zero pixels are bad; any other extension is parsed as
+// text with one "x,y" pair per line. Blank lines and lines whose first
+// non-space character is '#' are ignored, as is any inline "#" comment.
+// Coordinates are 0-based and refer to the input frame's native
+// resolution.
+func loadBadPixelMap(path string) ([]badPixelPoint, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".fits", ".fit":
+		f, err := decodeImageFile(path, 0, 0)
+		if err != nil {
+			return nil, fmt.Errorf("bad-pixel map: %w", err)
+		}
+		if f.Width <= 0 || f.Height <= 0 {
+			return nil, fmt.Errorf("bad-pixel map: %s has invalid dimensions %dx%d", path, f.Width, f.Height)
+		}
+		pts := make([]badPixelPoint, 0)
+		for y := 0; y < f.Height; y++ {
+			for x := 0; x < f.Width; x++ {
+				i := (y*f.Width + x) * 3
+				if f.Pix[i] != 0 || f.Pix[i+1] != 0 || f.Pix[i+2] != 0 {
+					pts = append(pts, badPixelPoint{X: x, Y: y})
+				}
+			}
+		}
+		if len(pts) == 0 {
+			return nil, fmt.Errorf("bad-pixel map: no non-zero pixels in %s", path)
+		}
+		return pts, nil
+	default:
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("bad-pixel map: %w", err)
+		}
+		var pts []badPixelPoint
+		for ln, raw := range strings.Split(string(data), "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if i := strings.IndexByte(line, '#'); i >= 0 {
+				line = strings.TrimSpace(line[:i])
+				if line == "" {
+					continue
+				}
+			}
+			fields := strings.FieldsFunc(line, func(r rune) bool {
+				return r == ',' || r == ';' || r == ' ' || r == '\t'
+			})
+			if len(fields) != 2 {
+				return nil, fmt.Errorf("bad-pixel map: %s line %d: expected \"x,y\", got %q", path, ln+1, raw)
+			}
+			x, xerr := strconv.Atoi(fields[0])
+			y, yerr := strconv.Atoi(fields[1])
+			if xerr != nil || yerr != nil {
+				return nil, fmt.Errorf("bad-pixel map: %s line %d: invalid integer in %q", path, ln+1, raw)
+			}
+			if x < 0 || y < 0 {
+				return nil, fmt.Errorf("bad-pixel map: %s line %d: negative coordinate (%d,%d)", path, ln+1, x, y)
+			}
+			pts = append(pts, badPixelPoint{X: x, Y: y})
+		}
+		if len(pts) == 0 {
+			return nil, fmt.Errorf("bad-pixel map: no pixel coordinates found in %s", path)
+		}
+		return pts, nil
+	}
+}
+
+// applyBadPixelMap marks every mapped pixel invalid (-1 in all channels).
+// Coordinates are native-resolution; scale maps them to the decoded frame
+// resolution (--scale N downsamples by N). Points outside the frame are
+// ignored. The return value is the number of distinct in-frame pixels
+// masked.
+func applyBadPixelMap(f *frame, points []badPixelPoint, scale int) int {
+	if f == nil || len(points) == 0 {
+		return 0
+	}
+	if scale < 1 {
+		scale = 1
+	}
+	seen := make(map[int]bool, len(points))
+	for _, p := range points {
+		x, y := p.X/scale, p.Y/scale
+		if x < 0 || y < 0 || x >= f.Width || y >= f.Height {
+			continue
+		}
+		pix := y*f.Width + x
+		if seen[pix] {
+			continue
+		}
+		seen[pix] = true
+		f.Pix[pix*3] = -1
+		f.Pix[pix*3+1] = -1
+		f.Pix[pix*3+2] = -1
+	}
+	return len(seen)
 }
 
 // findCR2Tool returns the first available CR2 decoder, or "".
@@ -1806,6 +1920,15 @@ func sampleBilinear(f *frame, x, y float64) (r, g, b float32, ok bool) {
 	i10 := (y0*f.Width + x1) * 3
 	i01 := (y1*f.Width + x0) * 3
 	i11 := (y1*f.Width + x1) * 3
+	// A masked pixel is -1 in every channel. Do not let bilinear
+	// interpolation mix that sentinel into neighbours; report the
+	// sample as invalid so the destination pixel is masked too.
+	if f.Pix[i00] < 0 || f.Pix[i00+1] < 0 || f.Pix[i00+2] < 0 ||
+		f.Pix[i10] < 0 || f.Pix[i10+1] < 0 || f.Pix[i10+2] < 0 ||
+		f.Pix[i01] < 0 || f.Pix[i01+1] < 0 || f.Pix[i01+2] < 0 ||
+		f.Pix[i11] < 0 || f.Pix[i11+1] < 0 || f.Pix[i11+2] < 0 {
+		return 0, 0, 0, false
+	}
 	w00 := (1 - fx) * (1 - fy)
 	w10 := fx * (1 - fy)
 	w01 := (1 - fx) * fy
@@ -2942,6 +3065,15 @@ type processingReport struct {
 	BlackLevelTag      string
 	BlackLevelValue    float64
 	BlackLevelApplied  bool
+	BPMApplied         bool
+	BPMPath            string
+	BPMPixelCount      int
+	SelfFlatApplied    bool
+	SelfFlatFrames     int
+	SelfFlatPath       string
+	SelfFlatCenterEdge float64
+	SelfFlatResidual   float64
+	MasterExports      []string
 	PostProcessApplied bool
 	BGDegree           int
 	StretchFactor      float64
@@ -3009,6 +3141,22 @@ func (r *processingReport) writeTo(w io.Writer) error {
 	ew.printf("Sum TIFF normalisation: %g\n", r.SumNormalization)
 	if r.BlackLevelApplied {
 		ew.printf("Black level: %s = %.6f\n", r.BlackLevelTag, r.BlackLevelValue)
+	}
+	if r.BPMApplied {
+		ew.printf("Bad pixel map: %s (%d pixels masked)\n", r.BPMPath, r.BPMPixelCount)
+	}
+	if r.SelfFlatApplied {
+		ew.printf("Self-flat: %d frames, center/edge=%.4f, residual RMS=%.5f\n",
+			r.SelfFlatFrames, r.SelfFlatCenterEdge, r.SelfFlatResidual)
+		if r.SelfFlatPath != "" {
+			ew.printf("Self-flat master: %s\n", r.SelfFlatPath)
+		}
+	}
+	if len(r.MasterExports) > 0 {
+		ew.printf("Calibration master exports:\n")
+		for _, f := range r.MasterExports {
+			ew.printf("  %s\n", f)
+		}
 	}
 	if r.TotalExposureSec > 0 || r.RefExif.OK {
 		ew.printf("Exposure summary:\n")
@@ -3221,6 +3369,9 @@ type runOptions struct {
 	LNTileSize           int
 	SynthCalib           bool
 	BlackLevel           string
+	BPMFile              string
+	ExportMasters        bool
+	SelfFlat             bool
 
 	CreateTIFF  bool
 	PostCA      bool
@@ -4464,6 +4615,14 @@ func sigmaClipReduce(vals []float32, threshold float64, iters int) (mean, sigma 
 	return float32(s / float64(accepted)), sigma, accepted, rejected
 }
 
+// flatCorrection applies a crop-sized multiplicative flat in reference
+// coordinates while reducing spilled frames. The flat is derived from the
+// same lights (--self-flat) and is therefore only valid after registration.
+type flatCorrection struct {
+	frame *frame
+	rect  image.Rectangle
+}
+
 // writeSpillFrame writes a frame's interleaved RGB float32 buffer to disk
 // as a raw file with an 8-byte header (uint32 width, uint32 height). The
 // format matches readRawFloat32RGB so the existing reader works.
@@ -4566,6 +4725,8 @@ func reduceTilesStack(
 	tileSize int,
 	workers int,
 	frameWeights []float32,
+	frameScales []float32,
+	flat *flatCorrection,
 ) (sumPix, meanPix, rejPix, wgtPix []float32, err error) {
 	outW := crop.Dx()
 	outH := crop.Dy()
@@ -4643,7 +4804,7 @@ func reduceTilesStack(
 			defer wg.Done()
 			for t := range jobs {
 				if e := reduceTile(spillPaths, fullW, fullH, crop, t.x0, t.y0, t.x1, t.y1,
-					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix, frameWeights); e != nil {
+					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix, frameWeights, frameScales, flat); e != nil {
 					errOnce.Do(func() { firstErr = e })
 					for range jobs {
 					}
@@ -4665,7 +4826,8 @@ func reduceTilesStack(
 func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 	x0, y0, x1, y1 int, method string,
 	sigmaThreshold float64, sigmaIters int,
-	outW int, sumPix, meanPix, rejPix, wgtPix []float32, frameWeights []float32) error {
+	outW int, sumPix, meanPix, rejPix, wgtPix []float32, frameWeights []float32,
+	frameScales []float32, flat *flatCorrection) error {
 	tileW := x1 - x0
 	tileH := y1 - y0
 	nFrames := len(spillPaths)
@@ -4683,13 +4845,36 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 		if err := readTileFromRaw(path, fullW, fullH, fullX0, fullY0, fullX0+tileW, fullY0+tileH, frameTile); err != nil {
 			return fmt.Errorf("read tile from %s: %w", path, err)
 		}
+		scale := float32(1)
+		if frameScales != nil && fi < len(frameScales) {
+			scale = frameScales[fi]
+			if !(scale > 0) || math.IsNaN(float64(scale)) || math.IsInf(float64(scale), 0) {
+				scale = 1
+			}
+		}
 		for py := 0; py < tileH; py++ {
 			for px := 0; px < tileW; px++ {
 				pix := py*tileW + px
 				src := pix * 3
 				base := pix*3*nFrames + fi
 				for c := 0; c < 3; c++ {
-					buf[base+c*nFrames] = frameTile[src+c]
+					v := frameTile[src+c]
+					if v >= 0 {
+						if scale != 1 {
+							v *= scale
+						}
+						if flat != nil && flat.frame != nil {
+							fx := fullX0 + px - flat.rect.Min.X
+							fy := fullY0 + py - flat.rect.Min.Y
+							if fx >= 0 && fy >= 0 && fx < flat.frame.Width && fy < flat.frame.Height {
+								d := flat.frame.Pix[(fy*flat.frame.Width+fx)*3+c]
+								if d > 1e-6 && !math.IsNaN(float64(d)) {
+									v /= d
+								}
+							}
+						}
+					}
+					buf[base+c*nFrames] = v
 				}
 			}
 		}
@@ -4762,6 +4947,357 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 		}
 	}
 	return nil
+}
+
+// =========================================================================
+// Calibration master export (--export-masters) and self-flat (--self-flat)
+// =========================================================================
+
+// calibrationMaster names a master frame for export. Kind is used verbatim
+// in the output file names (master_<kind>.f32raw / .jpg).
+type calibrationMaster struct {
+	Kind  string
+	Frame *frame
+}
+
+// exportCalibrationMasters writes every non-nil master twice: a scientific
+// float32 raw file (same 8-byte header layout as the spill/work files) and a
+// linearly mapped JPEG preview. The preview uses a robust luminance range
+// (1st..99.5th percentile, shared by all channels) so vignetting and dust
+// stay visible without an artistic stretch. Returns the written paths and
+// human-readable report notes.
+func exportCalibrationMasters(outputDir string, masters []calibrationMaster) ([]string, []string, error) {
+	var files, notes []string
+	for _, m := range masters {
+		if m.Frame == nil {
+			continue
+		}
+		n := m.Frame.Width * m.Frame.Height
+		if m.Frame.Width <= 0 || m.Frame.Height <= 0 || len(m.Frame.Pix) != n*3 {
+			continue
+		}
+		raw := filepath.Join(outputDir, "master_"+m.Kind+".f32raw")
+		if err := writeSpillFrame(raw, m.Frame); err != nil {
+			return files, notes, fmt.Errorf("write %s: %w", raw, err)
+		}
+		jpg := filepath.Join(outputDir, "master_"+m.Kind+".jpg")
+		if err := writeFileAtomic(jpg, func(w io.Writer) error {
+			return writeMasterPreviewJPEG(w, m.Frame)
+		}); err != nil {
+			return files, notes, fmt.Errorf("write %s: %w", jpg, err)
+		}
+		minV, maxV := math.Inf(1), math.Inf(-1)
+		var meanR, meanG, meanB float64
+		for p := 0; p < n; p++ {
+			for c := 0; c < 3; c++ {
+				v := float64(m.Frame.Pix[p*3+c])
+				if math.IsNaN(v) || math.IsInf(v, 0) {
+					continue
+				}
+				if v < minV {
+					minV = v
+				}
+				if v > maxV {
+					maxV = v
+				}
+			}
+			meanR += float64(m.Frame.Pix[p*3])
+			meanG += float64(m.Frame.Pix[p*3+1])
+			meanB += float64(m.Frame.Pix[p*3+2])
+		}
+		if math.IsInf(minV, 1) {
+			minV, maxV = 0, 0
+		}
+		notes = append(notes, fmt.Sprintf(
+			"Master %s: %dx%d, min=%.5f max=%.5f, channel means R=%.5f G=%.5f B=%.5f; master_%s.jpg maps the 1st..99.5th luminance percentile linearly to 0..255 (preview only).",
+			m.Kind, m.Frame.Width, m.Frame.Height, minV, maxV,
+			meanR/float64(n), meanG/float64(n), meanB/float64(n), m.Kind))
+		files = append(files, raw, jpg)
+	}
+	return files, notes, nil
+}
+
+// writeMasterPreviewJPEG renders a master frame as a display preview using a
+// shared robust luminance range. It is deliberately linear (no gamma, no
+// auto-stretch) so structure in a flat/dark/bias remains interpretable.
+func writeMasterPreviewJPEG(w io.Writer, f *frame) error {
+	n := f.Width * f.Height
+	stride := n/50000 + 1
+	sample := make([]float32, 0, n/stride+1)
+	for p := 0; p < n; p++ {
+		l := (f.Pix[p*3] + f.Pix[p*3+1] + f.Pix[p*3+2]) / 3
+		if math.IsNaN(float64(l)) || math.IsInf(float64(l), 0) {
+			l = 0
+		}
+		if p%stride == 0 {
+			sample = append(sample, l)
+		}
+	}
+	var lo, hi float32
+	if len(sample) > 0 {
+		sort.Slice(sample, func(i, j int) bool { return sample[i] < sample[j] })
+		lo = sample[int(0.01*float64(len(sample)-1))]
+		hi = sample[int(0.995*float64(len(sample)-1))]
+		if !(hi > lo) {
+			lo, hi = sample[0], sample[len(sample)-1]
+		}
+	}
+	if !(hi > lo) {
+		lo, hi = 0, 1
+	}
+	scale := float32(1) / (hi - lo)
+	img := image.NewRGBA(image.Rect(0, 0, f.Width, f.Height))
+	for y := 0; y < f.Height; y++ {
+		rowOff := y * img.Stride
+		for x := 0; x < f.Width; x++ {
+			i := (y*f.Width + x) * 3
+			o := rowOff + x*4
+			for c := 0; c < 3; c++ {
+				img.Pix[o+c] = floatToByte((f.Pix[i+c] - lo) * scale)
+			}
+			img.Pix[o+3] = 255
+		}
+	}
+	return jpeg.Encode(w, img, &jpeg.Options{Quality: 90})
+}
+
+const selfFlatMinFrames = 15
+
+// selfFlatResult is the relative illumination map recovered from the lights.
+type selfFlatResult struct {
+	Frame       *frame
+	Frames      int
+	CenterEdge  float64
+	ResidualRMS float64
+	Medians     [3]float64
+}
+
+// selfFlatEligible decides whether --self-flat can run. A loaded flat always
+// wins, registration is mandatory (the flat is built in reference
+// coordinates), and the method needs enough dithered frames for rejection.
+func selfFlatEligible(registered int, registrationOn, hasRealFlat bool) (bool, string) {
+	if hasRealFlat {
+		return false, "--self-flat ignored: a loaded flat master takes precedence"
+	}
+	if !registrationOn {
+		return false, "--self-flat requires star registration (remove --no-register)"
+	}
+	if registered < selfFlatMinFrames {
+		return false, fmt.Sprintf("--self-flat needs at least %d registered frames, got %d; using the normal stack", selfFlatMinFrames, registered)
+	}
+	return true, ""
+}
+
+// frameLuminanceMedian estimates the median luminance with a stride so that
+// normalizing hundreds of frames stays cheap.
+func frameLuminanceMedian(f *frame) float32 {
+	n := f.Width * f.Height
+	if n <= 0 {
+		return 0
+	}
+	stride := n/20000 + 1
+	vals := make([]float32, 0, n/stride+1)
+	for p := 0; p < n; p += stride {
+		r, g, b := f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2]
+		if r < 0 || g < 0 || b < 0 {
+			continue
+		}
+		vals = append(vals, (r+g+b)/3)
+	}
+	return medianInPlace(vals)
+}
+
+// buildSelfFlat reduces the registered spill frames with a sigma-clipped mean
+// (per-frame sky levels normalized when medians are supplied) and normalizes
+// the result per channel. The map is relative: values hover around 1.0.
+func buildSelfFlat(spillPaths []string, refW, refH int, crop image.Rectangle,
+	tr float64, it, tileSize, workers int, medians []float32) (*selfFlatResult, error) {
+	if len(spillPaths) == 0 {
+		return nil, errors.New("self-flat: no registered spill frames")
+	}
+	if crop.Dx() <= 0 || crop.Dy() <= 0 {
+		return nil, errors.New("self-flat: empty crop")
+	}
+	var scales []float32
+	if len(medians) == len(spillPaths) {
+		cp := append([]float32(nil), medians...)
+		target := medianInPlace(cp)
+		if target > 0 {
+			scales = make([]float32, len(medians))
+			for i, m := range medians {
+				if m > 0 {
+					scales[i] = target / m
+				} else {
+					scales[i] = 1
+				}
+			}
+		}
+	}
+	_, mean, _, _, err := reduceTilesStack(spillPaths, refW, refH, crop,
+		"sigma", tr, it, tileSize, workers, nil, scales, nil)
+	if err != nil {
+		return nil, err
+	}
+	if mean == nil {
+		return nil, errors.New("self-flat: reduction returned no data")
+	}
+	f := &frame{Width: crop.Dx(), Height: crop.Dy(), Pix: mean}
+	res, err := normalizeSelfFlat(f)
+	if err != nil {
+		return nil, err
+	}
+	res.Frames = len(spillPaths)
+	return res, nil
+}
+
+// normalizeSelfFlat divides each channel by its median, clamps pathological
+// values to a safe multiplicative range, and computes the diagnostics.
+func normalizeSelfFlat(f *frame) (*selfFlatResult, error) {
+	n := f.Width * f.Height
+	if f.Width <= 0 || f.Height <= 0 || len(f.Pix) != n*3 {
+		return nil, fmt.Errorf("self-flat: invalid frame %dx%d", f.Width, f.Height)
+	}
+	var med [3]float64
+	stride := n/20000 + 1
+	for c := 0; c < 3; c++ {
+		vals := make([]float32, 0, n/stride+1)
+		for p := 0; p < n; p += stride {
+			v := f.Pix[p*3+c]
+			if v > 0 && !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) {
+				vals = append(vals, v)
+			}
+		}
+		med[c] = float64(medianInPlace(vals))
+	}
+	for p := 0; p < n; p++ {
+		for c := 0; c < 3; c++ {
+			v := f.Pix[p*3+c]
+			if med[c] > 0 {
+				v = float32(float64(v) / med[c])
+			} else {
+				v = 1
+			}
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || v <= 0 {
+				v = 1
+			}
+			if v < 0.05 {
+				v = 0.05
+			} else if v > 20 {
+				v = 20
+			}
+			f.Pix[p*3+c] = v
+		}
+	}
+	return &selfFlatResult{
+		Frame:       f,
+		CenterEdge:  centerEdgeRatio(f),
+		ResidualRMS: flatResidualRMS(f),
+		Medians:     med,
+	}, nil
+}
+
+// centerEdgeRatio compares the mean luminance of a central box with the mean
+// of a border frame. For a normalized flat this is the recovered vignetting
+// ratio (e.g. ~1.24 for the Orion-135mm lights).
+func centerEdgeRatio(f *frame) float64 {
+	w, h := f.Width, f.Height
+	if w < 4 || h < 4 {
+		return 1
+	}
+	bw := w / 10
+	if bw < 1 {
+		bw = 1
+	}
+	bh := h / 10
+	if bh < 1 {
+		bh = 1
+	}
+	cx0, cx1 := w/2-bw/2, w/2+bw/2
+	cy0, cy1 := h/2-bh/2, h/2+bh/2
+	var cSum, cN, bSum, bN float64
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			p := y*w + x
+			v := (float64(f.Pix[p*3]) + float64(f.Pix[p*3+1]) + float64(f.Pix[p*3+2])) / 3
+			if x >= cx0 && x < cx1 && y >= cy0 && y < cy1 {
+				cSum += v
+				cN++
+			}
+			if x < bw || x >= w-bw || y < bh || y >= h-bh {
+				bSum += v
+				bN++
+			}
+		}
+	}
+	if cN == 0 || bN == 0 || bSum == 0 {
+		return 1
+	}
+	return (cSum / cN) / (bSum / bN)
+}
+
+// flatResidualRMS measures how far the normalized flat departs from unity,
+// ignoring extreme outliers (stars/residuals) outside [0.2, 5].
+func flatResidualRMS(f *frame) float64 {
+	n := f.Width * f.Height
+	var sum float64
+	var cnt int
+	for p := 0; p < n; p++ {
+		v := (float64(f.Pix[p*3]) + float64(f.Pix[p*3+1]) + float64(f.Pix[p*3+2])) / 3
+		if v < 0.2 || v > 5 {
+			continue
+		}
+		d := v - 1
+		sum += d * d
+		cnt++
+	}
+	if cnt == 0 {
+		return 0
+	}
+	return math.Sqrt(sum / float64(cnt))
+}
+
+// applyFlatToFrame divides the pixels inside rect by a crop-sized flat. Used
+// by the arithmetic-mean path, which accumulates only after the flat exists.
+func applyFlatToFrame(f *frame, flat *frame, rect image.Rectangle) {
+	if f == nil || flat == nil {
+		return
+	}
+	y0 := rect.Min.Y
+	if y0 < 0 {
+		y0 = 0
+	}
+	y1 := rect.Max.Y
+	if y1 > f.Height {
+		y1 = f.Height
+	}
+	x0 := rect.Min.X
+	if x0 < 0 {
+		x0 = 0
+	}
+	x1 := rect.Max.X
+	if x1 > f.Width {
+		x1 = f.Width
+	}
+	for y := y0; y < y1; y++ {
+		fy := y - rect.Min.Y
+		if fy < 0 || fy >= flat.Height {
+			continue
+		}
+		for x := x0; x < x1; x++ {
+			fx := x - rect.Min.X
+			if fx < 0 || fx >= flat.Width {
+				continue
+			}
+			fp := (fy*flat.Width + fx) * 3
+			tp := (y*f.Width + x) * 3
+			for c := 0; c < 3; c++ {
+				d := flat.Pix[fp+c]
+				if d > 1e-6 && f.Pix[tp+c] >= 0 {
+					f.Pix[tp+c] /= d
+				}
+			}
+		}
+	}
 }
 
 // writeCoverageMap writes a per-pixel coverage map: each pixel's value
@@ -5327,6 +5863,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	// ============== Pass 1: decode, detect stars, accumulate unregistered
 	unregAcc := newAccumulator(refW, refH)
+	unregValidCount := make([]int32, refW*refH)
 	var maxPix, minPix []float32
 	var spillPaths1 []string
 	var spillDir1, spillDir2 string
@@ -5344,6 +5881,17 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return fmt.Errorf("create spill dir 1: %w", err)
 		}
 	}
+	var bpmPoints []badPixelPoint
+	if opts.BPMFile != "" {
+		pts, err := loadBadPixelMap(opts.BPMFile)
+		if err != nil {
+			return err
+		}
+		bpmPoints = pts
+		logf("Bad pixel map: %s (%d pixels)", opts.BPMFile, len(pts))
+	}
+	bpmMaskedCount := 0
+	bpmCounted := false
 	starLists := make([][]star, len(candidates))
 	var accepted []candidate
 	for i, c := range candidates {
@@ -5365,6 +5913,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				subtractBlackLevel(f, lvl)
 				c.blackLevel = lvl
 				c.hasBlackLevel = true
+			}
+		}
+		if bpmPoints != nil {
+			n := applyBadPixelMap(f, bpmPoints, opts.Scale)
+			if !bpmCounted {
+				bpmMaskedCount = n
+				bpmCounted = true
 			}
 		}
 		if maxPix == nil {
@@ -5405,7 +5960,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		// correct (it is the plain arithmetic mean without any
 		// registration), while the sigma/median reduction writes
 		// its own outputs into unregSumPix / unregMeanPix below.
-		if err := unregAcc.addFrame(f, workers); err != nil {
+		if err := unregAcc.addFrameMasked(f, workers, unregValidCount); err != nil {
 			return fmt.Errorf("accumulate %s: %w", c.path, err)
 		}
 		f.Pix = nil
@@ -5668,6 +6223,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	cropExplanation := ""
 	var regSumPix, regMeanPix, regRejPix, regWgtPix []float32
 	var spillPaths2 []string
+	var spillMedians []float32
+	var selfFlat *selfFlatResult
+	var selfFlatCorrection *flatCorrection
+	selfFlatActive := false
+	selfFlatApplied := false
+	if opts.SelfFlat {
+		var why string
+		selfFlatActive, why = selfFlatEligible(registeredCount, registrationOn, flatFrame != nil)
+		if !selfFlatActive {
+			logf("WARNING: %s", why)
+		}
+	}
 	var needsNormalize bool
 	var normRefGlobal normStats
 	var normRefTiles []normStats
@@ -5728,7 +6295,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		regAcc = newAccumulator(refW, refH)
 		validCount = make([]int32, refW*refH)
-		if opts.Method == "median" || opts.Method == "sigma" {
+		if opts.Method != "mean" || selfFlatActive {
 			spillDir2 = filepath.Join(outputDir, "_work", "_spill2")
 			if err := os.MkdirAll(spillDir2, 0o755); err != nil {
 				return fmt.Errorf("create spill dir 2: %w", err)
@@ -5761,6 +6328,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					subtractBlackLevel(f, lvl)
 				}
 			}
+			if bpmPoints != nil {
+				applyBadPixelMap(f, bpmPoints, opts.Scale)
+			}
 			var resampled *frame
 			if transforms[i].aff != nil {
 				resampled = resampleToReferenceAffine(f, *transforms[i].aff, refW, refH, workers)
@@ -5778,12 +6348,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					resampled = globalNormalizeWithRef(resampled, normRefGlobal)
 				}
 			}
-			if opts.Method == "mean" {
+			if opts.Method == "mean" && !selfFlatActive {
 				if err := regAcc.addFrameMasked(resampled, workers, validCount); err != nil {
 					return fmt.Errorf("accumulate %s: %w", c.path, err)
 				}
 			} else {
 				updateValidCount(resampled, validCount)
+				if selfFlatActive {
+					spillMedians = append(spillMedians, frameLuminanceMedian(resampled))
+				}
 				sp := filepath.Join(spillDir2, fmt.Sprintf("frame_%04d.f32raw", len(spillPaths2)))
 				if err := writeSpillFrame(sp, resampled); err != nil {
 					return fmt.Errorf("spill resampled %s: %w", c.path, err)
@@ -5983,24 +6556,66 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 
+	// ============== Self-flat derivation (--self-flat)
+	tr := opts.SigmaClipThreshold
+	if tr <= 0 {
+		tr = 3.0
+	}
+	it := opts.SigmaClipIters
+	if it < 1 {
+		it = 1
+	}
+	if selfFlatActive {
+		if len(spillPaths2) < selfFlatMinFrames || cropRect.Dx() <= 0 || cropRect.Dy() <= 0 {
+			logf("WARNING: --self-flat disabled: only %d registered frames have spill data", len(spillPaths2))
+			selfFlatActive = false
+		} else {
+			sr, sferr := buildSelfFlat(spillPaths2, refW, refH, cropRect, tr, 1, opts.TileSize, workers, spillMedians)
+			if sferr != nil {
+				logf("WARNING: --self-flat failed, continuing without it: %v", sferr)
+				selfFlatActive = false
+			} else if sr.CenterEdge < 0.5 || sr.CenterEdge > 5.0 {
+				logf("WARNING: --self-flat rejected: implausible center/edge ratio %.3f", sr.CenterEdge)
+				selfFlatActive = false
+			} else {
+				selfFlat = sr
+				selfFlatApplied = true
+				selfFlatCorrection = &flatCorrection{frame: sr.Frame, rect: cropRect}
+				logf("Self-flat: %d frames, center/edge=%.4f, residual RMS=%.5f", sr.Frames, sr.CenterEdge, sr.ResidualRMS)
+			}
+		}
+	}
+	// Arithmetic-mean stacking skipped accumulation while the flat was being
+	// derived. Accumulate now, applying the flat when it is available.
+	if opts.Method == "mean" && opts.SelfFlat && len(spillPaths2) > 0 {
+		regAcc = newAccumulator(refW, refH)
+		validCount = make([]int32, refW*refH)
+		for _, sp := range spillPaths2 {
+			f, rerr := readSpillFrame(sp, refW, refH)
+			if rerr != nil {
+				return fmt.Errorf("reload spill2 %s: %w", sp, rerr)
+			}
+			if selfFlatApplied {
+				applyFlatToFrame(f, selfFlat.Frame, cropRect)
+			}
+			if aerr := regAcc.addFrameMasked(f, workers, validCount); aerr != nil {
+				return fmt.Errorf("accumulate %s: %w", sp, aerr)
+			}
+			f.Pix = nil
+		}
+		runtime.GC()
+	}
+
 	// ============== Tiled median/sigma reduction (spill-based)
 	var unregSumPix, unregMeanPix []float32
 	var unregRejPix, unregWgtPix []float32
 	if opts.Method == "median" || opts.Method == "sigma" {
 		// Unregistered stack: full frame, all accepted frames.
-		tr := opts.SigmaClipThreshold
-		if tr <= 0 {
-			tr = 3.0
-		}
-		it := opts.SigmaClipIters
-		if it < 1 {
-			it = 1
-		}
 		logf("Reducing unregistered stack (%s, %d frames, full frame)...",
 			opts.Method, len(spillPaths1))
 		sum1, mean1, rej1, wgt1, rerr := reduceTilesStack(
 			spillPaths1, refW, refH, image.Rect(0, 0, refW, refH),
-			opts.Method, tr, it, opts.TileSize, workers, unregWeights)
+			opts.Method, tr, it, opts.TileSize, workers, unregWeights, nil, nil)
 		if rerr != nil {
 			return fmt.Errorf("reduce unregistered: %w", rerr)
 		}
@@ -6024,7 +6639,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				opts.Method, len(spillPaths2), cropRect.Dx(), cropRect.Dy())
 			sum2, mean2, rej2, wgt2, rerr := reduceTilesStack(
 				spillPaths2, refW, refH, cropRect,
-				opts.Method, tr, it, opts.TileSize, workers, validFrameWeights)
+				opts.Method, tr, it, opts.TileSize, workers, validFrameWeights, nil, selfFlatCorrection)
 			if rerr != nil {
 				return fmt.Errorf("reduce registered: %w", rerr)
 			}
@@ -6040,6 +6655,32 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	// ============== Write outputs
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
+	}
+	selfFlatRawPath := ""
+	if selfFlatApplied {
+		selfFlatRawPath = filepath.Join(outputDir, "master_self_flat.f32raw")
+		if !opts.ExportMasters {
+			if err := writeSpillFrame(selfFlatRawPath, selfFlat.Frame); err != nil {
+				return fmt.Errorf("write self-flat master: %w", err)
+			}
+		}
+	}
+	var masterExports, masterNotes []string
+	if opts.ExportMasters {
+		masters := []calibrationMaster{
+			{Kind: "bias", Frame: biasFrame},
+			{Kind: "dark", Frame: darkFrame},
+			{Kind: "flat", Frame: flatFrame},
+		}
+		if selfFlatApplied {
+			masters = append(masters, calibrationMaster{Kind: "self_flat", Frame: selfFlat.Frame})
+		}
+		files, mnotes, merr := exportCalibrationMasters(outputDir, masters)
+		if merr != nil {
+			return fmt.Errorf("export masters: %w", merr)
+		}
+		masterExports = files
+		masterNotes = mnotes
 	}
 	workDir := filepath.Join(outputDir, "_work")
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
@@ -6183,7 +6824,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				sumMax = 1.0
 			}
 			sumPix = unregAcc.Pix
-			unregAcc.divide()
+			unregAcc.divideByCount(unregValidCount)
 			meanPix = unregAcc.Pix
 		}
 		sumDivisor := float32(1.0)
@@ -6265,7 +6906,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	// plain arithmetic mean over all accepted frames, which
 	// is what stacked_no_correction_mean.jpg is documented to
 	// be even when --method is median or sigma.
-	unregAcc.divide()
+	unregAcc.divideByCount(unregValidCount)
 	logf("Writing no-correction mean preview")
 	if err := writeFileAtomic(noCorrJPG, func(w io.Writer) error {
 		return writePreviewJPEG(w, refW, refH, unregAcc.Pix)
@@ -6291,9 +6932,32 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	// Report
 	notes := []string{
-		"No calibration (dark, flat, bias) was performed.",
 		"JPEG inputs are gamma-encoded (sRGB-like); samples were averaged in encoded space, not linear light.",
 		"All JPG outputs are display previews, not scientific outputs.",
+	}
+	if darkFrame == nil && flatFrame == nil && biasFrame == nil && !selfFlatApplied {
+		notes = append(notes, "No calibration (dark, flat, bias) was performed.")
+	} else {
+		var applied []string
+		if biasFrame != nil {
+			applied = append(applied, "bias")
+		}
+		if darkFrame != nil {
+			applied = append(applied, "dark")
+		}
+		if flatFrame != nil {
+			applied = append(applied, "flat")
+		}
+		if selfFlatApplied {
+			applied = append(applied, "self-flat")
+		}
+		notes = append(notes, "Calibration applied: "+strings.Join(applied, ", ")+".")
+	}
+	notes = append(notes, masterNotes...)
+	if selfFlatApplied {
+		notes = append(notes, fmt.Sprintf(
+			"Self-flat: derived from %d registered frames by a sigma-clipped mean in reference coordinates and applied after registration (center/edge=%.4f, residual RMS=%.5f). This is a relative illumination correction, not a sensor-level flat; astrophysical structure common to all frames can bias it, and it cannot repair pre-alignment sensor defects.",
+			selfFlat.Frames, selfFlat.CenterEdge, selfFlat.ResidualRMS))
 	}
 	if regRejPix != nil || unregRejPix != nil {
 		notes = append(notes,
@@ -6359,33 +7023,55 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		blackLevelApplied = true
 		break
 	}
+	selfFlatFrames := 0
+	selfFlatCenter := 0.0
+	selfFlatResidual := 0.0
+	if selfFlat != nil {
+		selfFlatFrames = selfFlat.Frames
+		selfFlatCenter = selfFlat.CenterEdge
+		selfFlatResidual = selfFlat.ResidualRMS
+	}
+	outputFiles := append(append(append([]string{},
+		append(appendIf(opts.CreateTIFF, sumTiff), appendIf(step0Path != "", step0Path)...)...),
+		sumJPG, meanJPG, noCorrJPG, maxJPG, minJPG,
+	), append(postOutputs, reportTxt)...)
+	outputFiles = append(outputFiles, masterExports...)
+	if selfFlatRawPath != "" && !opts.ExportMasters {
+		outputFiles = append(outputFiles, selfFlatRawPath)
+	}
 	rep := &processingReport{
-		Version:           version,
-		Timestamp:         start,
-		InputDir:          inputDir,
-		OutputDir:         outputDir,
-		Discovered:        len(files),
-		Accepted:          acceptedPaths,
-		Rejected:          rejected,
-		Width:             refW,
-		Height:            refH,
-		Channels:          3,
-		Method:            methodString(registrationOn, opts.Method),
-		AccumulatorType:   "float32 (interleaved RGB)",
-		OutputFormat:      "TIFF: uncompressed, little-endian, RGB, IEEE float32, single strip. JPG: 8-bit, gamma 0.5 display preview.",
-		OutputScaling:     scalingString(registrationOn, opts.Method),
-		RegistrationOn:    registrationOn,
-		RegisteredCount:   registeredCount,
-		RegistrationFails: regFailures,
-		CropRect:          cropRect,
-		SumNormalization:  sumMax,
-		BlackLevelTag:     blackLevelTag,
-		BlackLevelValue:   blackLevelValue,
-		BlackLevelApplied: blackLevelApplied,
-		OutputFiles: append(append(append([]string{},
-			append(appendIf(opts.CreateTIFF, sumTiff), appendIf(step0Path != "", step0Path)...)...),
-			sumJPG, meanJPG, noCorrJPG, maxJPG, minJPG,
-		), append(postOutputs, reportTxt)...),
+		Version:            version,
+		Timestamp:          start,
+		InputDir:           inputDir,
+		OutputDir:          outputDir,
+		Discovered:         len(files),
+		Accepted:           acceptedPaths,
+		Rejected:           rejected,
+		Width:              refW,
+		Height:             refH,
+		Channels:           3,
+		Method:             methodString(registrationOn, opts.Method),
+		AccumulatorType:    "float32 (interleaved RGB)",
+		OutputFormat:       "TIFF: uncompressed, little-endian, RGB, IEEE float32, single strip. JPG: 8-bit, gamma 0.5 display preview.",
+		OutputScaling:      scalingString(registrationOn, opts.Method),
+		RegistrationOn:     registrationOn,
+		RegisteredCount:    registeredCount,
+		RegistrationFails:  regFailures,
+		CropRect:           cropRect,
+		SumNormalization:   sumMax,
+		BlackLevelTag:      blackLevelTag,
+		BlackLevelValue:    blackLevelValue,
+		BlackLevelApplied:  blackLevelApplied,
+		BPMApplied:         bpmPoints != nil,
+		BPMPath:            opts.BPMFile,
+		BPMPixelCount:      bpmMaskedCount,
+		SelfFlatApplied:    selfFlatApplied,
+		SelfFlatFrames:     selfFlatFrames,
+		SelfFlatPath:       selfFlatRawPath,
+		SelfFlatCenterEdge: selfFlatCenter,
+		SelfFlatResidual:   selfFlatResidual,
+		MasterExports:      masterExports,
+		OutputFiles:        outputFiles,
 		Workers:            workers,
 		Duration:           time.Since(start),
 		PostProcessApplied: opts.PostProcess && !opts.StackOnly,
@@ -10301,6 +10987,194 @@ func testSyntheticCalibParseArgs() error {
 	return nil
 }
 
+// testSelfFlatEligible asserts the gating rules for --self-flat.
+func testSelfFlatEligible() error {
+	if ok, _ := selfFlatEligible(30, true, false); !ok {
+		return errors.New("self-flat should be eligible with 30 registered frames")
+	}
+	if ok, _ := selfFlatEligible(14, true, false); ok {
+		return errors.New("self-flat should reject fewer than the minimum frames")
+	}
+	if ok, _ := selfFlatEligible(30, false, false); ok {
+		return errors.New("self-flat requires registration")
+	}
+	if ok, _ := selfFlatEligible(30, true, true); ok {
+		return errors.New("an explicit flat must win over --self-flat")
+	}
+	return nil
+}
+
+// testSelfFlatRecovery feeds a synthetic vignetting profile plus moving
+// outliers to buildSelfFlat and checks that the recovered map matches the
+// truth and that the outliers were rejected.
+func testSelfFlatRecovery() error {
+	const w, h = 64, 64
+	const frames = 20
+	dir, err := os.MkdirTemp("", "skystacker-selfflat-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	trueFlat := make([]float32, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx := (float64(x) - 31.5) / 32
+			dy := (float64(y) - 31.5) / 32
+			trueFlat[y*w+x] = float32(1.0 - 0.10*(dx*dx+dy*dy))
+		}
+	}
+	var paths []string
+	for i := 0; i < frames; i++ {
+		pix := make([]float32, w*h*3)
+		sx := 5 + (i*7)%(w-10)
+		sy := 5 + (i*11)%(h-10)
+		for p := 0; p < w*h; p++ {
+			for c := 0; c < 3; c++ {
+				pix[p*3+c] = trueFlat[p]
+			}
+		}
+		sidx := (sy*w + sx) * 3
+		pix[sidx] += 5
+		pix[sidx+1] += 5
+		pix[sidx+2] += 5
+		sp := filepath.Join(dir, fmt.Sprintf("frame_%03d.f32raw", i))
+		if err := writeSpillFrame(sp, &frame{Width: w, Height: h, Pix: pix}); err != nil {
+			return err
+		}
+		paths = append(paths, sp)
+	}
+	sr, err := buildSelfFlat(paths, w, h, image.Rect(0, 0, w, h), 3.0, 1, 64, 1, nil)
+	if err != nil {
+		return err
+	}
+	if sr.Frames != frames {
+		return fmt.Errorf("self-flat used %d frames, want %d", sr.Frames, frames)
+	}
+	truthVals := append([]float32(nil), trueFlat...)
+	sort.Slice(truthVals, func(i, j int) bool { return truthVals[i] < truthVals[j] })
+	truthMed := truthVals[len(truthVals)/2]
+	var sumSq float64
+	for p, want := range trueFlat {
+		got := sr.Frame.Pix[p*3]
+		exp := want / truthMed
+		d := float64(got - exp)
+		sumSq += d * d
+	}
+	rms := math.Sqrt(sumSq / float64(w*h))
+	if rms > 0.03 {
+		return fmt.Errorf("self-flat RMS %.4f exceeds tolerance 0.03", rms)
+	}
+	center := sr.Frame.Pix[(32*w+32)*3]
+	corner := sr.Frame.Pix[(1*w+1)*3]
+	if center <= corner {
+		return fmt.Errorf("self-flat center %.3f not brighter than corner %.3f", center, corner)
+	}
+	return nil
+}
+
+// testExportCalibrationMasters checks that each non-nil master produces a
+// .f32raw and a .jpg preview, that nil masters are skipped, and that the flat
+// preview preserves the vignetting and a dust spot.
+func testExportCalibrationMasters() error {
+	dir, err := os.MkdirTemp("", "skystacker-masters-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 64, 64
+	mk := func(fill float32) *frame {
+		pix := make([]float32, w*h*3)
+		for i := range pix {
+			pix[i] = fill
+		}
+		return &frame{Width: w, Height: h, Pix: pix}
+	}
+	flat := mk(1)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx := (float64(x) - 31.5) / 32
+			dy := (float64(y) - 31.5) / 32
+			v := float32(1.0 - 0.10*(dx*dx+dy*dy))
+			for c := 0; c < 3; c++ {
+				flat.Pix[(y*w+x)*3+c] = v
+			}
+		}
+	}
+	for y := 8; y < 11; y++ {
+		for x := 8; x < 11; x++ {
+			dx := (float64(x) - 31.5) / 32
+			dy := (float64(y) - 31.5) / 32
+			v := 0.85 * float32(1.0-0.10*(dx*dx+dy*dy))
+			for c := 0; c < 3; c++ {
+				flat.Pix[(y*w+x)*3+c] = v
+			}
+		}
+	}
+	dark := mk(0.02)
+	for c := 0; c < 3; c++ {
+		dark.Pix[(5*w+5)*3+c] = 1.0
+	}
+	bias := mk(0.01)
+	masters := []calibrationMaster{
+		{Kind: "bias", Frame: bias},
+		{Kind: "dark", Frame: dark},
+		{Kind: "flat", Frame: flat},
+		{Kind: "self_flat", Frame: nil},
+	}
+	files, notes, err := exportCalibrationMasters(dir, masters)
+	if err != nil {
+		return err
+	}
+	if len(files) != 6 {
+		return fmt.Errorf("exported %d files, want 6", len(files))
+	}
+	if len(notes) != 3 {
+		return fmt.Errorf("exported %d notes, want 3 (nil masters are skipped)", len(notes))
+	}
+	lumAt := func(name string, x, y int) (int, error) {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return 0, err
+		}
+		img, _, err := image.Decode(bytes.NewReader(b))
+		if err != nil {
+			return 0, err
+		}
+		r, _, _, _ := img.At(x, y).RGBA()
+		return int(r >> 8), nil
+	}
+	center, err := lumAt("master_flat.jpg", 16, 16)
+	if err != nil {
+		return err
+	}
+	corner, err := lumAt("master_flat.jpg", 1, 1)
+	if err != nil {
+		return err
+	}
+	dust, err := lumAt("master_flat.jpg", 9, 9)
+	if err != nil {
+		return err
+	}
+	ring, err := lumAt("master_flat.jpg", 12, 8)
+	if err != nil {
+		return err
+	}
+	if center-corner < 10 {
+		return fmt.Errorf("flat preview contrast too low (center=%d corner=%d)", center, corner)
+	}
+	if dust >= ring-5 {
+		return fmt.Errorf("flat preview dust spot missing (dust=%d ring=%d)", dust, ring)
+	}
+	hot, err := lumAt("master_dark.jpg", 5, 5)
+	if err != nil {
+		return err
+	}
+	if hot < 60 {
+		return fmt.Errorf("dark preview hot pixel too dim (%d)", hot)
+	}
+	return nil
+}
+
 func runSelfTests() int {
 	cases := []testCase{
 		{"accumulator sum and mean", testAccumulatorSumMean},
@@ -10359,6 +11233,7 @@ func runSelfTests() int {
 		{"parse dcraw output", testParseDcrawOutput},
 		{"black point shift", testBlackPointShift},
 		{"subtract black level", testSubtractBlackLevel},
+		{"bpm masks pixels", testBPMMasksPixels},
 		{"frame bg noise reported", testFrameBgNoiseReported},
 		{"MTF", testMTF},
 		{"auto stretch", testAutoStretch},
@@ -10468,6 +11343,9 @@ func runSelfTests() int {
 		{"synthetic calib guardrail bias only", testSyntheticCalibGuardrailBiasOnly},
 		{"synthetic calib refusal message", testSyntheticCalibRefusalMessage},
 		{"synthetic calib parse args", testSyntheticCalibParseArgs},
+		{"self-flat eligibility", testSelfFlatEligible},
+		{"self-flat recovery", testSelfFlatRecovery},
+		{"calibration master export", testExportCalibrationMasters},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -11862,6 +12740,191 @@ func testFrameBgNoiseReported() error {
 	return nil
 }
 
+func testBPMMasksPixels() error {
+	dir, err := os.MkdirTemp("", "skystacker-bpm-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	// Text map: comments, blank lines, inline comments, and coordinates.
+	text := "# bad pixels\n\n5,5  # hot pixel\n7 9\n"
+	textPath := filepath.Join(dir, "bad.map")
+	if err := os.WriteFile(textPath, []byte(text), 0o644); err != nil {
+		return err
+	}
+	pts, err := loadBadPixelMap(textPath)
+	if err != nil {
+		return fmt.Errorf("load text BPM: %w", err)
+	}
+	if len(pts) != 2 || pts[0] != (badPixelPoint{5, 5}) || pts[1] != (badPixelPoint{7, 9}) {
+		return fmt.Errorf("text BPM = %v, want [{5 5} {7 9}]", pts)
+	}
+
+	// Malformed text maps must be rejected, not silently ignored.
+	for _, bad := range []string{"5\n", "5,x\n", "5,-1\n", "-2,3\n", "1,2,3\n"} {
+		p := filepath.Join(dir, "bad_line.map")
+		if err := os.WriteFile(p, []byte(bad), 0o644); err != nil {
+			return err
+		}
+		if _, err := loadBadPixelMap(p); err == nil {
+			return fmt.Errorf("malformed BPM %q accepted", strings.TrimSpace(bad))
+		}
+	}
+	if _, err := loadBadPixelMap(filepath.Join(dir, "missing.map")); err == nil {
+		return errors.New("missing BPM file accepted")
+	}
+
+	// FITS map: a 10x10 image with one non-zero pixel at (3,4).
+	var buf bytes.Buffer
+	header := []string{
+		"SIMPLE  =                    T",
+		"BITPIX  =                   16",
+		"NAXIS   =                    2",
+		"NAXIS1  =                   10",
+		"NAXIS2  =                   10",
+		"BSCALE  =                  1.0",
+		"BZERO   =                  0.0",
+		"END",
+	}
+	for _, line := range header {
+		buf.WriteString(fmt.Sprintf("%-80s", line))
+	}
+	for buf.Len()%2880 != 0 {
+		buf.WriteByte(' ')
+	}
+	payload := make([]byte, 10*10*2)
+	binary.BigEndian.PutUint16(payload[(4*10+3)*2:], 1)
+	buf.Write(payload)
+	fitsPath := filepath.Join(dir, "bad.fits")
+	if err := os.WriteFile(fitsPath, buf.Bytes(), 0o644); err != nil {
+		return err
+	}
+	fitsPts, err := loadBadPixelMap(fitsPath)
+	if err != nil {
+		return fmt.Errorf("load FITS BPM: %w", err)
+	}
+	if len(fitsPts) != 1 || fitsPts[0] != (badPixelPoint{3, 4}) {
+		return fmt.Errorf("FITS BPM = %v, want [{3 4}]", fitsPts)
+	}
+
+	// 3 frames: the target pixel is bright in frame 0 and normal elsewhere.
+	const w, h = 16, 16
+	const tx, ty = 5, 5
+	makeFrame := func(bright float32) *frame {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for i := 0; i < w*h; i++ {
+			for c := 0; c < 3; c++ {
+				f.Pix[i*3+c] = 0.10
+			}
+		}
+		i := (ty*w + tx) * 3
+		f.Pix[i], f.Pix[i+1], f.Pix[i+2] = bright, bright, bright
+		return f
+	}
+	stackFrames := func(fs []*frame, mask func(int) bool) (*accumulator, []int32, error) {
+		acc := newAccumulator(w, h)
+		counts := make([]int32, w*h)
+		for i, f := range fs {
+			if mask(i) {
+				applyBadPixelMap(f, []badPixelPoint{{X: tx, Y: ty}}, 1)
+			}
+			if err := acc.addFrameMasked(f, 1, counts); err != nil {
+				return nil, nil, err
+			}
+		}
+		acc.divideByCount(counts)
+		return acc, counts, nil
+	}
+	idx := ty*w + tx
+
+	// Negative control: without a BPM the bright value leaks through.
+	noSum, noCounts, err := stackFrames(
+		[]*frame{makeFrame(0.95), makeFrame(0.10), makeFrame(0.10)},
+		func(int) bool { return false },
+	)
+	if err != nil {
+		return err
+	}
+	if got := noSum.Pix[idx*3]; math.Abs(float64(got)-0.3833333) > 1e-4 {
+		return fmt.Errorf("no-BPM stack at hot pixel = %.6f, want %.6f", got, 0.3833333)
+	}
+	if noCounts[idx] != 3 {
+		return fmt.Errorf("no-BPM valid count = %d, want 3", noCounts[idx])
+	}
+
+	// Mask only the frame that carries the hot value: the result must equal
+	// the mean of the other two frames (0.10), not 0.95.
+	sum, counts, err := stackFrames(
+		[]*frame{makeFrame(0.95), makeFrame(0.10), makeFrame(0.10)},
+		func(i int) bool { return i == 0 },
+	)
+	if err != nil {
+		return err
+	}
+	if got := sum.Pix[idx*3]; math.Abs(float64(got)-0.10) > 1e-6 {
+		return fmt.Errorf("masked-one stack at hot pixel = %.6f, want 0.10", got)
+	}
+	if counts[idx] != 2 {
+		return fmt.Errorf("masked-one valid count = %d, want 2", counts[idx])
+	}
+	if got := sum.Pix[(idx+1)*3]; math.Abs(float64(got)-0.10) > 1e-6 {
+		return fmt.Errorf("neighbour pixel changed to %.6f, want 0.10", got)
+	}
+
+	// Mask every frame: no valid samples remain at the hot pixel.
+	sumAll, countsAll, err := stackFrames(
+		[]*frame{makeFrame(0.95), makeFrame(0.10), makeFrame(0.10)},
+		func(int) bool { return true },
+	)
+	if err != nil {
+		return err
+	}
+	if got := sumAll.Pix[idx*3]; got != 0 {
+		return fmt.Errorf("mask-all stack at hot pixel = %.6f, want 0", got)
+	}
+	if countsAll[idx] != 0 {
+		return fmt.Errorf("mask-all valid count = %d, want 0", countsAll[idx])
+	}
+
+	// --scale maps native coordinates to the decoded frame grid.
+	scaled := makeFrame(0.10)
+	if n := applyBadPixelMap(scaled, []badPixelPoint{{X: 10, Y: 10}}, 2); n != 1 {
+		return fmt.Errorf("scaled mask count = %d, want 1", n)
+	}
+	if scaled.Pix[((10/2)*w+(10/2))*3] != -1 {
+		return errors.New("scaled mask did not mark the divided coordinate")
+	}
+	if n := applyBadPixelMap(scaled, []badPixelPoint{{X: 9999, Y: 9999}}, 1); n != 0 {
+		return fmt.Errorf("out-of-frame mask count = %d, want 0", n)
+	}
+
+	// CLI wiring and report line.
+	opts, err := parseArgs([]string{"--bpm", textPath, "input"})
+	if err != nil {
+		return err
+	}
+	if opts.BPMFile != textPath {
+		return fmt.Errorf("--bpm parsed to %q, want %q", opts.BPMFile, textPath)
+	}
+	def, err := parseArgs(nil)
+	if err != nil {
+		return err
+	}
+	if def.BPMFile != "" {
+		return fmt.Errorf("--bpm default = %q, want empty", def.BPMFile)
+	}
+	rep := &processingReport{BPMApplied: true, BPMPath: textPath, BPMPixelCount: 2}
+	var out bytes.Buffer
+	if err := rep.writeTo(&out); err != nil {
+		return err
+	}
+	if !strings.Contains(out.String(), "Bad pixel map: "+textPath+" (2 pixels masked)") {
+		return errors.New("report omits the bad-pixel map line")
+	}
+	return nil
+}
+
 func testBlackPointShift() error {
 	const w, h = 10, 10
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
@@ -12438,7 +13501,7 @@ func testReduceTilesStackWeightedMedian() error {
 	}
 	_, meanW, _, _, err := reduceTilesStack(
 		spillPaths, w, h, image.Rect(0, 0, w, h),
-		"median", 3.0, 2, 16, 1, weights)
+		"median", 3.0, 2, 16, 1, weights, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -12447,7 +13510,7 @@ func testReduceTilesStackWeightedMedian() error {
 	}
 	_, meanUnw, _, _, err := reduceTilesStack(
 		spillPaths, w, h, image.Rect(0, 0, w, h),
-		"median", 3.0, 2, 16, 1, nil)
+		"median", 3.0, 2, 16, 1, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -12490,7 +13553,7 @@ func testReduceTilesStack() error {
 	}
 	sumPix, meanPix, rejPix, wgtPix, err := reduceTilesStack(
 		spillPaths, w, h, image.Rect(0, 0, w, h),
-		"sigma", 3.0, 2, 16, 1, nil)
+		"sigma", 3.0, 2, 16, 1, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -12587,7 +13650,7 @@ func testReduceTilesStackWeighted() error {
 	}
 	_, meanW, _, _, err := reduceTilesStack(
 		spillPaths, w, h, image.Rect(0, 0, w, h),
-		"sigma", 3.0, 2, 16, 1, weights)
+		"sigma", 3.0, 2, 16, 1, weights, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -12597,7 +13660,7 @@ func testReduceTilesStackWeighted() error {
 	}
 	_, meanUnw, _, _, err := reduceTilesStack(
 		spillPaths, w, h, image.Rect(0, 0, w, h),
-		"sigma", 3.0, 2, 16, 1, nil)
+		"sigma", 3.0, 2, 16, 1, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -17010,6 +18073,9 @@ func main() {
 		LNTileSize:           opts.LNTileSize,
 		SynthCalib:           opts.SynthCalib,
 		BlackLevel:           opts.BlackLevel,
+		BPMFile:              opts.BPMFile,
+		ExportMasters:        opts.ExportMasters,
+		SelfFlat:             opts.SelfFlat,
 		CreateTIFF:           opts.CreateTIFF,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,

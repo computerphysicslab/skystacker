@@ -94,6 +94,20 @@ Calibration frames can be supplied explicitly:
 
 You can pass individual calibration paths or use `--calib-root` to let SkyStacker look for calibration folders under a common directory.
 
+`--export-masters` writes each loaded calibration product as
+`master_<kind>.f32raw` (scientific, same header as the work files) plus a
+`master_<kind>.jpg` preview. The preview maps the 1st..99.5th luminance
+percentile linearly to 0..255 and is intended for inspection only.
+
+`--self-flat` derives a relative illumination map from at least 15 registered
+dithered lights. It is applied after registration, so it corrects
+mosaic-level vignetting rather than sensor-level fixed-pattern noise; a
+loaded flat always wins. A flat built from lights can absorb structure
+common to every frame (for example a large nebula), so inspect the written
+`master_self_flat.f32raw` before trusting the correction. The self-flat
+master is crop-sized; use the crop rectangle in `report.txt` to map it back
+to the reference frame. Only the registered stack is corrected.
+
 ### Stacking methods
 
 | Method | Purpose |
@@ -334,6 +348,8 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--flat string` | Flat frame or calibration path | — |
 | `--bias string` | Bias frame or calibration path | — |
 | `--calib-root string` | Root directory containing Bias/Darks/Flats folders | — |
+| `--export-masters` | Write `master_<kind>.f32raw` + `.jpg` for loaded calibration products | `false` |
+| `--self-flat` | Derive a relative flat from ≥15 registered dithered lights | `false` |
 | `--stack-only` | Stack frames and skip post-processing | `false` |
 | `--no-postprocess` | Alias for `--stack-only` | `false` |
 | `--post-only` | Run post-processing using existing intermediate data | `false` |

@@ -1,4 +1,4 @@
-# SkyStacker — project context (last updated 2026-11-11)
+# SkyStacker — project context (last updated 2026-11-15)
 
 ## Version
 v0.5.1 (single-file Go program, `main.go`)
@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 154 passing.** Update this number after any test change.
+**Self-test count: 169 passing.** Update this number after any test change.
 
 ## Post-processing pipeline (8 steps)
 
@@ -624,7 +624,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 154 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 169 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -1040,3 +1040,160 @@ clean at commit time.
 - Follow-up on 1.2: nothing outstanding; the column is report-only.
 
 <!-- BL_BGSIG_V1_MARKER -->
+
+## Session log: doc reconciliation + next-session prompt (2026-11-15)
+
+Documentation-only pass. No `main.go` change; `gofmt -l` empty and
+`go vet ./...` clean. Self-test count verified by running
+`./skystacker --selftest` → **`all 165 self-tests passed`**.
+
+- **Stale header counts FIXED.** The document header still claimed
+  "last updated 2026-11-11" and "Self-test count: 154 passing", and the
+  Recovery section still said "all 154 self-tests passed". Tier 1
+  (`--black-level auto`, `BgSigma`) landed after those lines were last
+  touched, so the authoritative count is **165**. Updated line 1, the
+  header count, and the Recovery expectation to 165.
+- **`NEXT_SESSION_PROMPT.md` refreshed for Tier 2.1.** The local
+  (`.gitignore`d) prompt still described Tier 1, which is shipped. It
+  now scopes **Tier 2.1 `--bpm PATH`**, states the expected pre-patch
+  count (165 → 166), the idempotent-patch protocol, and the stop
+  conditions.
+- **Known doc hygiene (not fixed here).** `PROJECT_CONTEXT.md` contains
+  two "Session log: Tier 0 documentation and hygiene (2026-11-14)"
+  sections; the earlier one is superseded by the later one (which adds
+  the "Tier 0 roadmap-list cleanup" subsection). Remove the earlier
+  duplicate in a separate docs commit; recorded in
+  `NEXT_SESSION_PROMPT.md` under "Housekeeping".
+
+<!-- DOC_RECON_V1_MARKER -->
+
+## Session log: Tier 2.1 `--bpm PATH` (2026-11-15)
+
+New flag `--bpm PATH` applies a bad-pixel map to every input frame.
+Mapped pixels are marked invalid (`-1` in all three channels) after
+calibration and black-level subtraction, then skipped by the same
+valid-count machinery that already handles registration borders.
+
+### Behaviour
+
+- **Formats.** `.fits`/`.fit` files are decoded as an image and every
+  non-zero pixel is treated as bad. Any other extension is parsed as
+  text: one `x,y` pair per line, with `,`, `;`, space, or tab as the
+  separator. Blank lines, `#` comment lines, and inline `#` comments are
+  ignored. Coordinates are 0-based native-resolution pixels.
+- **Scale.** With `--scale N`, native coordinates are divided by `N` to
+  land on the decoded frame grid. Out-of-frame points are ignored.
+- **Malformed input is fatal.** Missing files, lines that are not
+  `x,y`, non-integers, negative coordinates, and empty maps all return a
+  `bad-pixel map:` error before any frame is stacked.
+- **`report.txt`** gains `Bad pixel map: <path> (<N> pixels masked)` when
+  the flag is active, where `<N>` is the number of distinct in-frame
+  pixels masked on the first processed frame.
+
+### Pipeline details
+
+- Both Pass 1 and Pass 2 apply the map after `calibrate()` and after
+  `--black-level auto`. This order matters: `calibrate()` clamps to
+  `[0,1]`, which would turn the `-1` sentinel into `0`.
+- `sampleBilinear` now returns `ok=false` when any of its four source
+  pixels is negative, so registration cannot interpolate the sentinel
+  into neighbouring pixels.
+- The unregistered accumulator now uses `addFrameMasked` with its own
+  per-pixel count array and `divideByCount`, so masked samples are
+  skipped there too. With no BPM every pixel is valid, so this is
+  bit-identical to the previous `addFrame`/`divide` behaviour.
+- `reduceTile` already skipped negative samples; the registered mean
+  already used `addFrameMasked`; no changes were needed in either path.
+
+### Self-test count
+
+**165 → 166.** One new case, `testBPMMasksPixels`, covers text and FITS
+loading, malformed-input rejection, the 3-frame masking scenarios
+(no BPM → `0.383333`; mask the bright frame only → `0.10`; mask all →
+`0`), neighbour preservation, `--scale` coordinate mapping,
+out-of-frame points, CLI wiring, and the `report.txt` line.
+`gofmt -l main.go` empty, `go vet ./...` clean, and
+`./skystacker --selftest` prints **`all 166 self-tests passed`**.
+
+### Manual verification
+
+- PNG mean path, no registration: hot pixel `0.384314` without BPM,
+  `0.0` with BPM; neighbours unchanged at `0.101961`.
+- Registered path with synthetic stars: hot pixel `0.0`, stars intact.
+- All-FITS workflow: the BPM coordinate follows the same native
+  orientation as the input frames (ImageMagick's FITS writer is
+  bottom-up, so both the frame and the map agree).
+- Missing and malformed maps exit non-zero with a `bad-pixel map:`
+  message.
+
+<!-- BPM_V1_MARKER -->
+
+## Session log — 2026-11-15 — calibration master export and self-flat
+
+### `--export-masters`
+
+- Writes `master_<kind>.f32raw` (8-byte LE width/height header + interleaved
+  RGB float32, same format as `_work/*.f32raw`) and `master_<kind>.jpg` for
+  every non-nil calibration master (bias, dark, flat, self_flat).
+- The JPG is a preview only: the shared 1st..99.5th luminance percentile is
+  mapped linearly to 0..255, falling back to min/max and then 0..1 when the
+  percentiles collapse. The `.f32raw` is the scientific artifact.
+- Per-master notes (min, max, channel means) are added to `report.txt`.
+
+### `--self-flat`
+
+- Derives a relative illumination map from >=15 registered dithered lights
+  (`selfFlatMinFrames = 15`) in reference coordinates. It is applied after
+  registration, so it corrects mosaic-level vignetting, not sensor-level
+  fixed-pattern noise.
+- Per-frame sky level is normalised with the median luminance
+  (`frameLuminanceMedian`); the aligned frames are reduced with a
+  one-iteration sigma-clipped mean; the result is normalised per channel to
+  mean 1, clamped to [0.05, 20], and rejected if the center/edge ratio is
+  outside [0.5, 5.0].
+- An explicit `--flat` always wins; `--self-flat` requires registration.
+- With `--method mean`, Pass 2 spills the frames instead of accumulating, the
+  flat is built, and the frames are re-accumulated with the flat. With
+  `--method median|sigma`, the flat is passed to `reduceTile` and applied
+  inside the reduction.
+- `master_self_flat.f32raw` is always written when the flat is applied;
+  `master_self_flat.jpg` is written only with `--export-masters`.
+
+### Orion-135mm verification
+
+`./skystacker assets/Orion-135mm --self-flat --export-masters --stack-only
+--method mean --no-cache` on 66 frames (2395x1583 crop):
+
+- Self-flat: 66 frames, center/edge=1.2512, residual RMS=0.19360.
+- The recovered center/edge matches the measured vignetting in the lights
+  (1.240..1.253).
+- The corrected mean preview center/border goes from 1.134 (uncorrected) to
+  1.000, confirming the relative-illumination correction.
+- The master preview center/border is ~1.9 because the same map also contains
+  astrophysical structure (M42), which is the expected limitation of a flat
+  built from lights. The `.f32raw` is the scientific artifact.
+- `--method sigma --limit 20` was also verified end-to-end (self-flat 1.2497,
+  corrected mean center/border 1.000), exercising the `reduceTile` path.
+
+### Self-tests
+
+**166 → 169.** New cases: `testSelfFlatEligible`, `testSelfFlatRecovery`
+(synthetic vignetting + moving outliers, RMS < 0.03), and
+`testExportCalibrationMasters` (6 files, 3 notes, vignetting/dust/hot pixel
+visible in the previews). `gofmt -l main.go` empty, `go vet ./...` clean, and
+`./skystacker --selftest` prints **`all 169 self-tests passed`**.
+
+<!-- SELF_FLAT_EXPORT_V1_MARKER -->
+
+### Handoff to next session (2026-11-15, supersedes the block above)
+
+- **Tier 2.1 (`--bpm`) and Tier 2.2 (`--self-flat` + `--export-masters`)
+  are shipped.** Self-test count is **169**.
+- **Next actionable item:** validate the absolute calibration path
+  (`--bias/--dark/--flat` + `--export-masters`) on real data outside the
+  repo (OrionNebula CR2 via `dcraw -4 -T`; Flame FITS). See the refreshed
+  `NEXT_SESSION_PROMPT.md`.
+- **Then:** Tier 3.1 per-component confidence map in `report.txt`.
+- Scientific caveat: a self-flat built from lights can absorb extended
+  nebulosity (observed on M42); see
+  `research/04-calibration-and-self-flat.md`.

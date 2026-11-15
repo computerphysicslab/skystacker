@@ -37,6 +37,8 @@ patch_*.py
 /datasets/
 /data/
 /sessions/
+# Real astrophotography test dataset (do not commit; keep only locally)
+/assets/Orion-135mm/
 # Uncomment if you keep astrophotography source frames inside this repository:
 # *.CR2
 # *.CR3

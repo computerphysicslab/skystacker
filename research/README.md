@@ -10,6 +10,7 @@ Every piece of technical content, equation, benchmark, CLI flag, code snippet, a
 
 ### Root Entry Point
 * **[`RESEARCH_SYNTHESIS.md`](RESEARCH_SYNTHESIS.md)** — **Start here.** Master synthesis covering current implementation status (`v0.4.1` → `v0.5.0`), core mathematical foundations, architectural principles, strengths/limitations, and the prioritized engineering roadmap.
+* **[`04-calibration-and-self-flat.md`](04-calibration-and-self-flat.md)** — Calibration master export (`--export-masters`), the self-flat derivation (`--self-flat`), Orion-135mm validation, and the limits of a flat built from lights.
 
 ### `01-architecture-and-core-engine/` (Stacking, Go Runtime & CLI)
 * **[`01-architecture-and-core-engine/current-implementation-v0.4.1.md`](01-architecture-and-core-engine/current-implementation-v0.4.1.md)** — Concrete snapshot analysis of the `v0.4.1` single-file Go CLI codebase (pipeline steps, notable design choices, strengths, and observed limitations).

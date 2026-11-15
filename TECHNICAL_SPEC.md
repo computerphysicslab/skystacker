@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 154 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 169 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
@@ -47,6 +47,10 @@ Flags are accepted before or after the positional input directory. Default input
 
 ### Calibration
 - `--dark`, `--flat`, `--bias` (individual files or folders).
+- `--export-masters` writes each loaded master as `master_<kind>.f32raw`
+  plus a `.jpg` preview.
+- `--self-flat` derives a relative illumination map from ≥15 registered
+  dithered lights and applies it after registration; a loaded flat wins.
 - `--calib-root` (auto-detect `Bias/Darks/Flats/<filter>` subfolders).
 
 ### Normalization (requires registration)

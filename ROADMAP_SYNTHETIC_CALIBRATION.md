@@ -73,6 +73,16 @@ Both items are independently shippable in one commit.
   emission. Mitigation: `--self-flat` is opt-in; the report names the
   frames it used and the residual it measured, so the user can compare
   to a real flat if one exists.
+- **Shipped (2026-11-15):** implemented as a one-iteration sigma-clipped
+  **mean** of per-frame sky-normalised aligned lights (not a per-pixel
+  median), normalised per channel to median 1, gated at 15 registered
+  frames, and applied after registration. A loaded flat wins.
+  Tests: `testSelfFlatEligible`, `testSelfFlatRecovery` (20 synthetic
+  frames with moving outliers, RMS < 0.03), and
+  `testExportCalibrationMasters`. Orion-135mm: center/edge 1.2512,
+  residual RMS 0.1936, corrected mean center/border 1.000. The
+  extended-nebulosity risk was observed (M42 biases the map); see
+  `research/04-calibration-and-self-flat.md`.
 
 ## Tier 3 — Large, multi-day (`L`)
 
