@@ -1,7 +1,7 @@
 # SkyStacker
 
 **SkyStacker is a local-first command-line tool for stacking astrophotography images.**  
-It takes a folder of night-sky exposures, detects stars, aligns the frames, combines them into useful image stacks and can apply an automated post-processing workflow.
+It takes a folder of night-sky exposures, detects stars, aligns the frames, combines them into useful image stacks, and can apply an automated post-processing workflow.
 
 <p align="center">
   <img src="assets/Triffid-Stacked.jpg" alt="Before and after: single frame vs 25-frame stack of the Trifid Nebula" width="100%">
@@ -20,6 +20,32 @@ It takes a folder of night-sky exposures, detects stars, aligns the frames, comb
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go](https://img.shields.io/badge/Go-1.20+-00ADD8?logo=go)](https://go.dev/)
 [![Development status](https://img.shields.io/badge/status-active%20development-orange)]()
+
+---
+
+## Table of Contents
+
+- [Gallery](#gallery)
+- [What does SkyStacker do?](#what-does-skystacker-do)
+- [Scope & Architecture](#scope--architecture)
+- [Main Capabilities & Algorithms](#main-capabilities--algorithms)
+  - [Frame Registration](#frame-registration)
+  - [Calibration](#calibration)
+  - [Stacking Methods](#stacking-methods)
+  - [Frame Normalization (Optional)](#frame-normalization-optional)
+  - [Post-Processing Pipeline](#post-processing-pipeline)
+  - [Astrometric Plate Solving & Gaia DR3 Layer](#astrometric-plate-solving--gaia-dr3-layer)
+- [Supported Input Formats & Requirements](#supported-input-formats--requirements)
+- [Build & Verification](#build--verification)
+- [Quick Start & Examples](#quick-start--examples)
+- [Command-Line Options](#command-line-options)
+- [Output Structure](#output-structure)
+- [Processing Pipeline at a Glance](#processing-pipeline-at-a-glance)
+- [Pre-Flight Resource Checks & Error Handling](#pre-flight-resource-checks--error-handling)
+- [Development Status & Recently Implemented (v0.5.1)](#development-status--recently-implemented-v051)
+- [Planned Potential Features and Technologies Roadmap](#planned-potential-features-and-technologies-roadmap)
+- [How SkyStacker Compares](#how-skystacker-compares)
+- [Project Goals & License](#project-goals--license)
 
 ---
 
@@ -61,28 +87,41 @@ Astrophotography sessions usually produce many individual exposures of the same 
 SkyStacker automates the core workflow:
 
 1. **Discovers input frames** in a session directory.
-2. **Decodes the images** and prepares their pixel data.
-3. **Optionally calibrates** light frames using dark, flat and bias frames.
+2. **Decodes the images** and prepares their pixel data in linear floating-point precision.
+3. **Optionally calibrates** light frames using dark, flat, and bias frames.
 4. **Detects stars** and selects a reference frame.
 5. **Registers the frames** by matching star patterns and estimating geometric transformations.
 6. **Resamples and aligns** the exposures before combining them.
 7. **Creates image stacks** using the selected statistical method, plus maximum- and minimum-pixel combinations.
-8. **Optionally post-processes** the resulting image to improve its background, colour, contrast and detail.
+8. **Optionally post-processes** the resulting image to improve its background, colour, contrast, and detail.
 9. **Writes outputs and a processing report** to a results directory.
 
-The aim is to provide a transparent, reproducible and resource-conscious workflow that runs locally, without requiring a cloud service.
+The aim is to provide a transparent, reproducible, and resource-conscious workflow that runs locally, without requiring a cloud service.
 
-## Main capabilities
+---
 
-### Frame registration
+## Scope & Architecture
 
-- Automatic star detection with sub-pixel centroid estimation.
-- Reference-frame selection based on detected star count.
-- Triangle-based star-pattern matching.
-- Similarity-transform estimation and robust inlier filtering (RANSAC-style matching).
-- Sub-pixel image resampling.
-- Safe cropping to the region valid across registered frames.
-- Frames that cannot be registered are reported and excluded from the registered stack; they can still contribute to the unregistered mean.
+- **Single-file, zero-dependency Go binary**: Implemented in `main.go` using the Go standard library only, compiling to a standalone cross-platform CLI executable (`skystacker`).
+- **Linear float32 pipeline**: Accumulates and processes image data in IEEE 754 `float32` precision end-to-end.
+- **Current boundaries**:
+  - **CLI-only**: No GUI is included.
+  - **External RAW decoding**: Native JPEG and native FITS decoding (with ImageMagick fallback) are built in; CR2/CR3 RAW decoding is delegated to `dcraw`/`dcraw_emu` or ImageMagick at runtime.
+  - **Drizzle & SIP resampling**: Drizzle, Bayer drizzle, and applying SIP distortion polynomials during resampling are not yet wired (TAN WCS plate solving computes and stores SIP order-2 coefficients in `plate_solution.json`, while the resampler currently uses the linear TAN CD matrix).
+  - **Seeded plate solving**: Whole-sky blind plate solving is out of scope; `--plate-solve` requires a pointing seed (`--plate-center` or FITS `RA`/`DEC` headers) because blind mode scans only a 3×3 `nside=64` neighbourhood around `(0,0)`.
+
+---
+
+## Main Capabilities & Algorithms
+
+### Frame Registration
+
+- **Automatic star detection**: Identifies 8-connected components above `sigma * noise` (default `5.0σ`, with automatic multi-sigma retries at `4.0`, `3.5`, and `3.0` if fewer than 20 stars are found), where `noise` is the MAD of a high-pass residual (box blur radius `clamp(min(W,H)/200, 8, 24)`).
+- **Reference-frame selection**: Automatically picks the frame with the highest number of detected stars.
+- **Triangle-based pattern matching**: Constructs triangles from the top **40** brightest stars using scale-invariant side-ratio descriptors `(short/long, mid/long)` bucketed on a `0.01` grid with `0.02` tolerance.
+- **Geometric transform estimation**: Computes a closed-form similarity transform (rotation, scale, translation) via least squares with RANSAC-style inlier filtering, plus optional full 6-DOF affine refinement (retained only when residual error drops by ≥ 10% with ≥ 15 inliers).
+- **Sub-pixel resampling & safe crop**: Uses bilinear sub-pixel resampling and computes the largest fully valid overlapping rectangle (`findSafeCrop`, maximal-rectangle-in-histogram).
+- **Fallback & diagnostics**: Frames that cannot be registered are logged in `report.txt` (with limiter flags such as `LOW QUALITY` `< 30`, `LOW BOX%` `< 50%`, and `LARGE OFFSET` `|drift| > 10%` of reference dimensions) and excluded from the registered stack while still contributing to the unregistered mean.
 
 ### Calibration
 
@@ -92,90 +131,64 @@ Calibration frames can be supplied explicitly:
 - **Flat frames** help correct illumination variation and vignetting.
 - **Bias frames** can be used with flat calibration.
 
-You can pass individual calibration paths or use `--calib-root` to let SkyStacker look for calibration folders under a common directory.
+You can pass individual calibration paths (`--dark`, `--flat`, `--bias`) or use `--calib-root` to let SkyStacker auto-discover `Bias/Darks/Flats/<filter>` subfolders under a common directory.
 
-`--export-masters` writes each loaded calibration product as
-`master_<kind>.f32raw` (scientific, same header as the work files) plus a
-`master_<kind>.jpg` preview. The preview maps the 1st..99.5th luminance
-percentile linearly to 0..255 and is intended for inspection only.
+- **Exporting masters (`--export-masters`)**: Writes each loaded calibration product as `master_<kind>.f32raw` (scientific float32 format with the same header as `_work` files) plus a `master_<kind>.jpg` preview. The preview maps the 1st..99.5th luminance percentile linearly to `0..255` and is intended for inspection only.
+- **Synthetic self-flat (`--self-flat`)**: Derives a relative illumination map from at least 15 registered dithered lights.
+  - **v1 (`--self-flat-model=registered`, default)**: Built in reference coordinates and applied after registration, so it corrects mosaic-level vignetting rather than sensor-level fixed-pattern noise; a loaded flat always wins. Because a flat built from lights can absorb extended structures common to every frame (for example a large nebula—reaching a ratio near `1.9` around M42 on Orion-135mm), inspect the crop-sized `master_self_flat.f32raw` (using the crop rectangle in `report.txt`) before trusting the correction. Only the registered stack is corrected.
+  - **Phase-1 sensor-space prototype (`--self-flat-model=grid`)**: Full-frame sensor-space estimator (unregistered frames, source mask, 64 px cells, degree-4 Chebyshev least squares, applied before resampling). It is not the default and does not yet implement the full robust IRLS polynomial estimator specified in `research/04-calibration-and-self-flat.md` (§9–14) and `ROADMAP_SYNTHETIC_CALIBRATION.md` (§2.3).
 
-`--self-flat` derives a relative illumination map from at least 15 registered
-dithered lights. The current v1 is built in reference coordinates and applied
-after registration, so it corrects mosaic-level vignetting rather than
-sensor-level fixed-pattern noise; a loaded flat always wins. A flat built
-from lights can absorb structure common to every frame (for example a large
-nebula), so inspect the written `master_self_flat.f32raw` before trusting the
-correction. The v1 self-flat master is crop-sized; use the crop rectangle in
-`report.txt` to map it back to the reference frame. Only the registered stack
-is corrected.
+### Stacking Methods
 
-The v1 map is known to overcorrect extended emission (the v1 flat itself
-reaches a ratio near 1.9 around M42 on Orion-135mm). A sensor-space revision
-is specified in `research/04-calibration-and-self-flat.md` and
-`ROADMAP_SYNTHETIC_CALIBRATION.md` section 2.3: unregistered frames, source
-masking, a coarse grid, robust cell rejection and an IRLS polynomial. Until
-that revision ships, use `--self-flat` only as a fallback and inspect the
-master. `--self-flat-model=grid` selects the Phase-1 sensor-space prototype
-(full-frame, applied before resampling). It is not the default, and it is
-not yet the robust IRLS estimator.
+| Method | Execution Model | Purpose |
+| --- | --- | --- |
+| `mean` | Streaming (single buffer per frame, divided by valid pixel count) | Arithmetic average of registered frames; minimal disk overhead. |
+| `median` | Tiled, out-of-core via `_work/_spill1` and `_work/_spill2` (~256 MB tile cap) | Median combination, useful for rejecting transient features. |
+| `sigma` *(default)* | Tiled MAD-based rejection (`σ = 1.4826 × MAD`), quality-weighted | Rejects outliers (`|v - median| > threshold × σ`, default `3.0σ`, `2` iterations) such as hot pixels, satellite trails, and cosmic rays. |
 
-### Stacking methods
+SkyStacker also calculates **maximum-pixel** and **minimum-pixel** combinations in Pass 1 across all accepted frames. These are useful for inspecting transient features (e.g., meteors/satellites) and background behaviour, though they are diagnostic combinations rather than substitutes for a normal integration.
 
-| Method | Purpose |
-| --- | --- |
-| `mean` | Arithmetic average of registered frames. |
-| `median` | Median combination, useful for rejecting transient features. |
-| `sigma` | Sigma-clipping combination, intended to reject outliers such as hot pixels and transient signals. |
+### Frame Normalization (Optional)
 
-The default method is `sigma`.
+Sessions where individual frames have different sky brightness or transparency benefit from background normalization before stacking (requires registration; no-op when `--no-register` is set):
 
-SkyStacker also calculates maximum- and minimum-pixel combinations. These can be useful for inspecting transient features and background behaviour, although they are diagnostic combinations rather than substitutes for a normal integration.
+- **`--normalize`**: Per-frame global `scale + offset` matching each frame's background luminance `(median, MAD)`—computed on a 1024-bin histogram with 4× subsampling—to the reference frame (`scale = ref.MAD / frame.MAD` clamped to `[0.5, 2.0]`, `offset = ref.median - scale * frame.median`). Takes ~1 ms/frame and handles uniform sky-glow drift and transparency swings.
+- **`--local-normalize`**: Per-tile `scale + offset` with bilinear interpolation across tile centers (`--ln-tile-size`, default `256` px). Handles spatially varying gradients (light pollution, changing vignetting direction). Implies `--normalize`.
 
-### Post-processing
+The reference frame itself is never normalized; every other frame is matched to its background prior to accumulation or spilling.
 
-The post-processing workflow includes background removal and optional processing stages controlled by command-line flags:
+### Post-Processing Pipeline
 
-- Background-gradient modelling and removal.
-- Optional masking of bright objects during background extraction.
-- Chromatic-aberration reduction.
-- Colour calibration.
-- Vignette/background flattening.
-- Unsharp-mask sharpening.
-- HDR local-contrast enhancement.
-- Contrast stretching at gentle, moderate and full levels.
-- Star removal and black-point adjustment in the current processing workflow.
+SkyStacker includes an 8-step automated post-processing workflow (plus optional flag-gated stages):
 
-The processing stages and their settings are evolving during development. Consult `skystacker --help` for the exact options available in the version you have built.
+1. **Background removal**: Robust 2nd-degree 2D polynomial fit (`--bg-degree` 1–3) to 32×32 block samples (20th percentile per channel) with 3 iterations of outlier rejection above `2σ`. `--mask-bg` excludes pixels above `0.1` luminance.
+2. **Star removal**: High-pass star detection replaced by the median of an annulus scaled by star radius (`--star-radius`, `--star-sigma`).
+3. **Black-point shift**: Subtracts the `--bg-percentile` luminance percentile (default `10`), held in memory for step 4.
+4. **STF/MTF auto-stretch**: PixInsight-style Screen Transfer Function / Midtone Transfer Function (`--stf-shadows` default `-2.8`, `--stf-target` default `0.25`; `--stf-linked` applies a single shared transform across RGB channels).
+5. **Guided-filter denoise**: Per-channel self-guided filter (He et al. 2010) for `--denoise-strength` passes (radius `--denoise-radius`, default `3`), followed by a two-scale chroma-only pass (radii `24` and `96`, `eps = 0.005`) to suppress low-frequency colour blotches (`--denoise-chroma`).
+6. **Curves**: Applies `x' = clamp((x - black) / (1 - black), 0, 1); out = x'^gamma` (`--curves-black` default `0.03`, `--curves-gamma` default `1.20`) identically per channel.
+7. **HDR blend**: Combines stretched and linear-background detail via `out = clamp(step6 + hdrBlendFactor * step1, 0, 1)` (`--hdr-blend-factor` default `1.0`).
+8. **Weighted mix & diffraction spikes**: Produces 4 preview variants `w*step1 + (1-w)*step7` for `w ∈ {0.90, 0.80, 0.70, 0.60}` (unless `--no-hdr-mix`), and optionally renders additive diffraction spikes on bright stars (ON by default; disable with `--no-spikes`).
 
-### Frame normalization (optional)
+Additional optional stages can be toggled via CLI flags: chromatic-aberration reduction (`--post-ca`), colour calibration (`--post-color`), vignette/background flattening (`--post-flatten`), unsharp-mask sharpening (`--post-sharpen`), HDR local-contrast enhancement (`--post-hdr`), and three-level contrast stretching (`--post-stretch`). Run `skystacker --help` for the exact options in your build.
 
-Sessions where individual frames have different sky brightness or transparency
-benefit from normalization before stacking:
+### Astrometric Plate Solving & Gaia DR3 Layer
 
-- `--normalize` — per-frame global scale+offset: matches each frame's
-  background median and MAD to the reference frame's. Cheap (~1 ms/frame).
-  Handles uniform sky-glow drift and transparency swings.
-- `--local-normalize` — per-tile scale+offset with bilinear interpolation
-  of the correction field (`--ln-tile-size`, default 256 px). Handles
-  spatially varying gradients (light pollution, vignetting direction changes).
-  Implies `--normalize`.
+- **WCS solver (`--plate-solve`)**: Solves a TAN WCS astrometric solution after stacking using star pattern matching against Gaia DR3, writing `plate_solution.json` (including fitted SIP order-2 distortion coefficients). Supply `--plate-center RA,DEC` in decimal degrees or rely on the reference frame's FITS `RA`/`DEC` header keywords.
+- **HEALPix & TAP client**: Implements the HEALPix nested scheme (`nside` power of 2 from `2` to `8192`, default `64` at ~0.84 deg² per tile) and queries ESA's Gaia TAP `/sync` endpoint with a 180 s per-attempt timeout, 5 s progress heartbeat, automatic retries (`2 s` / `4 s` backoff on 5xx/network errors), and 1 req/sec rate limiting.
+- **Persistent tile cache**: Since Gaia DR3 is a frozen catalogue, downloaded tiles are cached permanently in your OS user cache directory (`~/.cache/skystacker/gaia_cache/` on Linux, `~/Library/Caches/skystacker/gaia_cache/` on macOS), enabling offline operation with `--gaia-offline`.
 
-Both options require registration (the reference frame defines the target)
-and are no-ops when `--no-register` is set. The reference frame itself is
-never normalized; every other frame is corrected to match its background
-before being accumulated or spilled.
+---
 
-## Supported input formats
+## Supported Input Formats & Requirements
 
-SkyStacker currently discovers these extensions:
+SkyStacker currently discovers these file extensions:
 
-- `.jpg` and `.jpeg`
-- `.cr2` and `.cr3`
-- `.fit` and `.fits`
+- `.jpg` and `.jpeg` (decoded natively via Go's standard image packages)
+- `.fit` and `.fits` (decoded natively with ImageMagick fallback)
+- `.cr2` and `.cr3` (decoded via external `dcraw`, `dcraw_emu`, or ImageMagick at runtime)
 
-JPEG decoding is handled by Go's image packages. FITS decoding is handled natively (with ImageMagick as a fallback), and RAW decoding uses external command-line tools, so support depends on the relevant decoder being installed and available in `PATH`.
-
-### External tools
+### External Tools
 
 On Debian/Ubuntu, install ImageMagick:
 
@@ -184,32 +197,30 @@ sudo apt update
 sudo apt install imagemagick
 ```
 
-For Canon RAW files, SkyStacker can use `dcraw` or `dcraw_emu` when available. Install a compatible RAW decoder if your system does not already provide one.
+For Canon RAW files, SkyStacker prefers `dcraw` or `dcraw_emu` when available in `PATH`. Install a compatible RAW decoder if your system does not already provide one.
 
-> **Note:** The exact RAW/FITS decoding capabilities depend on the ImageMagick delegates and RAW decoder installed on your system. A file extension alone does not guarantee that a particular camera file can be decoded.
+> **Note:** Exact RAW/FITS decoding capabilities depend on the ImageMagick delegates and RAW decoder installed on your system. A file extension alone does not guarantee that a particular camera file can be decoded.
 
-## Requirements
+### System Requirements
 
-- Go 1.20 or later.
-- ImageMagick for the external RAW/FITS decoding paths.
-- `dcraw` or `dcraw_emu` for the preferred Canon RAW decoding path, where required.
-- A directory containing compatible astrophotography exposures.
-- Enough RAM and disk space for the image dimensions and number of frames in the session.
+- **Go 1.20 or later** (to compile from source).
+- **Runtime decoders**: ImageMagick and/or `dcraw` / `dcraw_emu` for RAW/fallback FITS ingestion.
+- **Memory & Disk**: Sufficient RAM and scratch disk space for the session's frame count and image dimensions (see [Pre-Flight Resource Checks](#pre-flight-resource-checks--error-handling)).
 
-SkyStacker includes memory-safety checks intended to warn about potentially excessive memory requirements. Avoid bypassing those checks unless you understand the resource implications.
+---
 
-## Build
+## Build & Verification
 
 Clone the repository and build the executable:
 
 ```bash
-git clone https://github.com/computerphysicslab/skystacker.git
+git clone [https://github.com/computerphysicslab/skystacker.git](https://github.com/computerphysicslab/skystacker.git)
 cd skystacker
 
 go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .
 ```
 
-Run the internal self-tests:
+Run the embedded unit & integration self-tests (authoritative count printed at runtime; `runSelfTests` in `main.go` is the source of truth):
 
 ```bash
 ./skystacker --selftest
@@ -222,26 +233,29 @@ Print the version or command-line help:
 ./skystacker --help
 ```
 
-### Startup banner
+### Startup Banner
 
-On every run SkyStacker prints a one-line banner to standard error:
+On every run, SkyStacker prints a one-line banner to standard error:
 
 ```text
-SkyStacker 0.6.0 | https://github.com/computerphysicslab/skystacker | built 2026-11-15T00:00:00Z
+SkyStacker 0.5.1 | [https://github.com/computerphysicslab/skystacker](https://github.com/computerphysicslab/skystacker) | built 2026-11-12T12:00:00Z
 ```
 
-To embed the real build time:
+To embed the real build time when building directly from `main.go`:
 
 ```bash
 go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker main.go
 ```
 
-Without `-ldflags`, SkyStacker falls back to the VCS commit time that Go
-embeds when building from a Git checkout, or prints `unknown`.
+Without `-ldflags`, SkyStacker falls back to the VCS commit timestamp embedded by Go when building from a Git checkout, or prints `unknown`.
 
-## Quick start
+---
 
-Put the light frames from one imaging session in a directory, for example:
+## Quick Start & Examples
+
+### Basic Stacking
+
+Place the light frames from an imaging session into a directory:
 
 ```text
 M31-session/
@@ -251,59 +265,38 @@ M31-session/
 └── ...
 ```
 
-Run the default workflow:
+Run the default workflow (`sigma` clipping + full post-processing):
 
 ```bash
 ./skystacker ./M31-session
 ```
 
-By default, the results are written to:
+By default, results are written to `M31-session/0_skystacker_results/`.
 
-```text
-M31-session/0_skystacker_results/
-```
-
-Choose a different stacking method:
+Common workflow variations:
 
 ```bash
+# Choose a stacking method (mean, median, or sigma)
 ./skystacker --method mean ./M31-session
 ./skystacker --method median ./M31-session
 ./skystacker --method sigma ./M31-session
-```
 
-Use a separate output directory:
+# Specify a custom output directory and allow overwriting existing outputs
+./skystacker --output ./results/M31 --overwrite ./M31-session
 
-```bash
-./skystacker --output ./results/M31 ./M31-session
-```
-
-Search subdirectories recursively:
-
-```bash
+# Search subdirectories recursively
 ./skystacker --recursive ./M31-session
-```
 
-Run stacking without post-processing:
-
-```bash
+# Stack frames only (skip post-processing)
 ./skystacker --stack-only ./M31-session
-```
 
-Run post-processing against existing intermediate data:
-
-```bash
+# Re-run post-processing on existing _work/stacked_mean.f32raw without re-stacking
 ./skystacker --post-only ./M31-session
 ```
 
-Allow replacement of existing output files:
+### Calibration Example
 
-```bash
-./skystacker --overwrite ./M31-session
-```
-
-## Calibration example
-
-A session may keep its light frames and calibration frames in separate directories:
+Organize light and calibration frames in separate directories:
 
 ```text
 M31-session/
@@ -317,7 +310,7 @@ M31-session/
     └── bias/
 ```
 
-Supply calibration files or directories explicitly:
+Supply calibration files or folders explicitly:
 
 ```bash
 ./skystacker \
@@ -327,7 +320,7 @@ Supply calibration files or directories explicitly:
   ./M31-session/lights
 ```
 
-Or ask SkyStacker to search a calibration root:
+Or let SkyStacker auto-discover `Bias/`, `Darks/`, and `Flats/` subdirectories under `--calib-root`:
 
 ```bash
 ./skystacker \
@@ -335,48 +328,112 @@ Or ask SkyStacker to search a calibration root:
   ./M31-session/lights
 ```
 
-Use calibration frames with matching camera, sensor settings, exposure/gain and relevant acquisition conditions. Calibration is only as reliable as the calibration data supplied.
+> **Tip:** Match calibration frames to your light frames in camera model, sensor temperature, exposure duration, ISO/gain, and optical train.
 
-## Command-line options
+### Normalization & Plate Solving Example
 
-The command syntax is:
+```bash
+./skystacker \
+  --local-normalize \
+  --plate-solve \
+  --plate-center 10.6847,41.2687 \
+  --tiff \
+  --png \
+  ./M31-session/lights
+```
+
+---
+
+## Command-Line Options
 
 ```bash
 skystacker [flags] [input-directory]
 ```
 
-The input directory defaults to the current directory (`.`). Flags can be supplied before or after the positional input directory.
+The input directory defaults to `.`. Flags may be passed before or after the positional input directory.
+
+### Core & Execution
 
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--output string` | Output directory | `<input>/0_skystacker_results` |
-| `--method string` | Stacking method: `mean`, `median` or `sigma` | `sigma` |
-| `--workers int` | Maximum number of concurrent workers | Number of CPUs |
+| `--method string` | Stacking method: `mean`, `median`, or `sigma` | `sigma` |
+| `--workers int` | Maximum number of concurrent worker goroutines | Number of CPUs |
 | `--recursive` | Search input subdirectories recursively | `false` |
-| `--overwrite` | Permit replacing files in the output directory | `false` |
+| `--overwrite` | Permit replacing existing files in the output directory | `false` |
 | `--no-register` | Disable star-based registration | `false` |
-| `--dark string` | Dark frame or calibration path | — |
-| `--flat string` | Flat frame or calibration path | — |
-| `--bias string` | Bias frame or calibration path | — |
-| `--calib-root string` | Root directory containing Bias/Darks/Flats folders | — |
-| `--export-masters` | Write `master_<kind>.f32raw` + `.jpg` for loaded calibration products | `false` |
-| `--self-flat` | Derive a relative flat from ≥15 lights | `false` |
-| `--self-flat-model` | `registered` (v1, default) or `grid` (sensor-space prototype) | `registered` |
+| `--scale int` | Downscaling factor (`2` halves each dimension, `4` quarters it) | `1` |
+| `--force` | Bypass pre-flight out-of-memory and disk-space safety checks (not recommended) | `false` |
+| `--no-exif` | Skip EXIF exposure summary in `report.txt` | `false` |
+| `--clean` | Remove `_work` directory after a successful run | `false` |
+
+### Calibration
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--dark string` | Dark frame file or directory path | — |
+| `--flat string` | Flat frame file or directory path | — |
+| `--bias string` | Bias frame file or directory path | — |
+| `--calib-root string` | Root directory containing `Bias`/`Darks`/`Flats` folders | — |
+| `--export-masters` | Write `master_<kind>.f32raw` + `.jpg` preview for loaded calibration products | `false` |
+| `--self-flat` | Derive a relative illumination flat from ≥ 15 dithered lights | `false` |
+| `--self-flat-model string` | Self-flat model: `registered` (v1, default) or `grid` (sensor-space prototype) | `registered` |
+
+### Normalization
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--normalize` | Per-frame global `scale + offset` background match to reference (requires registration) | `false` |
+| `--local-normalize` | Per-tile `scale + offset` with bilinear interpolation; implies `--normalize` | `false` |
+| `--ln-tile-size int` | Tile size in pixels for `--local-normalize` | `256` |
+
+### Stacking & Cache
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--sigma-clip float` | MAD sigma-clipping rejection threshold (`0` disables) | `3.0` |
+| `--sigma-clip-iters int` | Number of sigma-clipping iterations | `2` |
+| `--tile-size int` | Tile side length in pixels for `median`/`sigma` (`0` = auto, capped at ~256 MB) | `0` |
+| `--no-cache` | Disable reading/writing the star and transform cache | `false` |
+| `--cache-dir string` | Directory for star/transform cache | `<output>/_work/cache` |
+
+### Workflow Control
+
+| Flag | Description | Default |
+| --- | --- | --- |
 | `--stack-only` | Stack frames and skip post-processing | `false` |
 | `--no-postprocess` | Alias for `--stack-only` | `false` |
-| `--post-only` | Run post-processing using existing intermediate data | `false` |
-| `--mask-bg` | Mask bright objects during background extraction | `false` |
-| `--bg-degree int` | Background polynomial degree (1–3) | `2` |
+| `--post-only` | Run post-processing on existing `_work/stacked_mean.f32raw` | `false` |
+
+### Post-Processing: Background, Stars & Stretch
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--mask-bg` | Mask bright objects (`luminance > 0.1`) during background extraction | `false` |
+| `--bg-degree int` | Background polynomial degree (`1`–`3`) | `2` |
+| `--bg-percentile float` | Luminance percentile used for black-point shift (`0` disables) | `10` |
+| `--star-radius int` | Star-removal annulus radius in pixels (`0` selects automatic sizing) | `0` |
+| `--star-sigma float` | Star-detection threshold in sigma units for star removal | `4` |
 | `--stretch float` | Asinh stretch factor | `10` |
-| `--sharpen-amount float` | Unsharp-mask amount | `0.8` |
-| `--sharpen-radius float` | Unsharp-mask radius in pixels | `1.5` |
-| `--hdr-amount float` | HDR local-contrast amount | `0.5` |
-| `--star-radius int` | Star-removal radius in pixels; `0` selects automatic sizing | `0` |
-| `--star-sigma float` | Star-detection threshold in sigma units | `4` |
-| `--bg-percentile float` | Luminance percentile used for black-point adjustment; `0` disables it | `10` |
-| `--scale int` | Downscaling factor; `2` halves each dimension, `4` quarters it | `1` |
-| `--force` | Skip the out-of-memory safety check (not recommended) | `false` |
-| `--tiff` | Write the optional TIFF sum output | `false` |
+| `--no-auto-stretch` | Skip the final STF/MTF auto-stretch | `false` |
+| `--stf-shadows float` | STF shadow clip point in sigma units | `-2.8` |
+| `--stf-target float` | STF target background median level | `0.25` |
+| `--stf-linked` | Link RGB channels during STF auto-stretch (preserves colour balance) | `false` |
+
+### Post-Processing: Denoise, Curves, HDR & Optional Stages
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--no-denoise` | Skip guided-filter denoise | `false` |
+| `--denoise-strength float` | Guided-filter denoise passes (`0` = skip, `N` = iterations, max `10`) | `4.0` |
+| `--denoise-radius int` | Guided-filter denoise kernel radius in pixels | `3` |
+| `--denoise-chroma float` | Two-scale chroma denoise iterations (`0` disables) | `1.0` |
+| `--no-curves` | Skip the tone curves step | `false` |
+| `--curves-black float` | Curves shadow crush point in `[0, 0.5)` | `0.03` |
+| `--curves-gamma float` | Curves midtone gamma (`> 1` darkens midtones) | `1.20` |
+| `--no-hdr-blend` | Skip step-7 HDR blend | `false` |
+| `--hdr-blend-factor float` | HDR blend amount: `step6 + F · step1` | `1.0` |
+| `--no-hdr-mix` | Skip generating the 4 step-8 weighted-mix preview variants | `false` |
 | `--post-ca` | Enable chromatic-aberration reduction | `false` |
 | `--post-color` | Enable colour calibration | `false` |
 | `--post-flatten` | Enable vignette/background flattening | `false` |
@@ -385,56 +442,51 @@ The input directory defaults to the current directory (`.`). Flags can be suppli
 | `--post-stretch` | Enable the three-level contrast stretch | `false` |
 | `--no-color-calib` | Skip colour calibration | `false` |
 | `--no-sharpen` | Skip sharpening | `false` |
-| `--no-auto-stretch` | Skip the final STF/MTF auto-stretch | `false` |
-| `--stf-shadows float` | STF shadow clip in sigma units | `-2.8` |
-| `--stf-target float` | STF target background level | `0.25` |
-| `--stf-linked` | Use linked channels for STF (auto colour balance) | `false` |
-| `--no-hdr-blend` | Skip the step-7 HDR blend | `false` |
-| `--hdr-blend-factor float` | HDR blend amount: step6 + F·step1 | `1.0` |
-| `--no-hdr-mix` | Skip the 4 step-8 weighted-mix outputs | `false` |
-| `--no-denoise` | Skip guided-filter denoise | `false` |
-| `--denoise-strength float` | Denoise passes (0=skip, N=iterations, max 10) | `4.0` |
-| `--denoise-radius int` | Guided-filter denoise radius | `3` |
-| `--denoise-chroma float` | Chroma denoise iterations (0 disables) | `1.0` |
-| `--no-curves` | Skip the curves step | `false` |
-| `--curves-black float` | Curves shadow crush point, [0, 0.5) | `0.03` |
-| `--curves-gamma float` | Curves midtone gamma (>1 darkens) | `1.20` |
-| `--spikes` | Add diffraction spikes to bright stars | `true` |
+| `--sharpen-amount float` | Unsharp-mask amount | `0.8` |
+| `--sharpen-radius float` | Unsharp-mask radius in pixels | `1.5` |
+| `--hdr-amount float` | HDR local-contrast amount | `0.5` |
+
+### Post-Processing: Diffraction Spikes (Step 8 Overlay)
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--spikes` | Add additive diffraction spikes to bright stars | `true` |
 | `--no-spikes` | Disable diffraction spikes | `false` |
-| `--spikes-percent float` | Percent of detected stars to spike (0-50) | `0.2` |
+| `--spikes-percent float` | Percentage of detected stars to spike (`0`–`50`) | `0.2` |
 | `--spikes-length float` | Spike arm half-length in pixels | `10` |
 | `--spikes-intensity float` | Peak additive spike brightness | `0.3` |
-| `--spikes-arms int` | Number of spike arms (4=cross, 6=hex) | `4` |
-| `--spikes-softness float` | Intensity falloff exponent | `0.5` |
-| `--spikes-min-ratio float` | Intensity floor for faintest spiked star | `0.2` |
-| `--spikes-length-softness float` | Length falloff exponent | `1.0` |
-| `--spikes-length-min-ratio float` | Length floor for faintest spiked star | `0.03` |
+| `--spikes-arms int` | Number of spike arms (`4` = cross, `6` = hex) | `4` |
+| `--spikes-softness float` | Intensity falloff exponent `(flux/maxFlux)^softness` | `0.5` |
+| `--spikes-min-ratio float` | Minimum intensity floor for the faintest spiked star | `0.2` |
+| `--spikes-length-softness float` | Length falloff exponent `(flux/maxFlux)^lengthSoftness` | `1.0` |
+| `--spikes-length-min-ratio float` | Minimum length floor for the faintest spiked star | `0.03` |
 | `--spikes-min-count int` | Minimum number of stars to spike | `5` |
-| `--sigma-clip float` | MAD sigma-clipping threshold (0 disables) | `3.0` |
-| `--sigma-clip-iters int` | Sigma-clipping iterations | `2` |
-| `--tile-size int` | Tile side length for median/sigma (0=auto) | `0` |
-| `--normalize` | Per-frame global scale+offset to reference (needs registration) | `false` |
-| `--local-normalize` | Per-tile scale+offset; implies `--normalize` | `false` |
-| `--ln-tile-size int` | Tile size for `--local-normalize` | `256` |
-| `--no-exif` | Skip EXIF exposure summary in report | `false` |
-| `--no-cache` | Disable the star/transform cache | `false` |
-| `--clean` | Remove `_work` directory after successful run | `false` |
-| `--cache-dir string` | Cache directory (default `<output>/_work/cache`) | — |
-| `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query (diagnostic; the pipeline consumes the same layer via `--plate-solve` / `--plate-center`) | — |
-| `--test-debayer PATH` | One-shot FITS debayer diagnostic | — |
+
+### Plate Solving & Gaia DR3 Data Layer
+
+| Flag | Description | Default |
+| --- | --- | --- |
 | `--plate-solve` | Run TAN WCS plate solve after stacking; writes `plate_solution.json` | `false` |
-| `--plate-center RA,DEC` | Seed for `--plate-solve` in decimal degrees. Falls back to the reference frame's FITS `RA`/`DEC` when unset. Blind mode scans only the 3×3 nside=64 neighbourhood around (0,0) and will fail on a real field. | — |
-| `--png` | Write `stacked_mean.png` alongside the JPEGs (gamma 0.5 LUT, so it is the lossless sibling of `stacked_mean.jpg`) | `false` |
-| `--bmp` | Write `stacked_mean.bmp` alongside the JPEGs (hand-written uncompressed 24-bit BMP; no stdlib BMP encoder exists) | `false` |
+| `--plate-center RA,DEC` | Pointing seed in decimal degrees (falls back to FITS `RA`/`DEC`; blind mode scans only 3×3 `nside=64` around `(0,0)`) | — |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
-| `--gaia-cache-dir D` | Gaia tile cache directory | OS user cache dir (e.g. `~/.cache/skystacker/gaia_cache`) |
-| `--gaia-nside N` | HEALPix nside (power of 2, 2-8192) | `64` |
-| `--gaia-mag-limit M` | Gaia G-band magnitude limit | `14.0` |
-| `--gaia-offline` | Cache misses are a hard error; no network access | `false` |
-| `--gaia-cache-refresh` | Re-download even if cached; exclusive with `--gaia-offline` | `false` |
-| `--selftest` | Run internal self-tests and exit | — |
+| `--gaia-cache-dir string` | Gaia HEALPix tile cache directory | OS user cache dir (`~/.cache/skystacker/gaia_cache`) |
+| `--gaia-nside int` | HEALPix `nside` resolution (power of 2, `2`–`8192`) | `64` |
+| `--gaia-mag-limit float` | Gaia G-band faint magnitude limit (`0`–`20`) | `14.0` |
+| `--gaia-offline` | Treat cache misses as hard errors; disable network requests | `false` |
+| `--gaia-cache-refresh` | Re-download tiles even if cached (mutually exclusive with `--gaia-offline`) | `false` |
+
+### Output Formats & Diagnostics
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
+| `--png` | Write lossless `stacked_mean.png` alongside JPEGs (same gamma `0.5` LUT) | `false` |
+| `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
+| `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query diagnostic; prints `nside`, `ipix`, first 5 stars, and exits | — |
+| `--test-debayer PATH` | One-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg` | — |
+| `--selftest` | Run embedded self-tests and exit | — |
 | `--version` | Print version and exit | — |
-| `--help` | Print command-line help | — |
+| `--help` | Print command-line help and exit | — |
 
 For the authoritative list and defaults in your checked-out build, run:
 
@@ -442,22 +494,36 @@ For the authoritative list and defaults in your checked-out build, run:
 ./skystacker --help
 ```
 
-## Output
+---
 
-SkyStacker creates a `0_skystacker_results/` directory by default (or the directory selected with `--output`).
+## Output Structure
 
-Depending on the selected workflow and enabled options, it can contain:
+By default, SkyStacker writes all outputs into `<input>/0_skystacker_results/` (or the path specified with `--output`):
 
-- Registered and unregistered stack products.
-- Maximum- and minimum-pixel diagnostic stacks.
-- TIFF data products when requested.
-- JPEG previews from post-processing stages.
-- Intermediate working data used by the post-processing pass.
-- `report.txt`, containing the command line, the resolved flags, processing information and per-frame outcomes.
+```text
+0_skystacker_results/
+├── TIFF/
+│   └── *.tif                                  # Uncompressed little-endian RGB IEEE float32 single-strip TIFFs
+├── stacked_mean.jpg                           # 8-bit gamma-0.5 display preview (plus post-processed & weighted mix JPEGs)
+├── stacked_mean.png                           # Optional lossless gamma-0.5 PNG (--png)
+├── stacked_mean.bmp                           # Optional uncompressed 24-bit BMP (--bmp)
+├── stacked_rejection_map.jpg                  # Cosmic-ray / hot-pixel outlier map (registered stack, gamma 0.5)
+├── stacked_weight_map.jpg                     # Per-pixel accumulated weight map (registered stack, gamma 0.5)
+├── stacked_unregistered_rejection_map.jpg     # Full-frame rejection map (when registration succeeds)
+├── stacked_unregistered_weight_map.jpg        # Full-frame weight map (when registration succeeds)
+├── stacked_coverage_map.jpg                   # Full-frame linear-mapped per-pixel registered coverage fraction
+├── plate_solution.json                        # Solved TAN WCS + SIP order-2 coefficients (--plate-solve)
+├── report.txt                                 # Command line, resolved flags, EXIF summary, per-frame metrics & crop notes
+└── _work/                                     # Intermediate working files (removable with --clean)
+    ├── stacked_mean.f32raw                    # Linear float32 stack (uint32 w, uint32 h, float32 RGB) used by --post-only
+    └── cache/                                 # Cached star detections & geometric transforms (--no-cache disables)
+```
 
-The precise set of files depends on the version, flags and input data. The report is the best place to check which frames were loaded, registered, skipped or processed.
+`report.txt` is the primary audit log for any session: it records the exact CLI invocation, resolved parameters, exposure summary, crop geometry, and per-frame diagnostics (`stars`, `inliers`, `scale`, `rotation`, `offset`, `bounding box`, `BoxPct`, `IntrQ`, `Weight`, and limiter warnings).
 
-## Processing pipeline at a glance
+---
+
+## Processing Pipeline at a Glance
 
 ```text
 Astrophotography session
@@ -466,229 +532,131 @@ Astrophotography session
  Discover JPG / JPEG / CR2 / CR3 / FIT / FITS
         │
         ▼
- Decode frames and estimate resource requirements
+ Decode frames & run pre-flight RAM / disk checks
         │
         ▼
- Optional dark / flat / bias calibration
+ Optional dark / flat / bias calibration (or --self-flat)
         │
         ▼
- Detect stars and choose a reference frame
+ Detect stars & choose reference frame (or load from _work/cache)
         │
         ▼
- Match star patterns and register frames
+ Match triangle patterns (top 40 stars) & RANSAC registration
         │
         ▼
- Resample, align and crop valid image area
+ Sub-pixel bilinear resampling, safe crop & optional normalization
         │
         ▼
- Mean / Median / Sigma stacking
+ Mean / Median / Sigma-clipped quality-weighted stacking
         │
-        ├── Maximum-pixel stack
-        ├── Minimum-pixel stack
-        └── Optional TIFF output
+        ├── Maximum-pixel diagnostic stack
+        ├── Minimum-pixel diagnostic stack
+        ├── Rejection, weight & coverage maps
+        ├── Optional TIFF / PNG / BMP outputs
+        └── Optional TAN WCS plate solve (plate_solution.json)
         │
         ▼
- Background and optional image processing
+ 8-step automated post-processing pipeline
         │
         ▼
- JPEG previews + image products + report
+ Display JPEGs + scientific float32 outputs + report.txt
 ```
 
-## Development status
+---
 
-SkyStacker is under active development. The repository currently uses a single-file implementation in `main.go`; the version reported by the current source is **0.6.0**.
+## Pre-Flight Resource Checks & Error Handling
 
-Download a static binary from the [GitHub releases](https://github.com/computerphysicslab/skystacker/releases): Linux, macOS and Windows, amd64 and arm64. No installer and no C library. CR2/CR3 still need `dcraw` and ImageMagick.
+Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
-The feature set, output names and command-line interface may change between development revisions. Treat the source code and `--help` output from the checked-out commit as authoritative.
-## Recently implemented (v0.5.1)
+- **Memory check**: Estimates `frameMB * 5` for `mean` and `frameMB * 4 + tileBufMB` (tile buffer capped at `256 MB`) for `median`/`sigma`, applying a `1.5 × naive + 2000 MB` peak safety margin compared against available RAM (`/proc/meminfo` `MemAvailable` on Linux).
+- **Disk check (`median`/`sigma` only)**: Verifies `frames * frameBytes * 2 + 500 MB` headroom for temporary spill files against available filesystem blocks. (`mean` performs no disk spill.)
+- **Time estimation**: Reports a calibrated runtime estimate based on frame count, megapixels, RAW conversion overhead (~12 s/frame for CR2/CR3), and post-processing settings.
+- **Fault tolerance**:
+  - Corrupt or unreadable files are soft-rejected during discovery and logged in `report.txt`; processing continues unless every file fails.
+  - Dimension mismatches fail fast with the conflicting resolution groups named in the error message.
+  - All output files use atomic writes (`.tmp` + rename) so failed writes never leave partial files behind.
+  - `--post-only` verifies that `_work/stacked_mean.f32raw` exists before starting.
+  - Use `--force` only if you intentionally need to bypass memory and disk pre-flight guards.
 
-The following items from the original roadmap have been implemented in 0.5.0:
+---
 
-- **Frame quality weighting** — registered frames are weighted by
-  `computeFrameQuality × computeIntrinsicQuality / 100`; unregistered frames
-  by intrinsic quality alone. Weights visible per-frame in `report.txt`
-  (`IntrQ` and `Weight` columns).
-- **Per-frame normalization** — `--normalize` scales each frame's sky
-  background (median + MAD) to match the reference frame.
-- **Local normalization correction** — `--local-normalize` applies the same
-  correction per tile with bilinear interpolation of the correction field,
-  catching spatially varying sky gradients and transparency changes.
-- **Star / transform cache** — re-runs skip Pass 1 detection and
-  Pass 2 registration via JSON files under `<output>/_work/cache/`.
-  Disable with `--no-cache`; override the location with `--cache-dir`.
-- **Adaptive rejection and maps** — MAD-based sigma clipping (default 3σ,
-  2 iterations), plus per-pixel rejection and weight maps
-  (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`; plus
-  `stacked_unregistered_rejection_map.jpg`, `stacked_unregistered_weight_map.jpg`
-  when registration succeeds, and a full-frame `stacked_coverage_map.jpg`).
-  The rejection map is the frame's cosmic-ray / hot-pixel candidate map: sigma
-  clipping rejects exactly the extreme outliers, so bright spots there are
-  cosmic-ray or hot-pixel hits.
+## Development Status & Recently Implemented (v0.5.1)
 
-- **Gaia DR3 data-access layer** — HEALPix nested math,
-  a TAP client to the ESA Gaia archive with a 180 s per-attempt timeout and
-  a 5 s progress heartbeat, and a per-tile JSON disk cache under
-  the OS user cache dir (`~/.cache/skystacker/gaia_cache/` on Linux,
-  `~/Library/Caches/skystacker/gaia_cache/` on macOS). **Consumed by
-  `--plate-solve`** (seed with `--plate-center RA,DEC` or a reference
-  frame with FITS `RA`/`DEC`); the solved WCS is written to
-  `plate_solution.json`. Standalone: `./skystacker --test-gaia RA,DEC`.
-  Tile geometry matches healpy 1.16.5 at nside up to 256; fixtures live in `testdata/healpix_reference.json`.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.5.1**). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `./skystacker --help` as authoritative.
+
+The following capabilities have been implemented in `0.5.0`–`0.5.1`:
+
+- **Frame quality weighting**: Registered frames are weighted by `computeFrameQuality × computeIntrinsicQuality / 100`; unregistered frames by intrinsic quality alone. Per-frame scores appear in `report.txt` under the `IntrQ` and `Weight` columns.
+- **Per-frame global normalization (`--normalize`)**: Scales each frame's sky background (`median` + `MAD`) to match the reference frame.
+- **Local normalization correction (`--local-normalize`)**: Applies tile-based `scale + offset` normalization with bilinear interpolation across the field to handle spatially varying gradients and transparency shifts.
+- **Star / transform cache**: Re-runs skip Pass 1 star detection and Pass 2 registration using cached JSON metadata under `<output>/_work/cache/` (override with `--cache-dir`, disable with `--no-cache`).
+- **Adaptive rejection & diagnostic maps**: MAD-based sigma clipping (default `3.0σ`, `2` iterations) alongside per-pixel rejection and weight maps (`stacked_rejection_map.jpg`, `stacked_weight_map.jpg`, plus unregistered counterparts and full-frame `stacked_coverage_map.jpg`) for cosmic-ray and hot-pixel inspection.
+- **Gaia DR3 data-access layer & TAN WCS plate solving**: HEALPix nested geometry (verified against `healpy` up to `nside=256`; reference fixtures in `testdata/healpix_reference.json`), ESA Gaia TAP client with 180 s timeout and 5 s heartbeat, persistent OS user cache (`gaia_cache/`), `--test-gaia RA,DEC` diagnostic, and `--plate-solve` writing `plate_solution.json`.
+
+---
 
 ## Planned Potential Features and Technologies Roadmap
 
 ### Tier 1 — Small, self-contained (`S`)
 
-
-- **SER video input**: add `.ser` to `discoverFiles`; `decodeSER` reads
-  the header (width, height, pixel depth, frame count) and yields frames
-  one at a time, pairing with the existing streaming/tiled path.
-  Test: `testSERDecode`.
-- **Automatic comet / moving-object tracking**: dual registration
-  (star-aligned + comet-aligned). New `--comet-center X,Y` or
-  `--comet RA,DEC --comet-rate dRA,dDec`; per-frame predicted comet pixel
-  position from the ephemeris + EXIF `DateTimeOriginal`; reuse the
-  existing resampler with a per-frame translation so the comet is sharp
-  and stars trail. Emit `stacked_comet.f32raw` + preview; combined
-  comet+stars output is a stretch goal. Closes a `COMPARISON.md` gap.
-  Test: `testCometTranslation`.
+- **SER video input**: Add `.ser` to `discoverFiles`; `decodeSER` reads the header (width, height, pixel depth, frame count) and yields frames one at a time, pairing with the existing streaming/tiled path. Test: `testSERDecode`.
+- **Automatic comet / moving-object tracking**: Dual registration (star-aligned + comet-aligned). New `--comet-center X,Y` or `--comet RA,DEC --comet-rate dRA,dDec`; per-frame predicted comet pixel position from ephemeris + EXIF `DateTimeOriginal`; reuse the existing resampler with a per-frame translation so the comet is sharp and stars trail. Emit `stacked_comet.f32raw` + preview; combined comet+stars output is a stretch goal. Closes a `COMPARISON.md` gap. Test: `testCometTranslation`.
 
 ### Tier 2 — Medium, a day each (`M`)
 
-- **Bad-pixel map (BPM)**: `--bpm PATH` (FITS or `x,y` text). Load once
-  in pass 1 and mark those pixels invalid (`Pix = -1`) before
-  calibration so `addFrameMasked` skips them and `validCount` excludes
-  them. Optional `--bpm-auto` builds a BPM from a master dark (pixels
-  > Nσ from the dark median). The rejection map is the *post hoc*
-  version; BPM is the *a priori* version. Closes a `COMPARISON.md` gap.
-  Test: `testBPMMasksPixels`.
-- **FITS output**: `--fits` writes `stacked_sum.fits` (2880-byte
-  header blocks, big-endian, `BITPIX=-32`, `NAXIS=3`). The reader
-  already exists, so this is the easy half of interoperability.
-  Test: `testFITSWriterRoundTrip`.
-- **Distortion correction (SIP)**: `fitSIPFromMatches` already exists
-  and is tested (`testWCSSIP`); the missing piece is *applying* it.
-  Add `wcsTanInverseSIP` (adds the polynomial terms after the linear CD
-  projection) and a resampler path that uses it when a plate solution
-  exists. Gate behind `--plate-solve` + `--use-sip` so it never fires on
-  unsolved fields. Closes a `COMPARISON.md` gap.
-  Test: `testSIPResampleRoundTrip`.
-- **Astrometric plate solving & WCS** (consumer of the Gaia layer):
-  the data-access layer (HEALPix nested math, TAP client, per-tile JSON
-  cache, `--test-gaia`) and the solver (`solvePlate`, `fitWCSFromMatches`,
-  `fitSIPFromMatches`) are committed and tested. `--plate-solve` consumes
-  the layer; `--plate-center RA,DEC` and FITS-header RA/DEC auto-seed are
-  wired, and `plate_solution.json` is written to the output bundle. What
-  remains is *applying* SIP to the resampler (see the SIP bullet above)
-  and wiring the solver into `--post-only`. Reference: Astrometry.net /
-  local Gaia catalogues.
-  Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
-- **PSF modelling & HFR**: Gaussian and Moffat profile fits per star;
-  Half Flux Radius; elliptical Gaussian fitting for tracking errors,
-  tilt, or coma. Feeds the advanced frame-quality formula.
-  Test: `testPSFFit` (synthetic Moffat, recover FWHM within tolerance).
-- **Frame quality weighting (advanced)**: already partially applied
-  (`computeAdvancedQuality`, `Q_i = w₁·SNR − w₂·FWHM − w₃·E − w₄·B`);
-  remaining work is to consume PSF-derived FWHM/eccentricity (above)
-  instead of the current connected-component proxy.
-- **Adaptive rejection & maps**: already partially applied (MAD
-  sigma-clipping, per-pixel rejection/weight maps, coverage map);
-  remaining work is asymmetric thresholds and richer per-pixel metadata.
+- **Bad-pixel map (BPM)**: `--bpm PATH` (FITS or `x,y` text). Load once in Pass 1 and mark those pixels invalid (`Pix = -1`) before calibration so `addFrameMasked` skips them and `validCount` excludes them. Optional `--bpm-auto` builds a BPM from a master dark (pixels `> Nσ` from the dark median). The rejection map is the *post hoc* version; BPM is the *a priori* version. Closes a `COMPARISON.md` gap. Test: `testBPMMasksPixels`.
+- **FITS output**: `--fits` writes `stacked_sum.fits` (2880-byte header blocks, big-endian, `BITPIX=-32`, `NAXIS=3`). The reader already exists, so this is the easy half of interoperability. Test: `testFITSWriterRoundTrip`.
+- **Distortion correction (SIP)**: `fitSIPFromMatches` already exists and is tested (`testWCSSIP`); the missing piece is *applying* it. Add `wcsTanInverseSIP` (adds the polynomial terms after the linear CD projection) and a resampler path that uses it when a plate solution exists. Gate behind `--plate-solve` + `--use-sip` so it never fires on unsolved fields. Closes a `COMPARISON.md` gap. Test: `testSIPResampleRoundTrip`.
+- **Astrometric plate solving & WCS (completion)**: The data-access layer (HEALPix nested math, TAP client, per-tile JSON cache, `--test-gaia`) and solver (`solvePlate`, `fitWCSFromMatches`, `fitSIPFromMatches`) are committed and tested, with `plate_solution.json` written on `--plate-solve`. Remaining work: applying SIP to the resampler (above) and wiring the solver into `--post-only`. Reference: Astrometry.net / local Gaia catalogues. Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
+- **PSF modelling & HFR**: Gaussian and Moffat profile fits per star; Half Flux Radius; elliptical Gaussian fitting for tracking errors, tilt, or coma. Feeds the advanced frame-quality formula. Test: `testPSFFit` (synthetic Moffat, recover FWHM within tolerance).
+- **Frame quality weighting (advanced)**: Already partially applied (`computeAdvancedQuality`, `Q_i = w₁·SNR − w₂·FWHM − w₃·E − w₄·B`); remaining work is to consume PSF-derived FWHM/eccentricity instead of the current connected-component proxy.
+- **Adaptive rejection & maps (extended)**: Already partially applied (MAD sigma-clipping, per-pixel rejection/weight maps, coverage map); remaining work is asymmetric thresholds and richer per-pixel metadata.
 
 ### Tier 3 — Large, multi-day (`L`)
 
-- **Astrometric catalog annotation & unassociated-source (anomaly) flagging**:
-  consume `plate_solution.json` (WCS + optional SIP) during stacking or `--post-only`
-  to project reference catalog entries (Gaia DR3 plus bundled/cached NGC/IC, PGC,
-  Messier, and HD tables) into image pixel coordinates and emit an annotated overlay
-  (`stacked_annotated.jpg` / `.png`) with scaled elliptical apertures, leader lines,
-  and morphological/photometric labels. Cross-match blind detections against the
-  projected catalog within an angular tolerance radius to highlight uncatalogued
-  sources or photometric outliers (transients, minor planets, high-proper-motion
-  objects, or unclipped artifacts) with distinct anomaly reticles and emit an
-  `anomalies.json` manifest. Depends on astrometric plate solving (Tier 2).
-  Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`.
-
-- **XISF output**: block-structured container with an XML header and
-  optional compression. A minimal writer (no compression, `Float32`
-  sample format, one image block) is ~200 lines. Lower priority than
-  FITS — most tools read FITS.
-  Test: `testXISFWrite`.
-- **Drizzle & Bayer drizzle integration**: per-input-pixel *drop* onto
-  the output grid with the drizzle kernel (pixfrac, scale), a
-  weight/coverage accumulator, and a final normalise. Replaces
-  `resampleToReference` in the registered path; pairs with
-  `--scale < 1` upsampling. The streaming/tiled skeleton fits — the
-  work is the kernel and geometric bookkeeping. Bayer drizzle recovers
-  colour without conventional demosaicing first.
-  Tests: `testDrizzleKernel`, `testDrizzleIdentity`.
-- **Multiscale background modelling**: sample-based extraction, robust
-  polynomial fitting that protects extended astronomical objects, and
-  multiscale wavelet processing. Supersedes the current single 2nd-degree
-  polynomial.
-- **PSF-based deconvolution**: Richardson–Lucy, Wiener filtering, and
-  regularized deconvolution to recover fine detail lost to atmospheric
-  seeing. Depends on PSF modelling (Tier 2).
-- **Star separation**: generate a starless image plus an independent
-  star layer for isolated nebular processing. The existing
-  `removeStars` (annulus median) is the crude first step; real
-  separation needs a proper star mask.
-- **Advanced noise reduction**: multiscale noise estimation and
-  spatially adaptive denoising (the current guided filter + two-scale
-  chroma pass is the baseline).
-- **Advanced photometric & colour calibration (PCC / SPCC)**: use
-  stellar spectral information from Gaia DR3 plus camera sensor
-  response and filter transmission to derive true colour. Depends on
-  plate solving (Tier 2) and the Gaia layer.
-- **Narrowband & advanced calibration**: monochrome Hα / OIII / SII
-  support with HOO / SHO / LRGB mappings, dark-frame scaling, and
-  separate RGB channel normalization.
-- **Per-frame normalization (extended)**: already applied as
-  global + local scale+offset; remaining work is additive and
-  multiplicative modes and per-channel normalization.
-- **Multi-night integration**: intelligent session classifiers,
-  cross-session normalization, and calibration matching across nights.
-- **Mosaic construction**: multi-panel alignment, overlap-based
-  photometric normalization, feathered blending, and multiband seam
-  elimination.
-- **Expanded formats**: FITS with compression, RAW/DNG ingestion
-  preserving acquisition metadata and calibration provenance.
-- **Robust workflow control**: processing cache (already partly in
-  place), checkpoint and resume, YAML/JSON pipeline configuration files,
-  structured JSON telemetry reports, a modular plugin architecture, and
-  an optional REST API.
+- **Astrometric catalog annotation & unassociated-source (anomaly) flagging**: Consume `plate_solution.json` (WCS + optional SIP) during stacking or `--post-only` to project reference catalog entries (Gaia DR3 plus bundled/cached NGC/IC, PGC, Messier, and HD tables) into image pixel coordinates and emit an annotated overlay (`stacked_annotated.jpg` / `.png`) with scaled elliptical apertures, leader lines, and morphological/photometric labels. Cross-match blind detections against the projected catalog within an angular tolerance radius to highlight uncatalogued sources or photometric outliers (transients, minor planets, high-proper-motion objects, or unclipped artifacts) with distinct anomaly reticles and emit an `anomalies.json` manifest. Depends on astrometric plate solving (Tier 2). Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`.
+- **XISF output**: Block-structured container with an XML header and optional compression. A minimal writer (no compression, `Float32` sample format, one image block) is ~200 lines. Lower priority than FITS — most tools read FITS. Test: `testXISFWrite`.
+- **Drizzle & Bayer drizzle integration**: Per-input-pixel *drop* onto the output grid with the drizzle kernel (`pixfrac`, `scale`), a weight/coverage accumulator, and a final normalise. Replaces `resampleToReference` in the registered path; pairs with `--scale < 1` upsampling. Bayer drizzle recovers colour without conventional demosaicing first. Tests: `testDrizzleKernel`, `testDrizzleIdentity`.
+- **Multiscale background modelling**: Sample-based extraction, robust polynomial fitting that protects extended astronomical objects, and multiscale wavelet processing. Supersedes the current single 2nd-degree polynomial.
+- **PSF-based deconvolution**: Richardson–Lucy, Wiener filtering, and regularized deconvolution to recover fine detail lost to atmospheric seeing. Depends on PSF modelling (Tier 2).
+- **Star separation**: Generate a starless image plus an independent star layer for isolated nebular processing. The existing `removeStars` (annulus median) is the crude first step; real separation needs a proper star mask.
+- **Advanced noise reduction**: Multiscale noise estimation and spatially adaptive denoising (the current guided filter + two-scale chroma pass is the baseline).
+- **Advanced photometric & colour calibration (PCC / SPCC)**: Use stellar spectral information from Gaia DR3 plus camera sensor response and filter transmission to derive true colour. Depends on plate solving (Tier 2) and the Gaia layer.
+- **Narrowband & advanced calibration**: Monochrome Hα / OIII / SII support with HOO / SHO / LRGB mappings, dark-frame scaling, and separate RGB channel normalization.
+- **Per-frame normalization (extended)**: Already applied as global + local `scale + offset`; remaining work is additive and multiplicative modes and per-channel normalization.
+- **Multi-night integration**: Intelligent session classifiers, cross-session normalization, and calibration matching across nights.
+- **Mosaic construction**: Multi-panel alignment, overlap-based photometric normalization, feathered blending, and multiband seam elimination.
+- **Expanded formats**: FITS with compression, RAW/DNG ingestion preserving acquisition metadata and calibration provenance.
+- **Robust workflow control**: Processing cache (already partly in place), checkpoint and resume, YAML/JSON pipeline configuration files, structured JSON telemetry reports, a modular plugin architecture, and an optional REST API.
 
 ### Tier 4 — Architectural / out of scope (`XL`, `∞`)
 
-- **Hardware abstraction layer + SIMD/AVX2/AVX-512**: optimized
-  CPU pixel operations and memory-mapped tiles. `XL` — the clean seam is
-  the pure functions over `[]float32` (`reduceTile`,
-  `guidedFilterGray`).
-- **CUDA / OpenCL / Vulkan Compute GPU acceleration**: `∞` under the
-  current single-file / stdlib-only constraint (`TECHNICAL_SPEC.md` §2).
-  If ever attempted, the seam is the same two pure functions as the SIMD
-  work. Test: `testGPUReduceMatchesCPU` (bit-exact or within 1e-5).
-- **Optional AI/ML modules**: CNN/U-Net AI denoising, automated star
-  removal, anomaly-based defect detection, and ML regression frame
-  selection. `∞` under the stdlib-only constraint.
-
+- **Hardware abstraction layer + SIMD/AVX2/AVX-512**: Optimized CPU pixel operations and memory-mapped tiles (`XL` — the clean seam is the pure functions over `[]float32`: `reduceTile`, `guidedFilterGray`).
+- **CUDA / OpenCL / Vulkan Compute GPU acceleration**: `∞` under the current single-file / stdlib-only constraint (`TECHNICAL_SPEC.md` §2). If ever attempted, the seam is the same two pure functions as the SIMD work. Test: `testGPUReduceMatchesCPU` (bit-exact or within `1e-5`).
+- **Optional AI/ML modules**: CNN/U-Net AI denoising, automated star removal, anomaly-based defect detection, and ML regression frame selection (`∞` under the stdlib-only constraint).
 
 ---
 
-## How SkyStacker compares
+## How SkyStacker Compares
 
-See [COMPARISON.md](COMPARISON.md) for a feature comparison with DeepSkyStacker,
-Siril, Astro Pixel Processor, PixInsight, Sequator, ASTAP, IRIS, Nebulosity,
-MaxIm DL, AstroImageJ, Starry Landscape Stacker and AutoStakkert!.
+| Aspect | SkyStacker Position |
+| --- | --- |
+| **Distribution & Runtime** | Single cross-platform Go binary (MIT License), CLI-only, zero external runtime dependencies (aside from optional `dcraw`/`ImageMagick` for RAW decoding) |
+| **Core Stacking & Calibration** | Dark/Flat/Bias + synthetic self-flat; Mean/Median/Quality-weighted Sigma clipping; global & local per-tile normalization; end-to-end `float32` |
+| **Built-in Post-Processing** | 8-step pipeline (polynomial background extraction, star removal, STF auto-stretch, guided + chroma denoise, curves, HDR blend, weighted mixes, diffraction spikes) |
+| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no comet tracking, no PSF deconvolution, no GPU acceleration, and SIP distortion is fitted/stored rather than applied during resampling |
 
-## Project goals
+See [COMPARISON.md](COMPARISON.md) for a detailed matrix comparing SkyStacker against DeepSkyStacker, Siril, Astro Pixel Processor, PixInsight, Sequator, ASTAP, IRIS, Nebulosity, MaxIm DL, AstroImageJ, Starry Landscape Stacker, and AutoStakkert!.
 
-- **Local-first:** process astrophotography data on the user's own machine.
-- **Transparent:** make processing steps and per-frame outcomes inspectable.
-- **Resource-conscious:** estimate memory needs and provide safeguards.
-- **Numerically careful:** use floating-point image data for accumulation and processing.
-- **Practical:** provide a straightforward CLI and useful intermediate outputs.
+---
+
+## Project Goals
+
+- **Local-first**: Process astrophotography data on the user's own machine without cloud dependencies.
+- **Transparent**: Make processing steps, rejection/weight maps, and per-frame outcomes inspectable in `report.txt`.
+- **Resource-conscious**: Estimate memory and disk needs up front and provide pre-flight safeguards.
+- **Numerically careful**: Use `float32` precision throughout accumulation, calibration, and post-processing.
+- **Practical**: Provide a reproducible, flag-driven CLI and useful intermediate scientific and preview outputs.
 
 ## License
 
