@@ -81,7 +81,7 @@ import (
 	"time"
 )
 
-var version = "0.6.0"
+var version = "0.6.1"
 
 // repoURL is printed in the startup banner and in --version output.
 const repoURL = "https://github.com/computerphysicslab/skystacker"
@@ -660,6 +660,12 @@ func loadCometEphemeris(path string) ([]cometEphemPoint, error) {
 		if err != nil {
 			return nil, fmt.Errorf("comet ephemeris %s:%d: bad dec %q: %w", path, lineno, decstr, err)
 		}
+		if raDeg < 0 || raDeg > 360 {
+			return nil, fmt.Errorf("comet ephemeris %s:%d: ra_deg out of range [0,360]: %g", path, lineno, raDeg)
+		}
+		if decDeg < -90 || decDeg > 90 {
+			return nil, fmt.Errorf("comet ephemeris %s:%d: dec_deg out of range [-90,90]: %g", path, lineno, decDeg)
+		}
 		pts = append(pts, cometEphemPoint{
 			t:   t,
 			ra:  raDeg * math.Pi / 180,
@@ -812,6 +818,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --comet-rate dX,dY comet motion in reference pixels per second")
 	fmt.Fprintln(w, "  --comet-radec RA,DEC comet RA,DEC (decimal degrees); requires --plate-solve")
 	fmt.Fprintln(w, "  --comet-sky-rate-arcsec dRA,dDec comet motion in arcsec/sec along RA* and Dec")
+	fmt.Fprintln(w, "  --comet-target PATH ephemeris file: lines ISO8601 RA_deg Dec_deg (# comments), requires --plate-solve; linear interp by EXIF time (fallback to ref time)")
 	fmt.Fprintln(w, "  --reference-crop P warp every light into the star-matched frame of image P (output size = P)")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
@@ -13942,6 +13949,40 @@ func testCometTranslation() error {
 	if _, err := parseArgs([]string{"--comet-radec", "1,2", "--comet-rate", "1,0"}); err == nil {
 		return errors.New("--comet-radec with --comet-rate should fail")
 	}
+	if _, err := parseArgs([]string{"--comet-target", "/nonexistent.ephem", "--comet-radec", "1,2"}); err == nil {
+		return errors.New("--comet-target combined with other comet options should fail")
+	}
+	return nil
+}
+
+func testCometEphemerisParse() error {
+	dir, err := os.MkdirTemp("", "skystacker-ephem-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	p := filepath.Join(dir, "c.txt")
+	body := "# header\n2026-01-01T00:00:00Z 100.0 20.0\n2026-01-01T01:00:00Z 101.0 21.0\n"
+	if err := os.WriteFile(p, []byte(body), 0644); err != nil {
+		return err
+	}
+	pts, err := loadCometEphemeris(p)
+	if err != nil {
+		return err
+	}
+	if len(pts) != 2 {
+		return fmt.Errorf("want 2 points, got %d", len(pts))
+	}
+	ra, dec := interpCometEphem(pts, pts[0].t)
+	if math.Abs(ra-100*math.Pi/180) > 1e-9 || math.Abs(dec-20*math.Pi/180) > 1e-9 {
+		return fmt.Errorf("interp at start: %.6f %.6f", ra, dec)
+	}
+	// midpoint
+	mid := pts[0].t.Add(30 * time.Minute)
+	ra2, dec2 := interpCometEphem(pts, mid)
+	if math.Abs(ra2-100.5*math.Pi/180) > 1e-4 || math.Abs(dec2-20.5*math.Pi/180) > 1e-4 {
+		return fmt.Errorf("interp mid: %.6f %.6f", ra2*180/math.Pi, dec2*180/math.Pi)
+	}
 	return nil
 }
 
@@ -14367,6 +14408,7 @@ func runSelfTests() int {
 		{"default synthetic calibration", testDefaultSyntheticCalib},
 		{"ser decode", testSERDecode},
 		{"comet translation", testCometTranslation},
+		{"comet ephemeris parse", testCometEphemerisParse},
 		{"reference crop alignment", testReferenceCropAlignment},
 		{"calibration master export", testExportCalibrationMasters},
 	}

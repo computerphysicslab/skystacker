@@ -9,10 +9,10 @@ touching code. Documentation in English. Final user reports in Spanish.
 
 Version and tests
 -----------------
-- Source version is v0.6.0 (`var version` in main.go).
-- Registered self-tests: 181. Count entries in `runSelfTests`, not every
+- Source version is v0.6.1 (`var version` in main.go).
+- Registered self-tests: 182. Count entries in `runSelfTests`, not every
   function whose name starts with `test`. Expect:
-      all 181 self-tests passed
+      all 182 self-tests passed
   Update this number only when a case is added or removed.
 
 Build and install
@@ -30,7 +30,7 @@ Build and install
         -o /home/jips/.local/bin/skystacker .
       cp -f /home/jips/.local/bin/skystacker ./skystacker
       /home/jips/.local/bin/skystacker --selftest
-- Verify: `skystacker --version` must print 0.6.0 or newer, not 0.5.1.
+- Verify: `skystacker --version` must print 0.6.1 (or the current version), not 0.5.1.
 
 Repository hygiene
 ------------------
