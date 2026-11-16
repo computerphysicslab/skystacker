@@ -1615,3 +1615,5 @@ rejection and disk spill. `--scale N` downsamples.
 - **SIP order-2 (WCS helpers):** `wcsTan.SIP` stored; `wcsTanForward` applies SIP; `wcsTanInverseSIP` added (iterative). Stacking resampler (affine/similarity) still does **not** apply SIP (documented). `testWCSSIP` extended with round-trip sanity.
 - **CI:** pushes `2c7e031`, `c84221c` verified locally green; check remote runs as needed.
 - Added selftests `pipeline grid self-flat {mean,median,sigma} stack-only` (E2E runPipeline with `--self-flat-model=grid`, registered, stack-only); self-tests 185.
+
+- Added `--fits` writer (`stacked_sum.fits`, big-endian BITPIX=-32, NAXIS=3, 2880-byte blocks), verified with `testFITSWriterRoundTrip` and ImageMagick `identify` (3 planes). selftests 186; README/TECH/prompt/CHANGELOG updated.

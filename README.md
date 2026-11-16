@@ -526,6 +526,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
+| `--fits` | Write `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3) | `false` |
 | `--png` | Write lossless `stacked_mean.png` alongside JPEGs (same gamma `0.5` LUT) | `false` |
 | `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
 | `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query diagnostic; prints `nside`, `ipix`, first 5 stars, and exits | — |
@@ -550,6 +551,7 @@ By default, SkyStacker writes all outputs into `<input>/0_skystacker_results/` (
 0_skystacker_results/
 ├── TIFF/
 │   └── *.tif                                  # Uncompressed little-endian RGB IEEE float32 single-strip TIFFs
+├── stacked_sum.fits                           # Optional big-endian float32 FITS sum, BITPIX=-32, NAXIS=3 (--fits)
 ├── stacked_mean.jpg                           # 8-bit gamma-0.5 display preview (plus post-processed & weighted mix JPEGs)
 ├── stacked_mean.png                           # Optional lossless gamma-0.5 PNG (--png)
 ├── stacked_mean.bmp                           # Optional uncompressed 24-bit BMP (--bmp)
@@ -628,7 +630,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 185 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 186 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

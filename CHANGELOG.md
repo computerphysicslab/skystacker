@@ -5,3 +5,6 @@
 - Added `testCometEphemerisParse`; self-tests now 182.
 - SIP order-2: applied in WCS helpers (`wcsTanForward`, `wcsTanInverseSIP`); stacking resampler remains affine/similarity-based (documented).
 - Version bumped to 0.6.1; docs updated (README, TECHNICAL_SPEC, prompt-ai).
+- Added `--fits` writer (`stacked_sum.fits`, big-endian BITPIX=-32, NAXIS=3) and round-trip selftest; self-tests 186.
+- Added `--comet-ephem-strict-exif` to fail instead of falling back when a light lacks EXIF time; comet-target examples in README.
+- Documented SIP stacking-resampler limitation and a reproducible OrionNebula grid-vs-real-flat validation protocol.

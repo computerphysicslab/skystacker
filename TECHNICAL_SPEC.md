@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 185. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 186. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 185 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 186 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
@@ -85,7 +85,7 @@ Flags are accepted before or after the positional input directory. Default input
 ### Stacking
 - `--sigma-clip` (default 3.0), `--sigma-clip-iters` (default 2).
 - `--tile-size` (default 0 = auto, capped at ~256 MB tile buffer).
-- `--tiff`, `--no-exif`.
+- `--tiff` writes `TIFF/stacked_sum.tif`; `--fits` writes `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3, 2880-byte header/data blocks, channel-major planes, divided by the same sum normalisation factor as the TIFF). `--no-exif`.
 
 ### Post-processing
 - `--mask-bg`, `--bg-degree` (1-3, default 2), `--bg-percentile` (default 10), `--stretch` (default 10).

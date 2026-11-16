@@ -200,6 +200,7 @@ type cliOptions struct {
 	PlateCenter        string
 	WritePNG           bool
 	WriteBMP           bool
+	CreateFITS         bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -329,6 +330,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.BlackLevel, "black-level", "", "black-level pedestal: auto reads EXIF/FITS metadata")
 	fs.StringVar(&o.BPMFile, "bpm", "", "bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
+	fs.BoolVar(&o.CreateFITS, "fits", false, "write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -813,6 +815,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --test-plate R,D   one-shot plate solve on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --plate-center R,D seed the plate solver with RA,DEC in decimal degrees")
 	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
+	fmt.Fprintln(w, "  --fits             write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -2870,6 +2873,78 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 	return nil
 }
 
+// writeFloat32RGBFITS writes a single-image-extension FITS file with
+// BITPIX=-32 (IEEE big-endian float32), NAXIS=3 and NAXIS3=3 (RGB,
+// record-order [plane][row][col], i.e. channel-major). Header cards are
+// 80 bytes, padded to a 2880-byte block before data, and data is padded to
+// a multiple of 2880 bytes. Each input float is divided by divisor.
+func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor float32) error {
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("fits: invalid dimensions %dx%d", width, height)
+	}
+	n := width * height * 3
+	if len(pix) != n {
+		return fmt.Errorf("fits: pixel buffer length %d does not match %dx%dx3 = %d", len(pix), width, height, n)
+	}
+	if divisor == 0 {
+		return errors.New("fits: divisor must be non-zero")
+	}
+	cards := []string{
+		"SIMPLE  =                    T",
+		"BITPIX  =                  -32",
+		"NAXIS   =                    3",
+		fmt.Sprintf("NAXIS1  = %20d", width),
+		fmt.Sprintf("NAXIS2  = %20d", height),
+		"NAXIS3  =                    3",
+		"BSCALE  =                  1.0",
+		"BZERO   =                  0.0",
+		"CTYPE1  = 'LINEAR  '",
+		"CTYPE2  = 'LINEAR  '",
+		"END",
+	}
+	var hdr bytes.Buffer
+	for _, c := range cards {
+		if len(c) > 80 {
+			return fmt.Errorf("fits: header card too long: %q", c)
+		}
+		hdr.WriteString(fmt.Sprintf("%-80s", c))
+	}
+	for hdr.Len()%2880 != 0 {
+		hdr.WriteByte(' ')
+	}
+	if _, err := w.Write(hdr.Bytes()); err != nil {
+		return err
+	}
+	const bufFloats = 4096
+	scratch := make([]byte, bufFloats*4)
+	inv := float32(1.0) / divisor
+	written := 0
+	for plane := 0; plane < 3; plane++ {
+		base := plane * width * height
+		for i := 0; i < width*height; {
+			count := width*height - i
+			if count > bufFloats {
+				count = bufFloats
+			}
+			for j := 0; j < count; j++ {
+				binary.BigEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[base+i+j]*inv))
+			}
+			if _, err := w.Write(scratch[:count*4]); err != nil {
+				return err
+			}
+			i += count
+			written += count
+		}
+	}
+	_ = written
+	if pad := (n % 720); pad != 0 {
+		if _, err := w.Write(make([]byte, (720-pad)*4)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -3692,6 +3767,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.CreateTIFF {
 		add("--tiff")
 	}
+	if o.CreateFITS {
+		add("--fits")
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4052,6 +4130,7 @@ type runOptions struct {
 	ReferenceCrop string
 
 	CreateTIFF  bool
+	CreateFITS  bool
 	PostCA      bool
 	PostColor   bool
 	PostFlatten bool
@@ -8915,6 +8994,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 
 	sumTiff := filepath.Join(tiffDir, "stacked_sum.tif")
+	sumFits := filepath.Join(outputDir, "stacked_sum.fits")
 	sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
 	meanWorkPath := filepath.Join(workDir, "stacked_mean.f32raw")
 	meanJPG := filepath.Join(outputDir, "stacked_mean.jpg")
@@ -8971,6 +9051,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				return writeFloat32RGBScaled(w, outW, outH, sumPix, sumDivisor)
 			}); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
+			}
+		}
+		if opts.CreateFITS {
+			logf("Writing registered sum FITS")
+			if err := writeFileAtomic(sumFits, func(w io.Writer) error {
+				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor)
+			}); err != nil {
+				return fmt.Errorf("write sum fits: %w", err)
 			}
 		}
 		logf("Writing registered sum preview")
@@ -9091,6 +9179,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				return writeFloat32RGBScaled(w, outW, outH, sumPix, sumDivisor)
 			}); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
+			}
+		}
+		if opts.CreateFITS {
+			logf("Writing sum FITS")
+			if err := writeFileAtomic(sumFits, func(w io.Writer) error {
+				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor)
+			}); err != nil {
+				return fmt.Errorf("write sum fits: %w", err)
 			}
 		}
 		logf("Writing sum preview")
@@ -14305,6 +14401,7 @@ func runSelfTests() int {
 		{"accumulator max", testAccumulatorMax},
 		{"accumulator masked", testAccumulatorMasked},
 		{"TIFF round trip", testTIFFRoundTrip},
+		{"fits writer round-trip", testFITSWriterRoundTrip},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
 		{"TIFF bad input", testTIFFBadInput},
@@ -14636,6 +14733,50 @@ func testTIFFRoundTrip() error {
 	for i := range pix {
 		if gotPix[i] != pix[i] {
 			return fmt.Errorf("pixel[%d]", i)
+		}
+	}
+	return nil
+}
+
+func testFITSWriterRoundTrip() error {
+	const w, h = 3, 2
+	pix := []float32{
+		0, 0.25, 0.5,
+		1, 0.5, 0.75,
+		0.125, 0.375, 0.625,
+		0.1, 0.2, 0.3,
+		0, 0, 1,
+		0.99, 0.5, 0.01,
+	}
+	var buf bytes.Buffer
+	if err := writeFloat32RGBFITS(&buf, w, h, pix, 2); err != nil {
+		return err
+	}
+	data := buf.Bytes()
+	if len(data)%2880 != 0 {
+		return fmt.Errorf("FITS length %d not a multiple of 2880", len(data))
+	}
+	if string(data[0:6]) != "SIMPLE" || string(data[80:86]) != "BITPIX" || string(data[160:165]) != "NAXIS" {
+		return errors.New("missing FITS primary header cards")
+	}
+	if !bytes.Contains(data[:2880], []byte("BITPIX  =                  -32")) {
+		return errors.New("missing BITPIX=-32 card")
+	}
+	if !bytes.Contains(data[:2880], []byte("NAXIS3  =                    3")) {
+		return errors.New("missing NAXIS3=3 card")
+	}
+	end := bytes.Index(data[:2880], []byte("END"))
+	if end < 0 {
+		return errors.New("missing END card")
+	}
+	dataOffset := 2880
+	got := make([]float32, len(pix))
+	for i := range got {
+		got[i] = math.Float32frombits(binary.BigEndian.Uint32(data[dataOffset+i*4:]))
+	}
+	for i := range pix {
+		if math.Abs(float64(got[i]-pix[i]/2)) > 1e-6 {
+			return fmt.Errorf("FITS pixel[%d] = %g, want %g", i, got[i], pix[i]/2)
 		}
 	}
 	return nil
@@ -21358,6 +21499,7 @@ func main() {
 		SelfFlatLinearSRGB:   opts.SelfFlatLinearSRGB,
 		ReferenceCrop:        opts.ReferenceCrop,
 		CreateTIFF:           opts.CreateTIFF,
+		CreateFITS:           opts.CreateFITS,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,
