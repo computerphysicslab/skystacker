@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 191. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 192. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 191 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 192 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
@@ -84,7 +84,7 @@ Flags are accepted before or after the positional input directory. Default input
 - `--cache-dir` (default `<output>/_work/cache`).
 
 ### Stacking
-- `--sigma-clip` (default 3.0), `--sigma-clip-iters` (default 2).
+- `--sigma-clip` (default 3.0), `--sigma-clip-iters` (default 2), optional `--sigma-clip-low` / `--sigma-clip-high` for asymmetric MAD rejection on each side (0 = symmetric).
 - `--tile-size` (default 0 = auto, capped at ~256 MB tile buffer).
 - `--tiff` writes `TIFF/stacked_sum.tif`; `--fits` writes `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3, 2880-byte blocks); `--xisf` writes `stacked_sum.xisf` (monolithic XISF 1.0, planar little-endian Float32, no compression). Both divide by the same sum normalisation factor as the TIFF. `--no-exif`.
 

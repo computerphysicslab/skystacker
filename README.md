@@ -442,6 +442,8 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | --- | --- | --- |
 | `--sigma-clip float` | MAD sigma-clipping rejection threshold (`0` disables) | `3.0` |
 | `--sigma-clip-iters int` | Number of sigma-clipping iterations | `2` |
+| `--sigma-clip-low float` | Asymmetric low-side sigma threshold (`0` = use `--sigma-clip`) | `0` |
+| `--sigma-clip-high float` | Asymmetric high-side sigma threshold (`0` = use `--sigma-clip`) | `0` |
 | `--tile-size int` | Tile side length in pixels for `median`/`sigma` (`0` = auto, capped at ~256 MB) | `0` |
 | `--no-cache` | Disable reading/writing the star and transform cache | `false` |
 | `--cache-dir string` | Directory for star/transform cache | `<output>/_work/cache` |
@@ -635,7 +637,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 191 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 192 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

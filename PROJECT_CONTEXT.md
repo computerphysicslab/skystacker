@@ -1627,3 +1627,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--xisf`: minimal monolithic XISF 1.0 writer (`XISF0100`, XML Metadata, one RGB Float32 Image with planar attached block, no compression) verified by `testXISFWrite`. selftests 190.
 
 - Added `--hfr-quality` (opt-in): advanced frame-quality FWHM proxy uses median star HFR (`1.995*HFR`) instead of connected-component blob size. `testHFRQuality`; selftests 191.
+
+- Added asymmetric sigma clipping (`--sigma-clip-low`, `--sigma-clip-high`, 0 = symmetric); threaded through `reduceTilesStack`/`reduceTile` via optional params so all existing call sites keep symmetric behavior. `testSigmaClipAsymmetric`; selftests 192.

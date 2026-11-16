@@ -155,6 +155,8 @@ type cliOptions struct {
 	NoExif               bool
 	SigmaClipThreshold   float64
 	SigmaClipIters       int
+	SigmaClipLow         float64
+	SigmaClipHigh        float64
 	TileSize             int
 	Scale                int
 	Force                bool
@@ -320,6 +322,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.GaiaCacheRefresh, "gaia-cache-refresh", false, "re-download tiles even if cached (still updates the cache)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
+	fs.Float64Var(&o.SigmaClipLow, "sigma-clip-low", 0, "asymmetric low-side sigma threshold (0 = use --sigma-clip)")
+	fs.Float64Var(&o.SigmaClipHigh, "sigma-clip-high", 0, "asymmetric high-side sigma threshold (0 = use --sigma-clip)")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
 	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
@@ -359,7 +363,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -457,6 +461,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.SigmaClipIters < 1 || o.SigmaClipIters > 10 {
 		return nil, fmt.Errorf("--sigma-clip-iters must be in [1, 10], got %d", o.SigmaClipIters)
+	}
+	if o.SigmaClipLow < 0 || o.SigmaClipLow > 1000 || o.SigmaClipHigh < 0 || o.SigmaClipHigh > 1000 {
+		return nil, errors.New("--sigma-clip-low/high must be in [0, 1000]")
 	}
 	if o.TileSize < 0 || o.TileSize > 4096 {
 		return nil, fmt.Errorf("--tile-size must be in [0, 4096], got %d", o.TileSize)
@@ -800,6 +807,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --spikes-min-count N  minimum number of stars to spike, floors the percent-based selection (default 5)")
 	fmt.Fprintln(w, "  --sigma-clip F        MAD sigma-clipping threshold for median/sigma stacks (default 3.0)")
 	fmt.Fprintln(w, "  --sigma-clip-iters N  number of sigma-clipping iterations (default 2)")
+	fmt.Fprintln(w, "  --sigma-clip-low F    asymmetric low-side sigma threshold (0 = symmetric)")
+	fmt.Fprintln(w, "  --sigma-clip-high F   asymmetric high-side sigma threshold (0 = symmetric)")
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
 	fmt.Fprintln(w, "  --normalize       globally normalize each frame to the reference (requires registration)")
 	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
@@ -3939,6 +3948,12 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.SigmaClipIters > 0 && o.SigmaClipIters != 2 {
 		add(fmt.Sprintf("--sigma-clip-iters %d", o.SigmaClipIters))
 	}
+	if o.SigmaClipLow > 0 {
+		add(fmt.Sprintf("--sigma-clip-low %g", o.SigmaClipLow))
+	}
+	if o.SigmaClipHigh > 0 {
+		add(fmt.Sprintf("--sigma-clip-high %g", o.SigmaClipHigh))
+	}
 	if o.TileSize > 0 {
 		add(fmt.Sprintf("--tile-size %d", o.TileSize))
 	}
@@ -4297,6 +4312,8 @@ type runOptions struct {
 	NoExif               bool
 	SigmaClipThreshold   float64
 	SigmaClipIters       int
+	SigmaClipLow         float64
+	SigmaClipHigh        float64
 	TileSize             int
 	Scale                int
 	Force                bool
@@ -5324,13 +5341,20 @@ func estimateFrameBgNoise(f *frame) float64 {
 // of the surviving values is returned. If all surviving weights are 0,
 // the unweighted mean is returned as a safe fallback so pixels are not
 // zeroed by a division-by-zero.
-func sigmaClipReduceWeighted(vals, weights []float32, threshold float64, iters int) (mean, sigma float32, accepted, rejected int) {
+func sigmaClipReduceWeighted(vals, weights []float32, threshold float64, iters int, asym ...float64) (mean, sigma float32, accepted, rejected int) {
 	n := len(vals)
 	if n != len(weights) || n == 0 {
 		return 0, 0, 0, 0
 	}
 	if threshold <= 0 {
 		threshold = 3.0
+	}
+	lo, hi := threshold, threshold
+	if len(asym) > 0 && asym[0] > 0 {
+		lo = asym[0]
+	}
+	if len(asym) > 1 && asym[1] > 0 {
+		hi = asym[1]
 	}
 	if iters < 1 {
 		iters = 1
@@ -5376,17 +5400,14 @@ func sigmaClipReduceWeighted(vals, weights []float32, threshold float64, iters i
 			sig = 1e-9
 		}
 		sigma = sig
-		k := float32(threshold * float64(sig))
+		kLo, kHi := float32(lo)*sig, float32(hi)*sig
 		anyActive := false
 		for i, a := range active {
 			if !a {
 				continue
 			}
 			d := vals[i] - med
-			if d < 0 {
-				d = -d
-			}
-			if d > k {
+			if (d > 0 && d > kHi) || (d < 0 && -d > kLo) {
 				active[i] = false
 			} else {
 				anyActive = true
@@ -5571,13 +5592,20 @@ func weightedMedian(vals, weights []float32) float32 {
 // and rejects values further than threshold*sigma from the median. Each
 // subsequent iteration recomputes from the surviving values. If fewer
 // than 3 values survive, the mean of those is returned unchanged.
-func sigmaClipReduce(vals []float32, threshold float64, iters int) (mean, sigma float32, accepted, rejected int) {
+func sigmaClipReduce(vals []float32, threshold float64, iters int, asym ...float64) (mean, sigma float32, accepted, rejected int) {
 	n := len(vals)
 	if n == 0 {
 		return 0, 0, 0, 0
 	}
 	if threshold <= 0 {
 		threshold = 3.0
+	}
+	lo, hi := threshold, threshold
+	if len(asym) > 0 && asym[0] > 0 {
+		lo = asym[0]
+	}
+	if len(asym) > 1 && asym[1] > 0 {
+		hi = asym[1]
 	}
 	if iters < 1 {
 		iters = 1
@@ -5612,17 +5640,14 @@ func sigmaClipReduce(vals []float32, threshold float64, iters int) (mean, sigma 
 			sig = 1e-9
 		}
 		sigma = sig
-		k := float32(threshold * float64(sig))
+		kLo, kHi := float32(lo)*sig, float32(hi)*sig
 		anyActive := false
 		for i, a := range active {
 			if !a {
 				continue
 			}
 			d := vals[i] - med
-			if d < 0 {
-				d = -d
-			}
-			if d > k {
+			if (d > 0 && d > kHi) || (d < 0 && -d > kLo) {
 				active[i] = false
 			} else {
 				anyActive = true
@@ -5759,6 +5784,7 @@ func reduceTilesStack(
 	frameWeights []float32,
 	frameScales []float32,
 	flat *flatCorrection,
+	asym ...float64,
 ) (sumPix, meanPix, rejPix, wgtPix []float32, err error) {
 	outW := crop.Dx()
 	outH := crop.Dy()
@@ -5836,7 +5862,7 @@ func reduceTilesStack(
 			defer wg.Done()
 			for t := range jobs {
 				if e := reduceTile(spillPaths, fullW, fullH, crop, t.x0, t.y0, t.x1, t.y1,
-					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix, frameWeights, frameScales, flat); e != nil {
+					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix, frameWeights, frameScales, flat, asym); e != nil {
 					errOnce.Do(func() { firstErr = e })
 					for range jobs {
 					}
@@ -5859,7 +5885,7 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 	x0, y0, x1, y1 int, method string,
 	sigmaThreshold float64, sigmaIters int,
 	outW int, sumPix, meanPix, rejPix, wgtPix []float32, frameWeights []float32,
-	frameScales []float32, flat *flatCorrection) error {
+	frameScales []float32, flat *flatCorrection, asym []float64) error {
 	tileW := x1 - x0
 	tileH := y1 - y0
 	nFrames := len(spillPaths)
@@ -5965,9 +5991,9 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 					var m float32
 					var acc, rej int
 					if frameWeights != nil {
-						m, _, acc, rej = sigmaClipReduceWeighted(validVals, validWeights, sigmaThreshold, sigmaIters)
+						m, _, acc, rej = sigmaClipReduceWeighted(validVals, validWeights, sigmaThreshold, sigmaIters, asym...)
 					} else {
-						m, _, acc, rej = sigmaClipReduce(validVals, sigmaThreshold, sigmaIters)
+						m, _, acc, rej = sigmaClipReduce(validVals, sigmaThreshold, sigmaIters, asym...)
 					}
 					meanPix[outPix*3+c] = m
 					wgtSum += float32(acc)
@@ -9173,7 +9199,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			opts.Method, len(spillPaths1))
 		sum1, mean1, rej1, wgt1, rerr := reduceTilesStack(
 			spillPaths1, inW, inH, image.Rect(0, 0, inW, inH),
-			opts.Method, tr, it, opts.TileSize, workers, unregWeights, nil, nil)
+			opts.Method, tr, it, opts.TileSize, workers, unregWeights, nil, nil, opts.SigmaClipLow, opts.SigmaClipHigh)
 		if rerr != nil {
 			return fmt.Errorf("reduce unregistered: %w", rerr)
 		}
@@ -9201,7 +9227,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				opts.Method, len(spillPaths2), cropRect.Dx(), cropRect.Dy())
 			sum2, mean2, rej2, wgt2, rerr := reduceTilesStack(
 				spillPaths2, refW, refH, cropRect,
-				opts.Method, tr, it, opts.TileSize, workers, validFrameWeights, nil, selfFlatCorrection)
+				opts.Method, tr, it, opts.TileSize, workers, validFrameWeights, nil, selfFlatCorrection, opts.SigmaClipLow, opts.SigmaClipHigh)
 			if rerr != nil {
 				return fmt.Errorf("reduce registered: %w", rerr)
 			}
@@ -13300,6 +13326,23 @@ func testMatchStarsToReferenceTooFew() error {
 }
 
 // testSigmaClipFewSurvivors covers the "fewer than 3 survivors" branch.
+func testSigmaClipAsymmetric() error {
+	vals := []float32{9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11, 0, 100}
+	_, _, accSym, rejSym := sigmaClipReduce(vals, 2, 1)
+	_, _, accAsym, rejAsym := sigmaClipReduce(vals, 2, 1, 1, 100)
+	if accSym != 12 || rejSym != 2 {
+		return fmt.Errorf("symmetric acc=%d rej=%d, want 12/2", accSym, rejSym)
+	}
+	if accAsym != 13 || rejAsym != 1 {
+		return fmt.Errorf("asymmetric acc=%d rej=%d, want 13/1", accAsym, rejAsym)
+	}
+	opts, err := parseArgs([]string{"--sigma-clip-low", "1", "--sigma-clip-high", "100"})
+	if err != nil || opts.SigmaClipLow != 1 || opts.SigmaClipHigh != 100 {
+		return fmt.Errorf("asym flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testSigmaClipFewSurvivors() error {
 	vals := []float32{1.0, 100.0, 100.0, 100.0}
 	mean, _, acc, rej := sigmaClipReduce(vals, 3.0, 2)
@@ -14762,6 +14805,7 @@ func runSelfTests() int {
 		{"median in place", testMedianInPlace},
 		{"mad of", testMadOf},
 		{"sigma clip reduce", testSigmaClipReduce},
+		{"sigma clip asymmetric", testSigmaClipAsymmetric},
 		{"sigma clip all same", testSigmaClipAllSame},
 		{"sigma clip reduce weighted", testSigmaClipReduceWeighted},
 		{"weighted median", testWeightedMedian},
@@ -21935,6 +21979,8 @@ func main() {
 		Clean:                opts.Clean,
 		SigmaClipThreshold:   opts.SigmaClipThreshold,
 		SigmaClipIters:       opts.SigmaClipIters,
+		SigmaClipLow:         opts.SigmaClipLow,
+		SigmaClipHigh:        opts.SigmaClipHigh,
 		TileSize:             opts.TileSize,
 		Scale:                opts.Scale,
 		Force:                opts.Force,

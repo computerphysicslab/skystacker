@@ -13,3 +13,4 @@
 - Detected stars now carry a flux-weighted half-flux radius (HFR); `testStarHFR` added; self-tests 189.
 - Added `--xisf` writer (monolithic XISF 1.0, planar Float32) with `testXISFWrite`; self-tests 190.
 - Added `--hfr-quality` opt-in: median star HFR replaces blob size as FWHM proxy for frame quality; `testHFRQuality`; self-tests 191.
+- Added `--sigma-clip-low` / `--sigma-clip-high` asymmetric MAD rejection; `testSigmaClipAsymmetric`; self-tests 192.
