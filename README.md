@@ -363,6 +363,29 @@ The reference image is star-matched automatically; the light frames are warped i
   ./M31-session/lights
 ```
 
+### Comet Tracking Example
+
+```bash
+# Pixel mode (reference frame coordinates, EXIF times)
+./skystacker --comet-center 1200,800 --comet-rate 0.02,-0.01 ./lights
+
+# RA/Dec rate mode (requires plate solve)
+./skystacker --plate-solve --comet-radec 83.822,22.0145 --comet-sky-rate-arcsec 2.5,-0.3 ./lights
+
+# Ephemeris file (lines: ISO8601 RA_deg Dec_deg; # comments allowed)
+./skystacker --plate-solve --comet-target ./comet_ephem.txt ./lights
+```
+
+`comet_ephem.txt` example:
+
+```text
+# time UTC RA_deg Dec_deg
+2026-01-01T00:00:00Z 83.800 22.010
+2026-01-01T00:30:00Z 83.805 22.012
+```
+
+Comet-aligned outputs are written as `stacked_comet.f32raw`/`stacked_comet.jpg` when enabled (if EXIF `DateTimeOriginal` is missing for a frame, reference time is used with a warning).
+
 ---
 
 ## Command-Line Options
