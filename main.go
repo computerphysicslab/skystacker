@@ -16239,6 +16239,17 @@ func testPipelineStackOnly() error {
 	if _, err := os.Stat(filepath.Join(outDir, "TIFF")); err == nil {
 		return errors.New("TIFF folder should not exist without --tiff flag")
 	}
+	b, err := os.ReadFile(filepath.Join(outDir, "report.json"))
+	if err != nil {
+		return err
+	}
+	var rep processingReport
+	if err := json.Unmarshal(b, &rep); err != nil {
+		return fmt.Errorf("report.json is not valid JSON: %w", err)
+	}
+	if rep.Version == "" || len(rep.Accepted) == 0 {
+		return fmt.Errorf("report.json missing version/accepted: %+v", rep)
+	}
 	return nil
 }
 
