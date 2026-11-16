@@ -205,6 +205,8 @@ type cliOptions struct {
 	CometRate          string
 	CometRADec         string
 	CometSkyRateArcsec string
+	CometTarget        string
+	CometEphemPath     string
 	CometOn            bool
 	CometRADECRad      bool
 	CometX             float64
@@ -302,6 +304,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.CometRate, "comet-rate", "", "comet motion in reference pixels per second, dX,dY")
 	fs.StringVar(&o.CometRADec, "comet-radec", "", "comet RA,DEC seed in decimal degrees (requires --plate-solve)")
 	fs.StringVar(&o.CometSkyRateArcsec, "comet-sky-rate-arcsec", "", "comet sky rate in arcsec/sec: dRA, dDec (uses plate-solution scale; for RA the rate is interpreted as dRA*cosDec in arcsec/sec along the plate scale direction)")
+	fs.StringVar(&o.CometTarget, "comet-target", "", "comet ephemeris file: lines of ISO time or seconds-from-ref RA_deg Dec_deg; requires --plate-solve")
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
@@ -344,7 +347,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -478,6 +481,14 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.CometCenter != "" && o.CometRADec != "" {
 		return nil, errors.New("--comet-center and --comet-radec are mutually exclusive")
 	}
+	if o.CometTarget != "" {
+		if o.CometCenter != "" || o.CometRADec != "" || o.CometRate != "" || o.CometSkyRateArcsec != "" {
+			return nil, errors.New("--comet-target cannot be combined with other comet options")
+		}
+		o.CometOn = true
+		o.CometRADECRad = true
+		o.CometEphemPath = o.CometTarget
+	}
 	if o.CometCenter != "" {
 		x, y, err := parseFloatPair(o.CometCenter, "--comet-center")
 		if err != nil {
@@ -519,6 +530,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.CometRADECRad && o.CometRate != "" {
 		return nil, errors.New("with --comet-radec use --comet-sky-rate-arcsec (arcsec/sec), not --comet-rate (px/sec)")
+	}
+	if o.CometTarget != "" {
+		// loaded later; requires plate solve and registration context
 	}
 	if o.ReferenceCrop != "" {
 		info, err := os.Stat(o.ReferenceCrop)
@@ -599,6 +613,111 @@ func parseEXIFTime(s string) (time.Time, bool) {
 	}
 	t, err := time.Parse("2006:01:02 15:04:05", s)
 	return t, err == nil
+}
+
+type cometEphemPoint struct {
+	t   time.Time
+	ra  float64 // radians
+	dec float64 // radians
+}
+
+func loadCometEphemeris(path string) ([]cometEphemPoint, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var pts []cometEphemPoint
+	sc := bufio.NewScanner(f)
+	lineno := 0
+	for sc.Scan() {
+		lineno++
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("comet ephemeris %s:%d: need time, ra_deg, dec_deg", path, lineno)
+		}
+		var tstr string
+		var rastr, decstr string
+		if len(fields) == 3 {
+			tstr, rastr, decstr = fields[0], fields[1], fields[2]
+		} else {
+			rastr, decstr = fields[len(fields)-2], fields[len(fields)-1]
+			tstr = strings.Join(fields[:len(fields)-2], " ")
+		}
+		t, ok := parseEphemTimeStr(tstr)
+		if !ok {
+			return nil, fmt.Errorf("comet ephemeris %s:%d: cannot parse time %q", path, lineno, tstr)
+		}
+		raDeg, err := strconv.ParseFloat(rastr, 64)
+		if err != nil {
+			return nil, fmt.Errorf("comet ephemeris %s:%d: bad ra %q: %w", path, lineno, rastr, err)
+		}
+		decDeg, err := strconv.ParseFloat(decstr, 64)
+		if err != nil {
+			return nil, fmt.Errorf("comet ephemeris %s:%d: bad dec %q: %w", path, lineno, decstr, err)
+		}
+		pts = append(pts, cometEphemPoint{
+			t:   t,
+			ra:  raDeg * math.Pi / 180,
+			dec: decDeg * math.Pi / 180,
+		})
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if len(pts) < 2 {
+		return nil, fmt.Errorf("comet ephemeris %s: need at least 2 points", path)
+	}
+	sort.Slice(pts, func(i, j int) bool { return pts[i].t.Before(pts[j].t) })
+	return pts, nil
+}
+
+func parseEphemTimeStr(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006/01/02 15:04:05",
+		"2006:01:02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func interpCometEphem(pts []cometEphemPoint, t time.Time) (ra, dec float64) {
+	if len(pts) == 0 {
+		return 0, 0
+	}
+	if t.Before(pts[0].t) {
+		return pts[0].ra, pts[0].dec
+	}
+	if t.After(pts[len(pts)-1].t) {
+		return pts[len(pts)-1].ra, pts[len(pts)-1].dec
+	}
+	for i := 0; i < len(pts)-1; i++ {
+		if (t.Equal(pts[i].t) || t.After(pts[i].t)) && t.Before(pts[i+1].t) {
+			dt := pts[i+1].t.Sub(pts[i].t).Seconds()
+			if dt <= 0 {
+				return pts[i].ra, pts[i].dec
+			}
+			f := t.Sub(pts[i].t).Seconds() / dt
+			ra := pts[i].ra + f*(pts[i+1].ra-pts[i].ra)
+			dec := pts[i].dec + f*(pts[i+1].dec-pts[i].dec)
+			return ra, dec
+		}
+	}
+	return pts[len(pts)-1].ra, pts[len(pts)-1].dec
 }
 
 func printUsage(w io.Writer) {
@@ -3960,6 +4079,7 @@ type runOptions struct {
 	CometDec        float64
 	CometRateSkyDXRad float64
 	CometRateSkyDYRad float64
+	CometEphemPath  string
 }
 
 func isCR2Path(path string) bool {
@@ -8275,10 +8395,21 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		regAcc = newAccumulator(refW, refH)
 		validCount = make([]int32, refW*refH)
+		var cometEphem []cometEphemPoint
 		if opts.CometOn {
 			cometAcc = newAccumulator(refW, refH)
 			cometValid = make([]int32, refW*refH)
-			if opts.CometRADECRad {
+			if opts.CometEphemPath != "" {
+				var err error
+				cometEphem, err = loadCometEphemeris(opts.CometEphemPath)
+				if err != nil {
+					return err
+				}
+				if plateSolutionOut == nil {
+					return fmt.Errorf("comet ephemeris mode requires a plate solution (run with --plate-solve)")
+				}
+				logf("Comet ephemeris: loaded %d points from %s", len(cometEphem), opts.CometEphemPath)
+			} else if opts.CometRADECRad {
 				logf("Comet stack (RA/Dec): RA=%.6f° Dec=%.6f° rate (%.4f, %.4f) arcsec/s",
 					opts.CometRA*180/math.Pi, opts.CometDec*180/math.Pi,
 					opts.CometRateSkyDXRad*180/math.Pi*3600, opts.CometRateSkyDYRad*180/math.Pi*3600)
@@ -8336,10 +8467,19 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 			if cometAcc != nil {
 				dt := 0.0
-				if tRef, okRef := parseEXIFTime(accepted[refIdx].exif.DateTimeOriginal); okRef {
+				var frameTime time.Time
+				okFrameTime := false
+				tRef, okRef := parseEXIFTime(accepted[refIdx].exif.DateTimeOriginal)
+				if okRef {
 					if t, ok := parseEXIFTime(c.exif.DateTimeOriginal); ok {
+						frameTime = t
+						okFrameTime = true
 						dt = t.Sub(tRef).Seconds()
+					} else {
+						frameTime = tRef
 					}
+				} else {
+					frameTime = time.Time{}
 				}
 				dx, dy := 0.0, 0.0
 				if opts.CometRADECRad {
@@ -8347,11 +8487,23 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 						return fmt.Errorf("comet RA/Dec mode requires a plate solution (run with --plate-solve)")
 					}
 					w := &plateSolutionOut.WCS
-					c0x, c0y := wcsTanForward(w, opts.CometRA, opts.CometDec)
-					cra := opts.CometRA + dt*opts.CometRateSkyDXRad
-					cdec := opts.CometDec + dt*opts.CometRateSkyDYRad
-					cxi, cyi := wcsTanForward(w, cra, cdec)
-					dx, dy = cxi-c0x, cyi-c0y
+					if len(cometEphem) > 0 {
+						if !okFrameTime {
+							logf("  comet ephemeris: no EXIF time for %s, using reference time", filepath.Base(c.path))
+							frameTime = tRef
+						}
+						raRef, decRef := interpCometEphem(cometEphem, tRef)
+						raF, decF := interpCometEphem(cometEphem, frameTime)
+						x0r, y0r := wcsTanForward(w, raRef, decRef)
+						x1r, y1r := wcsTanForward(w, raF, decF)
+						dx, dy = x1r-x0r, y1r-y0r
+					} else {
+						cra := opts.CometRA + dt*opts.CometRateSkyDXRad
+						cdec := opts.CometDec + dt*opts.CometRateSkyDYRad
+						cxi, cyi := wcsTanForward(w, cra, cdec)
+						c0x, c0y := wcsTanForward(w, opts.CometRA, opts.CometDec)
+						dx, dy = cxi-c0x, cyi-c0y
+					}
 				} else {
 					dx, dy = cometDelta(dt, opts.CometRatePxX, opts.CometRatePxY)
 				}
