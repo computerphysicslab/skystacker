@@ -837,3 +837,10 @@ With `assets/OrionNebula/lights` (16 CR2), `--calib-root` resolved to `darks/`, 
 - **Real flat** (`--dark --flat --bias`, flat loaded): no self-flat; calibration applied. Approx `stacked_mean.jpg`: gamma ratio ~1.016, linear approx ~1.033.
 
 This is a rough, run-based comparison (separate outputs). A tighter ablation would apply the same calibration path and toggle only the self-flat source; real-flat validation remains “informal” until a dedicated dataset/protocol is used.
+
+
+## 21. SIP in stacking resampler (2026-11-16, note)
+
+- WCS helpers: `wcsTanForward` applies SIP order-2 if `wcsTan.SIP` present; `wcsTanInverseSIP` iteratively inverts SIP for astrometric queries (used with plate-solve outputs). `plate_solution.json` stores fitted SIP coefficients.
+- **Stacking resampler limitation:** `resampleToReference*` in the main pipeline warps lights to the reference frame using star-registration similarity/affine transforms (pixel-space). It does **not** apply SIP distortion polynomials and does not use a WCS-based per-pixel reprojection path for stacking. Fields with significant high-order distortion beyond what the affine/star model captures at the field scale may show residual distortion; SIP is currently a plate-solve/metadata concern, not a stacking-resample correction.
+- Potential future work (design): add an optional WCS+SIP reprojection mode for stacking (requires consistent WCS per light or ref, inverse mapping, and performance trade-offs) or document as out of scope for now.
