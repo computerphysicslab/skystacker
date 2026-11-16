@@ -7146,10 +7146,10 @@ func detectCalibrationSubdirs(inputDir string) calibLayout {
 		return ""
 	}
 	return calibLayout{
-		Light: pick("Light", "Lights"),
-		Dark:  pick("Dark", "Darks"),
-		Flat:  pick("Flat", "Flats"),
-		Bias:  pick("Bias", "Biases"),
+		Light: pick("Light", "Lights", "light", "lights"),
+		Dark:  pick("Dark", "Darks", "dark", "darks"),
+		Flat:  pick("Flat", "Flats", "flat", "flats"),
+		Bias:  pick("Bias", "Biases", "bias", "biases"),
 	}
 }
 
@@ -7429,10 +7429,33 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	// Resolve --calib-root before the time estimate so calibration
 	// frames are included in it.
 	if opts.CalibRoot != "" {
+		layout := detectCalibrationSubdirs(opts.CalibRoot)
 		filterName := filepath.Base(inputDir) // e.g., "Luminance", "Red"
-		opts.BiasFile = filepath.Join(opts.CalibRoot, "Bias")
-		opts.DarkFile = filepath.Join(opts.CalibRoot, "Darks")
-		opts.FlatFile = filepath.Join(opts.CalibRoot, "Flats", filterName)
+		if layout.Bias != "" {
+			opts.BiasFile = layout.Bias
+		} else {
+			opts.BiasFile = filepath.Join(opts.CalibRoot, "Bias")
+		}
+		if layout.Dark != "" {
+			opts.DarkFile = layout.Dark
+		} else {
+			opts.DarkFile = filepath.Join(opts.CalibRoot, "Darks")
+		}
+		if layout.Flat != "" {
+			opts.FlatFile = layout.Flat
+		} else {
+			// Try common single-folder layouts first, then per-filter subfolder.
+			for _, name := range []string{"Flat", "Flats", "flat", "flats", "FLATS"} {
+				cand := filepath.Join(opts.CalibRoot, name)
+				if _, statErr := os.Stat(cand); statErr == nil {
+					opts.FlatFile = cand
+					break
+				}
+			}
+			if opts.FlatFile == "" {
+				opts.FlatFile = filepath.Join(opts.CalibRoot, "Flats", filterName)
+			}
+		}
 	}
 
 	// Time estimation. Calibrated against two real sigma runs on
