@@ -1637,3 +1637,5 @@ rejection and disk spill. `--scale N` downsamples.
 - `--fits` writes TAN WCS keywords (CRVAL/CRPIX/CD in degrees) from the plate solution when available; `testFITSWriterRoundTrip` covers both plain and WCS headers.
 
 - Hardened `--bpm-auto`: if >0.1% of pixels would be flagged, the map is rejected (previously a low-MAD master could flag ~10% of the sensor). E2E `--fits --xisf --bpm-auto` run on OrionNebula limit 4 verified output files.
+
+- Added `--json-report`: writes the existing processing report as `report.json`; covered by `testPipelineStackOnly`.

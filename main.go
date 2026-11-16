@@ -209,6 +209,7 @@ type cliOptions struct {
 	HFRQuality         bool
 	Annotate           bool
 	Starless           bool
+	JSONReport         bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -347,6 +348,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
+	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -843,6 +845,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
+	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -4018,6 +4021,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Starless {
 		add("--starless")
 	}
+	if o.JSONReport {
+		add("--json-report")
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4387,6 +4393,7 @@ type runOptions struct {
 	HFRQuality  bool
 	Annotate    bool
 	Starless    bool
+	JSONReport  bool
 	PostCA      bool
 	PostColor   bool
 	PostFlatten bool
@@ -9904,6 +9911,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return rep.writeTo(w)
 	}); err != nil {
 		return fmt.Errorf("write report: %w", err)
+	}
+	if opts.JSONReport {
+		if err := writeJSON(filepath.Join(outputDir, "report.json"), rep); err != nil {
+			logf("WARNING: could not write report.json: %v", err)
+		}
 	}
 
 	logf("Actual processing time: %s", rep.Duration.Round(time.Millisecond))
@@ -16209,7 +16221,7 @@ func testPipelineStackOnly() error {
 	}
 
 	if err := runPipeline(context.Background(), runOptions{
-		InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1,
+		InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1, JSONReport: true,
 	}); err != nil {
 		return fmt.Errorf("runPipeline: %w", err)
 	}
@@ -16218,7 +16230,7 @@ func testPipelineStackOnly() error {
 	for _, name := range []string{
 		"_work/stacked_mean.f32raw", "stacked_mean.jpg",
 		"stacked_no_correction_mean.jpg",
-		"stacked_sum.jpg", "stacked_max.jpg", "stacked_min.jpg", "report.txt",
+		"stacked_sum.jpg", "stacked_max.jpg", "stacked_min.jpg", "report.txt", "report.json",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			return fmt.Errorf("missing output %s: %w", name, err)
@@ -22313,6 +22325,7 @@ func main() {
 		HFRQuality:           opts.HFRQuality,
 		Annotate:             opts.Annotate,
 		Starless:             opts.Starless,
+		JSONReport:           opts.JSONReport,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

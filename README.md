@@ -429,6 +429,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--hfr-quality` | Use median star HFR (`FWHM ≈ 1.995·HFR`) instead of blob size for advanced frame-quality weighting | `false` |
 | `--annotate` | Project cached Gaia stars through the plate solution into `stacked_annotated.jpg`; write unmatched detections to `anomalies.json` (offline) | `false` |
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
+| `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
 
 ### Normalization
 

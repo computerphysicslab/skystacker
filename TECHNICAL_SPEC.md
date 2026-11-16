@@ -104,7 +104,7 @@ Flags are accepted before or after the positional input directory. Default input
 - `--spikes-length-softness` (1.0), `--spikes-length-min-ratio` (0.03), `--spikes-min-count` (5).
 
 ### Diagnostics
-- `--selftest`, `--version`, `--help`.
+- `--selftest`, `--version`, `--help`, `--json-report` (writes `report.json`).
 - `--test-gaia RA,DEC` — one-shot Gaia DR3 tile query; prints nside, ipix, first 5 stars, exits.
 - `--test-debayer PATH` — one-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg`.
 - `--plate-solve` — run the TAN WCS plate solver after stacking, or on the existing `_work/stacked_mean.f32raw` in `--post-only` (stars re-detected from the stored stack, seeded by `--plate-center`); writes `plate_solution.json`.
