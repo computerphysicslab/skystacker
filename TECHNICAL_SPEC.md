@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 188. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 189. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 188 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 189 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
@@ -134,7 +134,7 @@ Flags are accepted before or after the positional input directory. Default input
 - **Matching**: triangles built from the top **40** brightest stars (not 30). Descriptor `(short/long, mid/long)`, bucketed on a 0.01 grid with 0.02 tolerance.
 - **Transform**: closed-form similarity (rotation, scale, translation) via least squares; inlier refinement; optional full 6-DOF affine refinement kept only when residual drops ≥ 10 % and inliers ≥ 15.
 - **Resampling**: bilinear sub-pixel. **Crop**: largest fully-valid rectangle (`findSafeCrop`, maximal-rectangle-in-histogram).
-- **Frame diagnostics**: per-frame stars, inliers, scale, rotation, offset, bounding box, `BoxPct`, `IntrQ`, `Weight`. Crop limiter flags: `LOW QUALITY` (< 30), `LOW BOX%` (< 50 %), `LARGE OFFSET` (`|drift| > 10 % refW/H`, where drift subtracts the rotation-induced expected offset so legitimately-rotated frames are not falsely flagged).
+- **Frame diagnostics**: per-frame stars, inliers, scale, rotation, offset, bounding box, `BoxPct`, `IntrQ`, `Weight`. Each detected `star` records flux, connected-component size, eccentricity and flux-weighted half-flux radius (HFR; Gaussian ≈ 1.18σ). Crop limiter flags: `LOW QUALITY` (< 30), `LOW BOX%` (< 50 %), `LARGE OFFSET` (`|drift| > 10 % refW/H`, where drift subtracts the rotation-induced expected offset so legitimately-rotated frames are not falsely flagged).
 
 ### 4.3 Per-frame normalization
 Robust statistics per frame: `(median, MAD)` of luminance, computed on a 1024-bin histogram with 4× subsampling. **Scale** = `ref.MAD / frame.MAD` clamped to `[0.5, 2.0]`. **Offset** = `ref.median - scale * frame.median`. **Global**: single scale+offset per frame. **Local**: same correction per `ln-tile-size` tile, bilinearly interpolated between tile centers. Reference frame is never normalized. Both modes require registration.

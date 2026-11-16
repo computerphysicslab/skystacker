@@ -632,11 +632,11 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 188 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 189 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
-- **Frame quality weighting**: Registered frames are weighted by `computeFrameQuality × computeIntrinsicQuality / 100`; unregistered frames by intrinsic quality alone. Per-frame scores appear in `report.txt` under the `IntrQ` and `Weight` columns.
+- **Frame quality weighting**: Registered frames are weighted by `computeFrameQuality × computeIntrinsicQuality / 100`; unregistered frames by intrinsic quality alone. Per-frame scores appear in `report.txt` under the `IntrQ` and `Weight` columns. Detected stars carry a flux-weighted half-flux radius (`HFR`) and eccentricity for future PSF-based quality refinement (`testStarHFR`).
 - **Per-frame global normalization (`--normalize`)**: Scales each frame's sky background (`median` + `MAD`) to match the reference frame.
 - **Local normalization correction (`--local-normalize`)**: Applies tile-based `scale + offset` normalization with bilinear interpolation across the field to handle spatially varying gradients and transparency shifts.
 - **Star / transform cache**: Re-runs skip Pass 1 star detection and Pass 2 registration using cached JSON metadata under `<output>/_work/cache/` (override with `--cache-dir`, disable with `--no-cache`).

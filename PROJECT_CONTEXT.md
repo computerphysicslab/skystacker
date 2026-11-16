@@ -1621,3 +1621,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--bpm-auto` / `--bpm-auto-sigma`: builds a bad-pixel map from the master dark (or bias) via median + N*1.4826*MAD on a strided sample (mean-deviation fallback when MAD=0), flags full-frame outliers, merges with explicit `--bpm`. `testBPMAuto` added; selftests 187.
 
 - Wired `--plate-solve` into `--post-only`: re-detects stars from `_work/stacked_mean.f32raw` and writes `plate_solution.json` (no FITS header in post-only, so `--plate-center` is the practical seed). `testPlateSolvePostOnlyNoStars` added; selftests 188.
+
+- Added flux-weighted half-flux radius (HFR) to detected stars (`starHFR`, `testStarHFR`), a primitive for future PSF-based quality scoring. selftests 189.

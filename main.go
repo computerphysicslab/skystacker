@@ -1577,6 +1577,43 @@ type star struct {
 	Flux float64 // background-subtracted integrated intensity
 	Size int     // connected component pixel count
 	Ecc  float64 // eccentricity: 0=circular, 1=line-shaped
+	HFR  float64 // half-flux radius in pixels (median flux-weighted distance)
+}
+
+// starHFR returns the flux-weighted half-flux radius of a connected
+// component: the radius at which the cumulative flux reaches half of the
+// total. A Gaussian with sigma s has HFR ≈ 1.18*s.
+func starHFR(pixels []int, w int, cx, cy float64, residual []float32) float64 {
+	if len(pixels) == 0 {
+		return 0
+	}
+	type sample struct {
+		r, flux float64
+	}
+	samples := make([]sample, 0, len(pixels))
+	var total float64
+	for _, p := range pixels {
+		v := float64(residual[p])
+		if v <= 0 {
+			continue
+		}
+		py, px := p/w, p%w
+		dx, dy := float64(px)-cx, float64(py)-cy
+		samples = append(samples, sample{r: math.Hypot(dx, dy), flux: v})
+		total += v
+	}
+	if total <= 0 {
+		return 0
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i].r < samples[j].r })
+	var acc float64
+	for _, s := range samples {
+		acc += s.flux
+		if acc >= total/2 {
+			return s.r
+		}
+	}
+	return samples[len(samples)-1].r
 }
 
 // estimateBackgroundNoise uses a 256-bin histogram over a subsample to
@@ -1889,7 +1926,8 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 				}
 			}
 		}
-		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux, Size: len(c.pixels), Ecc: ecc})
+		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux, Size: len(c.pixels), Ecc: ecc,
+			HFR: starHFR(c.pixels, w, cx, cy, residual)})
 	}
 	sort.Slice(stars, func(i, j int) bool { return stars[i].Flux > stars[j].Flux })
 	if len(stars) > maxStars {
@@ -14522,6 +14560,7 @@ func runSelfTests() int {
 		{"similarity estimate", testSimilarityEstimate},
 		{"similarity inverse", testSimilarityInverse},
 		{"star detection synthetic", testStarDetectionSynthetic},
+		{"star HFR", testStarHFR},
 		{"star registration synthetic", testStarRegistrationSynthetic},
 		{"bilinear sampling", testBilinearSample},
 		{"resample identity", testResampleIdentity},
@@ -15074,6 +15113,30 @@ func testSimilarityInverse() error {
 	back := inv.apply(q)
 	if math.Abs(back.X-p.X) > 1e-9 || math.Abs(back.Y-p.Y) > 1e-9 {
 		return fmt.Errorf("inverse roundtrip: %v -> %v -> %v", p, q, back)
+	}
+	return nil
+}
+
+func testStarHFR() error {
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	sigma := 3.0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx, dy := float64(x)-32, float64(y)-32
+			v := float32(0.1 + 0.9*math.Exp(-(dx*dx+dy*dy)/(2*sigma*sigma)))
+			i := (y*w + x) * 3
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = v, v, v
+		}
+	}
+	stars := detectStars(f, 10)
+	if len(stars) == 0 {
+		return errors.New("no star detected in Gaussian blob")
+	}
+	s := stars[0]
+	want := 1.18 * sigma
+	if math.Abs(s.HFR-want) > 1.2 {
+		return fmt.Errorf("HFR %.3f, want about %.3f (sigma %.1f)", s.HFR, want, sigma)
 	}
 	return nil
 }
