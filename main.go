@@ -3316,63 +3316,69 @@ func parseExifTIFF(data []byte, e *exifData) {
 }
 
 type processingReport struct {
-	Version            string
-	Timestamp          time.Time
-	CommandLine        string
-	ResolvedFlags      []string
-	InputDir           string
-	OutputDir          string
-	Discovered         int
-	Accepted           []string
-	Rejected           []rejection
-	Width              int
-	Height             int
-	Channels           int
-	Method             string
-	AccumulatorType    string
-	OutputFormat       string
-	OutputScaling      string
-	RegistrationOn     bool
-	RegisteredCount    int
-	RegistrationFails  []string
-	CropRect           image.Rectangle
-	SumNormalization   float32
-	BlackLevelTag      string
-	BlackLevelValue    float64
-	BlackLevelApplied  bool
-	BPMApplied         bool
-	BPMPath            string
-	BPMPixelCount      int
-	SelfFlatApplied    bool
-	SelfFlatModel      string
-	SelfFlatFrames     int
-	SelfFlatPath       string
-	SelfFlatCenterEdge float64
-	SelfFlatResidual   float64
-	SelfFlatDegree     int
-	SelfFlatCellSize   int
-	SelfFlatValidCells int
-	SelfFlatTotalCells int
-	SelfFlatMaskedFrac float64
-	SelfFlatMin        float64
-	SelfFlatMax        float64
-	MasterExports      []string
-	PostProcessApplied bool
-	BGDegree           int
-	StretchFactor      float64
-	SharpenApplied     bool
-	SharpenAmount      float64
-	SharpenRadius      float64
-	OutputFiles        []string
-	Workers            int
-	Duration           time.Duration
-	Notes              []string
-	FrameDiags         []frameDiag
-	CropExplanation    string
-	TotalExposureSec   float64
-	FramesWithExif     int
-	RefExif            exifData
-	PlateSolution      *plateSolution
+	Version               string
+	Timestamp             time.Time
+	CommandLine           string
+	ResolvedFlags         []string
+	InputDir              string
+	OutputDir             string
+	Discovered            int
+	Accepted              []string
+	Rejected              []rejection
+	Width                 int
+	Height                int
+	Channels              int
+	Method                string
+	AccumulatorType       string
+	OutputFormat          string
+	OutputScaling         string
+	RegistrationOn        bool
+	RegisteredCount       int
+	RegistrationFails     []string
+	CropRect              image.Rectangle
+	SumNormalization      float32
+	BlackLevelTag         string
+	BlackLevelValue       float64
+	BlackLevelApplied     bool
+	BPMApplied            bool
+	BPMPath               string
+	BPMPixelCount         int
+	SelfFlatApplied       bool
+	SelfFlatModel         string
+	SelfFlatFrames        int
+	SelfFlatPath          string
+	SelfFlatCenterEdge    float64
+	SelfFlatResidual      float64
+	SelfFlatDegree        int
+	SelfFlatCellSize      int
+	SelfFlatValidCells    int
+	SelfFlatRejectedCells int
+	SelfFlatTotalCells    int
+	SelfFlatMaskedFrac    float64
+	SelfFlatMin           float64
+	SelfFlatMax           float64
+	SelfFlatOLSRMS        float64
+	SelfFlatRadialRMS     float64
+	SelfFlatIRLSIters     int
+	SelfFlatExtrapolated  bool
+	SelfFlatCoeffs        [3][]float64
+	MasterExports         []string
+	PostProcessApplied    bool
+	BGDegree              int
+	StretchFactor         float64
+	SharpenApplied        bool
+	SharpenAmount         float64
+	SharpenRadius         float64
+	OutputFiles           []string
+	Workers               int
+	Duration              time.Duration
+	Notes                 []string
+	FrameDiags            []frameDiag
+	CropExplanation       string
+	TotalExposureSec      float64
+	FramesWithExif        int
+	RefExif               exifData
+	PlateSolution         *plateSolution
 }
 
 type errWriter struct {
@@ -3622,10 +3628,18 @@ func (r *processingReport) writeTo(w io.Writer) error {
 	}
 	if r.SelfFlatApplied {
 		if r.SelfFlatModel == "grid" {
-			ew.printf("Self-flat: model=grid, %d frames, degree=%d, cell=%d, cells=%d/%d, masked=%.1f%%, center/edge=%.4f, fit RMS=%.5f, min=%.4f, max=%.4f\n",
+			ew.printf("Self-flat: model=grid, %d frames, degree=%d, cell=%d, cells=%d/%d (rejected=%d), masked=%.1f%%, center/edge=%.4f, fit RMS=%.5f, OLS RMS=%.5f, radial RMS=%.5f, IRLS=%d, min=%.4f, max=%.4f%s\n",
 				r.SelfFlatFrames, r.SelfFlatDegree, r.SelfFlatCellSize,
-				r.SelfFlatValidCells, r.SelfFlatTotalCells, 100*r.SelfFlatMaskedFrac,
-				r.SelfFlatCenterEdge, r.SelfFlatResidual, r.SelfFlatMin, r.SelfFlatMax)
+				r.SelfFlatValidCells, r.SelfFlatTotalCells, r.SelfFlatRejectedCells,
+				100*r.SelfFlatMaskedFrac, r.SelfFlatCenterEdge, r.SelfFlatResidual,
+				r.SelfFlatOLSRMS, r.SelfFlatRadialRMS, r.SelfFlatIRLSIters,
+				r.SelfFlatMin, r.SelfFlatMax, selfFlatExtrapolationTag(r.SelfFlatExtrapolated))
+			for ci, name := range []string{"R", "G", "B"} {
+				if r.SelfFlatCoeffs[ci] == nil {
+					continue
+				}
+				ew.printf("Self-flat coefficients %s (degree %d, x-major): %s\n", name, r.SelfFlatDegree, formatSelfFlatCoeffs(r.SelfFlatCoeffs[ci]))
+			}
 		} else {
 			ew.printf("Self-flat: %d frames, center/edge=%.4f, residual RMS=%.5f\n",
 				r.SelfFlatFrames, r.SelfFlatCenterEdge, r.SelfFlatResidual)
@@ -5600,19 +5614,26 @@ const selfFlatMinFrames = 15
 
 // selfFlatResult is the relative illumination map recovered from the lights.
 type selfFlatResult struct {
-	Frame       *frame
-	Frames      int
-	Model       string
-	CenterEdge  float64
-	ResidualRMS float64
-	Medians     [3]float64
-	Degree      int
-	CellSize    int
-	ValidCells  int
-	TotalCells  int
-	MaskedFrac  float64
-	Min         float64
-	Max         float64
+	Frame         *frame
+	Frames        int
+	Model         string
+	CenterEdge    float64
+	ResidualRMS   float64
+	Medians       [3]float64
+	Degree        int
+	CellSize      int
+	ValidCells    int
+	RejectedCells int
+	TotalCells    int
+	MaskedFrac    float64
+	Min           float64
+	Max           float64
+	// Phase 3 diagnostics.
+	Coeffs       [3][]float64
+	OLSRMS       float64
+	RadialRMS    float64
+	IRLSIters    int
+	Extrapolated bool
 }
 
 // selfFlatEligible decides whether --self-flat can run. A loaded flat always
@@ -5848,8 +5869,32 @@ const (
 	selfFlatGridDegree       = 4
 	selfFlatGridQuantile     = 25.0
 	selfFlatGridDilateRadius = 12
-	selfFlatGridMaskSigma    = 2.5
 	selfFlatGridMinCellFrac  = 0.30
+	// Phase 2 source mask: local contrast instead of a global
+	// median+2.5*MAD threshold. Extended emission raises the local
+	// background along with the pixel, so it survives; compact stars
+	// do not. The floor keeps a noise-free synthetic gradient from
+	// being masked by numerical noise.
+	selfFlatGridLocalRadius = 8
+	selfFlatGridLocalSigma  = 5.0
+	selfFlatGridLocalFloor  = 0.008
+	// Phase 2 cell consistency: reject a cell whose upper quartile is
+	// much farther from the median than the lower one. A symmetric sky
+	// cell has upper ~= lower; a nebula or star tail inflates upper.
+	selfFlatGridSkewRatio = 1.6
+	// Phase 3 robust fit. Positive residuals (cell brighter than the
+	// smooth surface) are down-weighted more than negative ones:
+	// remaining contamination is predominantly additive (stars, nebula
+	// tails, hot pixels), whereas the cell estimator already trims the
+	// low tail.
+	selfFlatIRLSMaxIter  = 15
+	selfFlatIRLSHuberPos = 1.5
+	selfFlatIRLSHuberNeg = 3.0
+	selfFlatIRLSFloor    = 1e-6
+	selfFlatIRLSTol      = 1e-7
+	// Radial model compared against the 2-D Chebyshev fit: 1, r^2,
+	// r^4, r^6.
+	selfFlatRadialTerms = 4
 )
 
 // selfFlatGridEligible decides whether the sensor-space grid self-flat can run.
@@ -5876,6 +5921,7 @@ type selfFlatGridAccumulator struct {
 	cellSize     int
 	cols, rows   int
 	dilateR      int
+	localR       int
 	frames       []selfFlatGridFrame
 	totalPixels  int64
 	maskedPixels int64
@@ -5901,6 +5947,13 @@ func newSelfFlatGridAccumulator(w, h, cellSize int) *selfFlatGridAccumulator {
 	if dilateR < 1 {
 		dilateR = 1
 	}
+	localR := selfFlatGridLocalRadius
+	if minDim/8 < localR {
+		localR = minDim / 8
+	}
+	if localR < 1 {
+		localR = 1
+	}
 	return &selfFlatGridAccumulator{
 		w:        w,
 		h:        h,
@@ -5908,7 +5961,75 @@ func newSelfFlatGridAccumulator(w, h, cellSize int) *selfFlatGridAccumulator {
 		cols:     cols,
 		rows:     rows,
 		dilateR:  dilateR,
+		localR:   localR,
 	}
+}
+
+// boxMeanF32 returns the mean of src over a (2r+1)x(2r+1) box, using
+// separable running sums. Edge pixels use the clipped window so the
+// result stays unbiased at the frame border.
+func boxMeanF32(src []float32, w, h, r int) []float32 {
+	if r < 0 {
+		r = 0
+	}
+	tmp := make([]float32, w*h)
+	for y := 0; y < h; y++ {
+		row := y * w
+		var sum float64
+		for x := 0; x <= r && x < w; x++ {
+			sum += float64(src[row+x])
+		}
+		for x := 0; x < w; x++ {
+			if x > 0 {
+				add := x + r
+				if add < w {
+					sum += float64(src[row+add])
+				}
+				rem := x - r - 1
+				if rem >= 0 {
+					sum -= float64(src[row+rem])
+				}
+			}
+			lo := x - r
+			if lo < 0 {
+				lo = 0
+			}
+			hi := x + r
+			if hi >= w {
+				hi = w - 1
+			}
+			tmp[row+x] = float32(sum / float64(hi-lo+1))
+		}
+	}
+	out := make([]float32, w*h)
+	for x := 0; x < w; x++ {
+		var sum float64
+		for y := 0; y <= r && y < h; y++ {
+			sum += float64(tmp[y*w+x])
+		}
+		for y := 0; y < h; y++ {
+			if y > 0 {
+				add := y + r
+				if add < h {
+					sum += float64(tmp[add*w+x])
+				}
+				rem := y - r - 1
+				if rem >= 0 {
+					sum -= float64(tmp[rem*w+x])
+				}
+			}
+			lo := y - r
+			if lo < 0 {
+				lo = 0
+			}
+			hi := y + r
+			if hi >= h {
+				hi = h - 1
+			}
+			out[y*w+x] = float32(sum / float64(hi-lo+1))
+		}
+	}
+	return out
 }
 
 func dilateMaskBox(src []bool, w, h, r int) []bool {
@@ -5987,27 +6108,53 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 		return
 	}
 	medL := medianInPlace(lums)
-	madL := madOf(lums, medL)
-	sigmaL := 1.4826 * float64(madL)
-	thresh := float64(medL) + selfFlatGridMaskSigma*sigmaL
-	if sigmaL <= 1e-7 {
-		thresh = 1e9
-	}
 
+	// Local-contrast source mask. A 2.5*MAD global threshold masks
+	// extended emission as readily as stars (67.6% of Orion). Subtracting
+	// a box-filtered background removes the smooth component first, so
+	// only compact, high-contrast sources exceed the threshold.
 	invalidMask := make([]bool, n)
-	brightMask := make([]bool, n)
+	work := make([]float32, n)
 	for p := 0; p < n; p++ {
 		r, g, b := f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2]
 		if r < 0 || g < 0 || b < 0 {
 			invalidMask[p] = true
+			work[p] = medL
 			continue
 		}
+		lum := 0.2126*r + 0.7152*g + 0.0722*b
+		if lum > 1 {
+			lum = 1
+		}
+		work[p] = lum
+	}
+	bg := boxMeanF32(work, a.w, a.h, a.localR)
+	residVals := make([]float32, 0, n/stride+1)
+	for p := 0; p < n; p += stride {
+		if invalidMask[p] {
+			continue
+		}
+		residVals = append(residVals, work[p]-bg[p])
+	}
+	medR := medianInPlace(residVals)
+	madR := madOf(residVals, medR)
+	sigmaR := 1.4826 * float64(madR)
+	if sigmaR < selfFlatGridLocalFloor {
+		sigmaR = selfFlatGridLocalFloor
+	}
+	thresh := float64(medR) + selfFlatGridLocalSigma*sigmaR
+
+	brightMask := make([]bool, n)
+	for p := 0; p < n; p++ {
+		if invalidMask[p] {
+			continue
+		}
+		r, g, b := f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2]
 		if r >= 0.98 || g >= 0.98 || b >= 0.98 {
 			brightMask[p] = true
 			continue
 		}
-		lum := 0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)
-		if lum > thresh {
+		if float64(work[p]-bg[p]) > thresh {
 			brightMask[p] = true
 		}
 	}
@@ -6114,7 +6261,44 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 					continue
 				}
 				sort.Slice(buf, func(i, j int) bool { return buf[i] < buf[j] })
-				gf.vals[cellIdx*3+c] = percentile(buf, selfFlatGridQuantile)
+				q25 := float64(percentile(buf, selfFlatGridQuantile))
+				q75 := float64(percentile(buf, 75))
+				med := float64(percentile(buf, 50))
+				q10 := float64(percentile(buf, 10))
+				q90 := float64(percentile(buf, 90))
+				var sum float64
+				var nTrim int
+				for _, v := range buf {
+					fv := float64(v)
+					if fv >= q10 && fv <= q90 {
+						sum += fv
+						nTrim++
+					}
+				}
+				if nTrim == 0 {
+					gf.vals[cellIdx*3+c] = -1
+					continue
+				}
+				// SExtractor-style mode from a 10-90% trimmed mean.
+				// The quantile is kept as the contamination diagnostic:
+				// a cell with a heavy upper tail (nebula, star wings)
+				// is rejected instead of biasing the fit upward.
+				mode := 2.5*med - 1.5*(sum/float64(nTrim))
+				if mode <= 0 {
+					mode = q25
+				}
+				lower := med - q25
+				upper := q75 - med
+				if lower <= 1e-6 {
+					if upper > 0.05*mode {
+						gf.vals[cellIdx*3+c] = -1
+						continue
+					}
+				} else if upper > selfFlatGridSkewRatio*lower {
+					gf.vals[cellIdx*3+c] = -1
+					continue
+				}
+				gf.vals[cellIdx*3+c] = float32(mode)
 			}
 		}
 	}
@@ -6158,6 +6342,290 @@ func chebyshevBasis1D(t float64, deg int, out []float64) {
 	}
 }
 
+// selfFlatPoint is one weighted cell sample for the self-flat surface fit.
+// u, v are normalised cell-centre coordinates in [-1, 1], val is the cell
+// estimate (luminance-normalised per channel), and w is its sample count.
+type selfFlatPoint struct {
+	u, v, val, w float64
+}
+
+// selfFlatPolyBasis fills out with the degree-(deg) Chebyshev tensor basis
+// evaluated at (u, v). len(out) must be (deg+1)^2; terms are ordered
+// p-major (x first), matching the historical accumulation order.
+func selfFlatPolyBasis(u, v float64, deg int, out []float64) {
+	if deg < 0 || len(out) < (deg+1)*(deg+1) {
+		return
+	}
+	tu := make([]float64, deg+1)
+	tv := make([]float64, deg+1)
+	chebyshevBasis1D(u, deg, tu)
+	chebyshevBasis1D(v, deg, tv)
+	idx := 0
+	for p := 0; p <= deg; p++ {
+		for q := 0; q <= deg; q++ {
+			out[idx] = tu[p] * tv[q]
+			idx++
+		}
+	}
+}
+
+// evalSelfFlatPoly evaluates a Chebyshev tensor fit at (u, v).
+func evalSelfFlatPoly(coeffs []float64, u, v float64, deg int) float64 {
+	if deg < 0 || len(coeffs) < (deg+1)*(deg+1) {
+		return 0
+	}
+	tu := make([]float64, deg+1)
+	tv := make([]float64, deg+1)
+	chebyshevBasis1D(u, deg, tu)
+	chebyshevBasis1D(v, deg, tv)
+	var sum float64
+	idx := 0
+	for p := 0; p <= deg; p++ {
+		for q := 0; q <= deg; q++ {
+			sum += coeffs[idx] * tu[p] * tv[q]
+			idx++
+		}
+	}
+	return sum
+}
+
+// selfFlatRadialBasis fills out with a radial model: 1, r^2, r^4, ...
+// where r^2 = (u^2+v^2)/2 lies in [0, 1] at the corners.
+func selfFlatRadialBasis(u, v float64, nTerms int, out []float64) {
+	if nTerms < 1 || len(out) < nTerms {
+		return
+	}
+	r2 := 0.5 * (u*u + v*v)
+	out[0] = 1
+	for k := 1; k < nTerms; k++ {
+		out[k] = out[k-1] * r2
+	}
+}
+
+// evalSelfFlatRadial evaluates a radial self-flat fit at (u, v).
+func evalSelfFlatRadial(coeffs []float64, u, v float64) float64 {
+	if len(coeffs) == 0 {
+		return 0
+	}
+	basis := make([]float64, len(coeffs))
+	selfFlatRadialBasis(u, v, len(coeffs), basis)
+	var sum float64
+	for i, c := range coeffs {
+		sum += c * basis[i]
+	}
+	return sum
+}
+
+// selfFlatNormalSolve solves the weighted normal equations for a basis
+// design matrix. phi[i] is the basis row for point i, vals its observed
+// value and weights its non-negative sample weight. A tiny ridge term
+// keeps the system solvable when a region is starved of cells.
+func selfFlatNormalSolve(phi [][]float64, vals, weights []float64) []float64 {
+	n := 0
+	if len(phi) > 0 {
+		n = len(phi[0])
+	}
+	A := make([][]float64, n)
+	for i := 0; i < n; i++ {
+		A[i] = make([]float64, n)
+	}
+	b := make([]float64, n)
+	for i, row := range phi {
+		w := weights[i]
+		if w <= 0 {
+			continue
+		}
+		for a := 0; a < n; a++ {
+			wa := w * row[a]
+			b[a] += wa * vals[i]
+			for c := a; c < n; c++ {
+				A[a][c] += wa * row[c]
+			}
+		}
+	}
+	for i := 0; i < n; i++ {
+		for j := 0; j < i; j++ {
+			A[i][j] = A[j][i]
+		}
+		A[i][i] += 1e-9
+	}
+	return solveLinear(A, b, n)
+}
+
+// selfFlatIRLSFit performs a weighted least-squares fit of a linear
+// basis model, optionally followed by robust IRLS with an asymmetric
+// Huber loss. Positive residuals (brighter than the smooth surface)
+// are down-weighted more aggressively than negative ones, because the
+// cell estimator already rejects the low tail and remaining positive
+// excursions are most likely residual star/nebula contamination.
+//
+// Returns the coefficients, the number of IRLS iterations performed
+// (1 for a plain OLS fit), the unweighted RMS residual at the input
+// points, and an error if the system is singular or underdetermined.
+func selfFlatIRLSFit(points []selfFlatPoint, phi [][]float64, robust bool) (coeffs []float64, iters int, rms float64, err error) {
+	nTerms := 0
+	if len(phi) > 0 {
+		nTerms = len(phi[0])
+	}
+	if nTerms == 0 || len(points) < nTerms {
+		return nil, 0, 0, fmt.Errorf("self-flat fit: %d points for %d terms", len(points), nTerms)
+	}
+	base := make([]float64, len(points))
+	for i, p := range points {
+		base[i] = p.w
+		if base[i] < 1e-9 {
+			base[i] = 1e-9
+		}
+	}
+	weights := append([]float64(nil), base...)
+	coeffs = selfFlatNormalSolve(phi, pointsVal(points), weights)
+	if coeffs == nil {
+		return nil, 0, 0, fmt.Errorf("self-flat fit: singular normal equations")
+	}
+	allZero := true
+	for _, v := range coeffs {
+		if v != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		return nil, 0, 0, fmt.Errorf("self-flat fit: zero solution")
+	}
+	iters = 1
+	if robust {
+		for iter := 0; iter < selfFlatIRLSMaxIter; iter++ {
+			resid := make([]float32, len(points))
+			for i, p := range points {
+				pred := 0.0
+				for j := 0; j < nTerms; j++ {
+					pred += phi[i][j] * coeffs[j]
+				}
+				resid[i] = float32(math.Abs(p.val - pred))
+			}
+			sigma := 1.4826 * float64(medianInPlace(resid))
+			if sigma < selfFlatIRLSFloor {
+				sigma = selfFlatIRLSFloor
+			}
+			next := make([]float64, len(points))
+			maxDelta := 0.0
+			for i, p := range points {
+				pred := 0.0
+				for j := 0; j < nTerms; j++ {
+					pred += phi[i][j] * coeffs[j]
+				}
+				r := p.val - pred
+				ar := math.Abs(r)
+				c := selfFlatIRLSHuberNeg
+				if r > 0 {
+					c = selfFlatIRLSHuberPos
+				}
+				t := c * sigma
+				w := base[i]
+				if ar > t && ar > 0 {
+					w *= t / ar
+				}
+				next[i] = w
+			}
+			newCoeffs := selfFlatNormalSolve(phi, pointsVal(points), next)
+			if newCoeffs == nil {
+				break
+			}
+			for i := 0; i < nTerms; i++ {
+				if d := math.Abs(newCoeffs[i] - coeffs[i]); d > maxDelta {
+					maxDelta = d
+				}
+			}
+			coeffs = newCoeffs
+			iters++
+			if maxDelta < selfFlatIRLSTol {
+				break
+			}
+		}
+	}
+	var sumSq float64
+	for i, p := range points {
+		pred := 0.0
+		for j := 0; j < nTerms; j++ {
+			pred += phi[i][j] * coeffs[j]
+		}
+		d := p.val - pred
+		sumSq += d * d
+	}
+	rms = math.Sqrt(sumSq / float64(len(points)))
+	return coeffs, iters, rms, nil
+}
+
+// selfFlatExtrapolationTag renders the extrapolation diagnostic as a
+// short report suffix.
+func selfFlatExtrapolationTag(extrapolated bool) string {
+	if extrapolated {
+		return " (extrapolated)"
+	}
+	return ""
+}
+
+// formatSelfFlatCoeffs renders a Chebyshev coefficient vector for the
+// report, trimming insignificant values so the line stays readable.
+func formatSelfFlatCoeffs(coeffs []float64) string {
+	if len(coeffs) == 0 {
+		return "[]"
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, c := range coeffs {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%.6g", c)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// pointsVal extracts the observed values from a point slice.
+func pointsVal(points []selfFlatPoint) []float64 {
+	out := make([]float64, len(points))
+	for i, p := range points {
+		out[i] = p.val
+	}
+	return out
+}
+
+// fitSelfFlatPoly builds the Chebyshev tensor basis and runs the fit.
+func fitSelfFlatPoly(points []selfFlatPoint, deg int, robust bool) (coeffs []float64, iters int, rms float64, err error) {
+	if deg < 0 {
+		return nil, 0, 0, fmt.Errorf("self-flat fit: negative degree")
+	}
+	nTerms := (deg + 1) * (deg + 1)
+	if len(points) < nTerms {
+		return nil, 0, 0, fmt.Errorf("self-flat fit: %d points for %d terms", len(points), nTerms)
+	}
+	phi := make([][]float64, len(points))
+	for i, p := range points {
+		phi[i] = make([]float64, nTerms)
+		selfFlatPolyBasis(p.u, p.v, deg, phi[i])
+	}
+	return selfFlatIRLSFit(points, phi, robust)
+}
+
+// fitSelfFlatRadial builds a radial basis and runs the fit. nTerms=4
+// means 1, r^2, r^4, r^6.
+func fitSelfFlatRadial(points []selfFlatPoint, nTerms int, robust bool) (coeffs []float64, iters int, rms float64, err error) {
+	if nTerms < 1 {
+		return nil, 0, 0, fmt.Errorf("self-flat fit: radial needs >= 1 term")
+	}
+	if len(points) < nTerms {
+		return nil, 0, 0, fmt.Errorf("self-flat fit: %d points for %d radial terms", len(points), nTerms)
+	}
+	phi := make([][]float64, len(points))
+	for i, p := range points {
+		phi[i] = make([]float64, nTerms)
+		selfFlatRadialBasis(p.u, p.v, nTerms, phi[i])
+	}
+	return selfFlatIRLSFit(points, phi, robust)
+}
+
 func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error) {
 	nFrames := len(a.frames)
 	if nFrames < selfFlatMinFrames {
@@ -6192,18 +6660,65 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 		}
 	}
 
+	// 5x5 median/MAD grid rejection (research/04 §10.4). A cell that
+	// survives the pixel mask but is far from its local neighbourhood
+	// (nebula core, residual star, dust) would otherwise drag the
+	// polynomial. Reject it with zero weight; do not interpolate.
+	rejectedGrid := make([]bool, nCells)
+	neigh := make([]float32, 0, 25)
+	for c := 0; c < 3; c++ {
+		reject := make([]bool, nCells)
+		for cy := 0; cy < a.rows; cy++ {
+			for cx := 0; cx < a.cols; cx++ {
+				cellIdx := cy*a.cols + cx
+				if !cellValid[cellIdx*3+c] {
+					continue
+				}
+				neigh = neigh[:0]
+				for dy := -2; dy <= 2; dy++ {
+					ny := cy + dy
+					if ny < 0 || ny >= a.rows {
+						continue
+					}
+					for dx := -2; dx <= 2; dx++ {
+						nx := cx + dx
+						if nx < 0 || nx >= a.cols {
+							continue
+						}
+						ni := ny*a.cols + nx
+						if cellValid[ni*3+c] {
+							neigh = append(neigh, float32(cellMed[ni*3+c]))
+						}
+					}
+				}
+				if len(neigh) < 5 {
+					continue
+				}
+				m := medianInPlace(neigh)
+				mad := madOf(neigh, m)
+				if mad > 0 && math.Abs(cellMed[cellIdx*3+c]-float64(m)) > 2.5*float64(mad) {
+					reject[cellIdx] = true
+				}
+			}
+		}
+		for cellIdx := 0; cellIdx < nCells; cellIdx++ {
+			if reject[cellIdx] {
+				cellValid[cellIdx*3+c] = false
+				rejectedGrid[cellIdx] = true
+			}
+		}
+	}
+
 	var coeffs [3][]float64
+	var olsCoeffs [3][]float64
+	var radialCoeffs [3][]float64
 	var tu [selfFlatGridDegree + 1]float64
 	var tv [selfFlatGridDegree + 1]float64
-	phi := make([]float64, nTerms)
+	radialTerms := selfFlatRadialTerms
+	maxIRLS := 0
 
 	for c := 0; c < 3; c++ {
-		A := make([][]float64, nTerms)
-		for i := 0; i < nTerms; i++ {
-			A[i] = make([]float64, nTerms)
-		}
-		b := make([]float64, nTerms)
-		validForChan := 0
+		points := make([]selfFlatPoint, 0, nCells)
 		for cy := 0; cy < a.rows; cy++ {
 			y0 := cy * a.cellSize
 			y1 := y0 + a.cellSize
@@ -6215,13 +6730,11 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 			if a.h > 1 {
 				v = 2.0*cyCenter/float64(a.h-1) - 1.0
 			}
-			chebyshevBasis1D(v, deg, tv[:])
 			for cx := 0; cx < a.cols; cx++ {
 				cellIdx := cy*a.cols + cx
 				if !cellValid[cellIdx*3+c] {
 					continue
 				}
-				validForChan++
 				x0 := cx * a.cellSize
 				x1 := x0 + a.cellSize
 				if x1 > a.w {
@@ -6232,46 +6745,30 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 				if a.w > 1 {
 					u = 2.0*cxCenter/float64(a.w-1) - 1.0
 				}
-				chebyshevBasis1D(u, deg, tu[:])
-				idx := 0
-				for p := 0; p <= deg; p++ {
-					for q := 0; q <= deg; q++ {
-						phi[idx] = tu[p] * tv[q]
-						idx++
-					}
-				}
-				w := cellWgt[cellIdx*3+c]
-				val := cellMed[cellIdx*3+c]
-				for i := 0; i < nTerms; i++ {
-					wi := w * phi[i]
-					b[i] += wi * val
-					for j := i; j < nTerms; j++ {
-						A[i][j] += wi * phi[j]
-					}
-				}
+				points = append(points, selfFlatPoint{
+					u: u, v: v,
+					val: cellMed[cellIdx*3+c],
+					w:   cellWgt[cellIdx*3+c],
+				})
 			}
 		}
-		if validForChan < nTerms {
-			return nil, fmt.Errorf("self-flat grid: only %d valid cells for channel %d (need >= %d)", validForChan, c, nTerms)
+		if len(points) < nTerms {
+			return nil, fmt.Errorf("self-flat grid: only %d valid cells for channel %d (need >= %d)", len(points), c, nTerms)
 		}
-		for i := 0; i < nTerms; i++ {
-			for j := 0; j < i; j++ {
-				A[i][j] = A[j][i]
-			}
-			A[i][i] += 1e-9
-		}
-		sol := solveLinear(A, b, nTerms)
-		allZero := true
-		for _, v := range sol {
-			if v != 0 {
-				allZero = false
-				break
-			}
-		}
-		if allZero {
-			return nil, fmt.Errorf("self-flat grid: singular polynomial fit for channel %d", c)
+		sol, iters, _, err := fitSelfFlatPoly(points, deg, true)
+		if err != nil {
+			return nil, fmt.Errorf("self-flat grid: robust fit channel %d: %w", c, err)
 		}
 		coeffs[c] = sol
+		if iters > maxIRLS {
+			maxIRLS = iters
+		}
+		if olsSol, _, _, err := fitSelfFlatPoly(points, deg, false); err == nil {
+			olsCoeffs[c] = olsSol
+		}
+		if radSol, _, _, err := fitSelfFlatRadial(points, radialTerms, true); err == nil {
+			radialCoeffs[c] = radSol
+		}
 	}
 
 	tx := make([][selfFlatGridDegree + 1]float64, a.w)
@@ -6391,8 +6888,14 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	}
 
 	validCells := 0
-	var fitSumSq float64
-	var fitCount int
+	rejectedCells := 0
+	for i := 0; i < nCells; i++ {
+		if rejectedGrid[i] {
+			rejectedCells++
+		}
+	}
+	var fitSumSq, olsSumSq, radialSumSq float64
+	var fitCount, olsCount, radialCount int
 	for cy := 0; cy < a.rows; cy++ {
 		y0 := cy * a.cellSize
 		y1 := y0 + a.cellSize
@@ -6436,12 +6939,49 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 				d := obs - pred
 				fitSumSq += d * d
 				fitCount++
+				if olsCoeffs[c] != nil {
+					olsPred := evalSelfFlatPoly(olsCoeffs[c], u, v, deg) / chanMeans[c]
+					od := obs - olsPred
+					olsSumSq += od * od
+					olsCount++
+				}
+				if radialCoeffs[c] != nil {
+					radPred := evalSelfFlatRadial(radialCoeffs[c], u, v) / chanMeans[c]
+					rd := obs - radPred
+					radialSumSq += rd * rd
+					radialCount++
+				}
 			}
 		}
 	}
 	fitRMS := 0.0
 	if fitCount > 0 {
 		fitRMS = math.Sqrt(fitSumSq / float64(fitCount))
+	}
+	olsRMS := 0.0
+	if olsCount > 0 {
+		olsRMS = math.Sqrt(olsSumSq / float64(olsCount))
+	}
+	radialRMS := 0.0
+	if radialCount > 0 {
+		radialRMS = math.Sqrt(radialSumSq / float64(radialCount))
+	}
+
+	// Extrapolation: flag when an edge cell was dropped, so the model
+	// had to predict to the frame boundary from interior cells only.
+	extrapolated := false
+	for cy := 0; cy < a.rows && !extrapolated; cy++ {
+		for cx := 0; cx < a.cols; cx++ {
+			edge := cy == 0 || cy == a.rows-1 || cx == 0 || cx == a.cols-1
+			if !edge {
+				continue
+			}
+			cellIdx := cy*a.cols + cx
+			if !cellValid[cellIdx*3] || !cellValid[cellIdx*3+1] || !cellValid[cellIdx*3+2] {
+				extrapolated = true
+				break
+			}
+		}
 	}
 	maskedFrac := 0.0
 	if a.totalPixels > 0 {
@@ -6450,19 +6990,25 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 
 	f := &frame{Width: a.w, Height: a.h, Pix: pix}
 	return &selfFlatResult{
-		Frame:       f,
-		Frames:      nFrames,
-		Model:       "grid",
-		CenterEdge:  centerEdgeRatio(f),
-		ResidualRMS: fitRMS,
-		Medians:     chanMeans,
-		Degree:      deg,
-		CellSize:    a.cellSize,
-		ValidCells:  validCells,
-		TotalCells:  nCells,
-		MaskedFrac:  maskedFrac,
-		Min:         minL,
-		Max:         maxL,
+		Frame:         f,
+		Frames:        nFrames,
+		Model:         "grid",
+		CenterEdge:    centerEdgeRatio(f),
+		ResidualRMS:   fitRMS,
+		Medians:       chanMeans,
+		Degree:        deg,
+		CellSize:      a.cellSize,
+		ValidCells:    validCells,
+		RejectedCells: rejectedCells,
+		TotalCells:    nCells,
+		MaskedFrac:    maskedFrac,
+		Min:           minL,
+		Max:           maxL,
+		Coeffs:        coeffs,
+		OLSRMS:        olsRMS,
+		RadialRMS:     radialRMS,
+		IRLSIters:     maxIRLS,
+		Extrapolated:  extrapolated,
 	}, nil
 }
 
@@ -7522,15 +8068,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				gridAcc = nil
 				if sferr != nil {
 					logf("WARNING: --self-flat (grid) failed, continuing without it: %v", sferr)
-				} else if sr.CenterEdge < 0.5 || sr.CenterEdge > 5.0 || sr.Min < 0.2 || sr.Max > 5.0 {
-					logf("WARNING: --self-flat (grid) rejected: implausible center/edge=%.3f min=%.3f max=%.3f",
-						sr.CenterEdge, sr.Min, sr.Max)
+				} else if sr.CenterEdge < 0.5 || sr.CenterEdge > 5.0 || sr.Min < 0.25 || sr.Max > 4.0 || (sr.Extrapolated && sr.Min < 0.45) {
+					logf("WARNING: --self-flat (grid) rejected: implausible center/edge=%.3f min=%.3f max=%.3f extrapolated=%v",
+						sr.CenterEdge, sr.Min, sr.Max, sr.Extrapolated)
 				} else {
 					selfFlat = sr
 					selfFlatApplied = true
-					logf("Self-flat (grid): %d frames, degree=%d, cell=%d, cells=%d/%d, masked=%.1f%%, center/edge=%.4f, fit RMS=%.5f, min=%.4f, max=%.4f",
-						sr.Frames, sr.Degree, sr.CellSize, sr.ValidCells, sr.TotalCells, 100*sr.MaskedFrac,
-						sr.CenterEdge, sr.ResidualRMS, sr.Min, sr.Max)
+					logf("Self-flat (grid): %d frames, degree=%d, cell=%d, cells=%d/%d (rejected=%d), masked=%.1f%%, center/edge=%.4f, fit RMS=%.5f, OLS RMS=%.5f, radial RMS=%.5f, IRLS=%d, min=%.4f, max=%.4f%s",
+						sr.Frames, sr.Degree, sr.CellSize, sr.ValidCells, sr.TotalCells, sr.RejectedCells, 100*sr.MaskedFrac,
+						sr.CenterEdge, sr.ResidualRMS, sr.OLSRMS, sr.RadialRMS, sr.IRLSIters, sr.Min, sr.Max, selfFlatExtrapolationTag(sr.Extrapolated))
 				}
 			}
 		} else {
@@ -8375,9 +8921,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if selfFlatApplied {
 		if selfFlat.Model == "grid" {
 			notes = append(notes, fmt.Sprintf(
-				"Self-flat (grid): derived from %d unregistered frames in sensor coordinates (degree-%d Chebyshev, %d px cells, %d/%d valid cells, mask fraction %.1f%%) and applied before resampling (center/edge=%.4f, fit RMS=%.5f, min=%.4f, max=%.4f). This is a relative illumination model, not a sensor-level flat: it cannot correct dust, and a stable sky gradient may be absorbed.",
+				"Self-flat (grid): derived from %d unregistered frames in sensor coordinates (degree-%d Chebyshev, %d px cells, %d/%d valid cells, %d rejected by the 5x5 filter, mask fraction %.1f%%) and applied before resampling (center/edge=%.4f, fit RMS=%.5f, OLS RMS=%.5f, radial RMS=%.5f, IRLS iterations=%d, min=%.4f, max=%.4f). This is a relative illumination model, not a sensor-level flat: it cannot correct dust, and a stable sky gradient may be absorbed.",
 				selfFlat.Frames, selfFlat.Degree, selfFlat.CellSize, selfFlat.ValidCells, selfFlat.TotalCells,
-				100*selfFlat.MaskedFrac, selfFlat.CenterEdge, selfFlat.ResidualRMS, selfFlat.Min, selfFlat.Max))
+				selfFlat.RejectedCells, 100*selfFlat.MaskedFrac, selfFlat.CenterEdge, selfFlat.ResidualRMS,
+				selfFlat.OLSRMS, selfFlat.RadialRMS, selfFlat.IRLSIters, selfFlat.Min, selfFlat.Max))
+			if selfFlat.Extrapolated {
+				notes = append(notes, "Self-flat (grid): the fit extrapolates over at least one dropped edge cell; check the field border for vignetting or clipping.")
+			}
 		} else {
 			notes = append(notes, fmt.Sprintf(
 				"Self-flat: derived from %d registered frames by a sigma-clipped mean in reference coordinates and applied after registration (center/edge=%.4f, residual RMS=%.5f). This is a relative illumination correction, not a sensor-level flat; astrophysical structure common to all frames can bias it, and it cannot repair pre-alignment sensor defects.",
@@ -8462,10 +9012,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	selfFlatDegree := 0
 	selfFlatCellSize := 0
 	selfFlatValidCells := 0
+	selfFlatRejectedCells := 0
 	selfFlatTotalCells := 0
 	selfFlatMaskedFrac := 0.0
 	selfFlatMin := 0.0
 	selfFlatMax := 0.0
+	selfFlatOLSRMS := 0.0
+	selfFlatRadialRMS := 0.0
+	selfFlatIRLSIters := 0
+	selfFlatExtrapolated := false
+	var selfFlatCoeffs [3][]float64
 	if selfFlat != nil {
 		selfFlatFrames = selfFlat.Frames
 		selfFlatCenter = selfFlat.CenterEdge
@@ -8473,10 +9029,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		selfFlatDegree = selfFlat.Degree
 		selfFlatCellSize = selfFlat.CellSize
 		selfFlatValidCells = selfFlat.ValidCells
+		selfFlatRejectedCells = selfFlat.RejectedCells
 		selfFlatTotalCells = selfFlat.TotalCells
 		selfFlatMaskedFrac = selfFlat.MaskedFrac
 		selfFlatMin = selfFlat.Min
 		selfFlatMax = selfFlat.Max
+		selfFlatOLSRMS = selfFlat.OLSRMS
+		selfFlatRadialRMS = selfFlat.RadialRMS
+		selfFlatIRLSIters = selfFlat.IRLSIters
+		selfFlatExtrapolated = selfFlat.Extrapolated
+		selfFlatCoeffs = selfFlat.Coeffs
 		if selfFlat.Model != "" {
 			selfFlatModel = selfFlat.Model
 		}
@@ -8498,63 +9060,69 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			cometFrames, opts.CometX, opts.CometY, opts.CometRateX, opts.CometRateY))
 	}
 	rep := &processingReport{
-		Version:            version,
-		Timestamp:          start,
-		CommandLine:        formatCommandLine(opts.Args),
-		ResolvedFlags:      resolvedFlagLines(opts),
-		InputDir:           inputDir,
-		OutputDir:          outputDir,
-		Discovered:         len(files),
-		Accepted:           acceptedPaths,
-		Rejected:           rejected,
-		Width:              refW,
-		Height:             refH,
-		Channels:           3,
-		Method:             methodString(registrationOn, opts.Method),
-		AccumulatorType:    "float32 (interleaved RGB)",
-		OutputFormat:       "TIFF: uncompressed, little-endian, RGB, IEEE float32, single strip. JPG: 8-bit, gamma 0.5 display preview.",
-		OutputScaling:      scalingString(registrationOn, opts.Method),
-		RegistrationOn:     registrationOn,
-		RegisteredCount:    registeredCount,
-		RegistrationFails:  regFailures,
-		CropRect:           cropRect,
-		SumNormalization:   sumMax,
-		BlackLevelTag:      blackLevelTag,
-		BlackLevelValue:    blackLevelValue,
-		BlackLevelApplied:  blackLevelApplied,
-		BPMApplied:         bpmPoints != nil,
-		BPMPath:            opts.BPMFile,
-		BPMPixelCount:      bpmMaskedCount,
-		SelfFlatApplied:    selfFlatApplied,
-		SelfFlatModel:      selfFlatModel,
-		SelfFlatFrames:     selfFlatFrames,
-		SelfFlatPath:       selfFlatRawPath,
-		SelfFlatCenterEdge: selfFlatCenter,
-		SelfFlatResidual:   selfFlatResidual,
-		SelfFlatDegree:     selfFlatDegree,
-		SelfFlatCellSize:   selfFlatCellSize,
-		SelfFlatValidCells: selfFlatValidCells,
-		SelfFlatTotalCells: selfFlatTotalCells,
-		SelfFlatMaskedFrac: selfFlatMaskedFrac,
-		SelfFlatMin:        selfFlatMin,
-		SelfFlatMax:        selfFlatMax,
-		MasterExports:      masterExports,
-		OutputFiles:        outputFiles,
-		Workers:            workers,
-		Duration:           time.Since(start),
-		PostProcessApplied: opts.PostProcess && !opts.StackOnly,
-		BGDegree:           opts.BGDegree,
-		StretchFactor:      opts.StretchFactor,
-		SharpenApplied:     opts.PostProcess && !opts.StackOnly && !opts.NoSharpen,
-		SharpenAmount:      opts.SharpenAmount,
-		SharpenRadius:      opts.SharpenRadius,
-		Notes:              notes,
-		FrameDiags:         frameDiags,
-		CropExplanation:    cropExplanation,
-		TotalExposureSec:   totalExposureSec,
-		FramesWithExif:     framesWithExif,
-		RefExif:            refExif,
-		PlateSolution:      plateSolutionOut,
+		Version:               version,
+		Timestamp:             start,
+		CommandLine:           formatCommandLine(opts.Args),
+		ResolvedFlags:         resolvedFlagLines(opts),
+		InputDir:              inputDir,
+		OutputDir:             outputDir,
+		Discovered:            len(files),
+		Accepted:              acceptedPaths,
+		Rejected:              rejected,
+		Width:                 refW,
+		Height:                refH,
+		Channels:              3,
+		Method:                methodString(registrationOn, opts.Method),
+		AccumulatorType:       "float32 (interleaved RGB)",
+		OutputFormat:          "TIFF: uncompressed, little-endian, RGB, IEEE float32, single strip. JPG: 8-bit, gamma 0.5 display preview.",
+		OutputScaling:         scalingString(registrationOn, opts.Method),
+		RegistrationOn:        registrationOn,
+		RegisteredCount:       registeredCount,
+		RegistrationFails:     regFailures,
+		CropRect:              cropRect,
+		SumNormalization:      sumMax,
+		BlackLevelTag:         blackLevelTag,
+		BlackLevelValue:       blackLevelValue,
+		BlackLevelApplied:     blackLevelApplied,
+		BPMApplied:            bpmPoints != nil,
+		BPMPath:               opts.BPMFile,
+		BPMPixelCount:         bpmMaskedCount,
+		SelfFlatApplied:       selfFlatApplied,
+		SelfFlatModel:         selfFlatModel,
+		SelfFlatFrames:        selfFlatFrames,
+		SelfFlatPath:          selfFlatRawPath,
+		SelfFlatCenterEdge:    selfFlatCenter,
+		SelfFlatResidual:      selfFlatResidual,
+		SelfFlatDegree:        selfFlatDegree,
+		SelfFlatCellSize:      selfFlatCellSize,
+		SelfFlatValidCells:    selfFlatValidCells,
+		SelfFlatRejectedCells: selfFlatRejectedCells,
+		SelfFlatTotalCells:    selfFlatTotalCells,
+		SelfFlatMaskedFrac:    selfFlatMaskedFrac,
+		SelfFlatMin:           selfFlatMin,
+		SelfFlatMax:           selfFlatMax,
+		SelfFlatOLSRMS:        selfFlatOLSRMS,
+		SelfFlatRadialRMS:     selfFlatRadialRMS,
+		SelfFlatIRLSIters:     selfFlatIRLSIters,
+		SelfFlatExtrapolated:  selfFlatExtrapolated,
+		SelfFlatCoeffs:        selfFlatCoeffs,
+		MasterExports:         masterExports,
+		OutputFiles:           outputFiles,
+		Workers:               workers,
+		Duration:              time.Since(start),
+		PostProcessApplied:    opts.PostProcess && !opts.StackOnly,
+		BGDegree:              opts.BGDegree,
+		StretchFactor:         opts.StretchFactor,
+		SharpenApplied:        opts.PostProcess && !opts.StackOnly && !opts.NoSharpen,
+		SharpenAmount:         opts.SharpenAmount,
+		SharpenRadius:         opts.SharpenRadius,
+		Notes:                 notes,
+		FrameDiags:            frameDiags,
+		CropExplanation:       cropExplanation,
+		TotalExposureSec:      totalExposureSec,
+		FramesWithExif:        framesWithExif,
+		RefExif:               refExif,
+		PlateSolution:         plateSolutionOut,
 	}
 	if plateSolutionOut != nil {
 		plateJSON := filepath.Join(outputDir, "plate_solution.json")
@@ -12647,6 +13215,238 @@ func testSelfFlatGridRecovery() error {
 	return nil
 }
 
+func testSelfFlatGridNebula() error {
+	const w, h = 384, 288
+	const frames = 30
+	const sky = 0.35
+	nebX, nebY := 0.66*float64(w), 0.44*float64(h)
+	const nebSigma = 24.0
+	const nebAmp = 0.15
+	patchX0, patchY0 := 72, 64
+	dustX0, dustY0 := 300, 196
+	const patchSize = 32
+	const patchAmp = 0.06
+	const dustAmp = -0.05
+
+	acc := newSelfFlatGridAccumulator(w, h, selfFlatGridDefaultCell)
+	for i := 0; i < frames; i++ {
+		pix := make([]float32, w*h*3)
+		sx := 20 + (i*37)%(w-40)
+		sy := 20 + (i*53)%(h-40)
+		sx2 := 20 + (i*61+11)%(w-40)
+		sy2 := 20 + (i*29+7)%(h-40)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				base := sky
+				dx := float64(x) - nebX
+				dy := float64(y) - nebY
+				base += nebAmp * math.Exp(-(dx*dx+dy*dy)/(2*nebSigma*nebSigma))
+				if x >= patchX0 && x < patchX0+patchSize && y >= patchY0 && y < patchY0+patchSize {
+					base += patchAmp
+				}
+				if x >= dustX0 && x < dustX0+patchSize && y >= dustY0 && y < dustY0+patchSize {
+					base += dustAmp
+				}
+				if (x >= sx-1 && x <= sx+1 && y >= sy-1 && y <= sy+1) ||
+					(x >= sx2-1 && x <= sx2+1 && y >= sy2-1 && y <= sy2+1) {
+					base += 0.5
+				}
+				v := float64(syntheticVignette(w, h, x, y)) * base
+				p := (y*w + x) * 3
+				pix[p], pix[p+1], pix[p+2] = float32(v), float32(v), float32(v)
+			}
+		}
+		acc.addFrame(&frame{Width: w, Height: h, Pix: pix}, 1)
+	}
+	sr, err := acc.finalize(1)
+	if err != nil {
+		return err
+	}
+	if sr.MaskedFrac > 0.50 {
+		return fmt.Errorf("nebula mask fraction %.3f too high; extended emission is still masked", sr.MaskedFrac)
+	}
+	if sr.RejectedCells == 0 {
+		return fmt.Errorf("expected at least one 5x5-rejected cell (cells=%d/%d)", sr.ValidCells, sr.TotalCells)
+	}
+
+	var gotSum, wantSum float64
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			gotSum += float64(sr.Frame.Pix[(y*w+x)*3])
+			wantSum += float64(syntheticVignette(w, h, x, y))
+		}
+	}
+	scale := gotSum / wantSum
+	var sumSq float64
+	var n int
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			got := float64(sr.Frame.Pix[(y*w+x)*3]) / scale
+			want := float64(syntheticVignette(w, h, x, y))
+			d := got - want
+			sumSq += d * d
+			n++
+		}
+	}
+	if rms := math.Sqrt(sumSq / float64(n)); rms > 0.03 {
+		return fmt.Errorf("nebula flat RMS %.4f exceeds 0.03 (mask=%.2f cells=%d/%d rejected=%d)",
+			rms, sr.MaskedFrac, sr.ValidCells, sr.TotalCells, sr.RejectedCells)
+	}
+	// The regression that motivated Phase 2: the fit must not absorb the
+	// nebula. Compare a 9x9 patch at its centre, normalised globally.
+	var gNeb, wNeb float64
+	var cnt int
+	for y := int(nebY) - 4; y <= int(nebY)+4; y++ {
+		for x := int(nebX) - 4; x <= int(nebX)+4; x++ {
+			gNeb += float64(sr.Frame.Pix[(y*w+x)*3]) / scale
+			wNeb += float64(syntheticVignette(w, h, x, y))
+			cnt++
+		}
+	}
+	gNeb /= float64(cnt)
+	wNeb /= float64(cnt)
+	if math.Abs(gNeb-wNeb) > 0.02 {
+		return fmt.Errorf("nebula-centre flat %.4f vs truth %.4f (diff %.4f > 0.02; mask=%.2f cells=%d/%d rejected=%d)",
+			gNeb, wNeb, math.Abs(gNeb-wNeb), sr.MaskedFrac, sr.ValidCells, sr.TotalCells, sr.RejectedCells)
+	}
+	return nil
+}
+
+func testSelfFlatIRLSRobust() error {
+	const cols, rows = 16, 12
+	deg := selfFlatGridDegree
+	truth := func(u, v float64) float64 {
+		return 1 + 0.08*u - 0.03*v + 0.04*u*v + 0.02*(u*u-0.5*v*v)
+	}
+	cellUV := func(cx, cy int) (float64, float64) {
+		u := -1 + 2*float64(cx+1)/2/float64(cols)
+		v := -1 + 2*float64(cy+1)/2/float64(rows)
+		return u, v
+	}
+
+	// Build the cell grid. The right four columns are omitted to force
+	// edge extrapolation; every seventh remaining cell is contaminated
+	// with a positive spike, as if a star or nebula survived the mask.
+	var pts []selfFlatPoint
+	for cy := 0; cy < rows; cy++ {
+		for cx := 0; cx < cols-4; cx++ {
+			u, v := cellUV(cx, cy)
+			val := truth(u, v)
+			if (cx*7+cy*3)%9 == 0 {
+				val += 0.45
+			}
+			pts = append(pts, selfFlatPoint{u: u, v: v, val: val, w: 100})
+		}
+	}
+
+	ols, _, _, err := fitSelfFlatPoly(pts, deg, false)
+	if err != nil {
+		return fmt.Errorf("OLS fit: %w", err)
+	}
+	rob, iters, _, err := fitSelfFlatPoly(pts, deg, true)
+	if err != nil {
+		return fmt.Errorf("robust fit: %w", err)
+	}
+	if iters < 2 {
+		return fmt.Errorf("IRLS performed %d iterations; expected >1", iters)
+	}
+
+	var olsSumSq, robSumSq float64
+	var edgeMax float64
+	var n int
+	for cy := 0; cy < rows; cy++ {
+		for cx := 0; cx < cols; cx++ {
+			u, v := cellUV(cx, cy)
+			want := truth(u, v)
+			olsErr := evalSelfFlatPoly(ols, u, v, deg) - want
+			robErr := evalSelfFlatPoly(rob, u, v, deg) - want
+			olsSumSq += olsErr * olsErr
+			robSumSq += robErr * robErr
+			if cx >= cols-4 {
+				if a := math.Abs(robErr); a > edgeMax {
+					edgeMax = a
+				}
+			}
+			n++
+		}
+	}
+	olsRMS := math.Sqrt(olsSumSq / float64(n))
+	robRMS := math.Sqrt(robSumSq / float64(n))
+	if robRMS > 0.02 {
+		return fmt.Errorf("robust fit RMS %.4f exceeds 0.02 (OLS %.4f, iters=%d)", robRMS, olsRMS, iters)
+	}
+	if robRMS > 0.5*olsRMS {
+		return fmt.Errorf("robust RMS %.4f did not beat OLS %.4f", robRMS, olsRMS)
+	}
+	if edgeMax > 0.05 {
+		return fmt.Errorf("edge extrapolation error %.4f exceeds 0.05 (rob RMS %.4f)", edgeMax, robRMS)
+	}
+	return nil
+}
+
+func testSelfFlatRadialModel() error {
+	const cols, rows = 16, 12
+	truth := func(u, v float64) float64 {
+		r2 := 0.5 * (u*u + v*v)
+		return 1 + 0.12*r2 - 0.03*r2*r2
+	}
+	cellUV := func(cx, cy int) (float64, float64) {
+		u := -1 + 2*float64(cx+1)/2/float64(cols)
+		v := -1 + 2*float64(cy+1)/2/float64(rows)
+		return u, v
+	}
+	var pts []selfFlatPoint
+	for cy := 0; cy < rows; cy++ {
+		for cx := 0; cx < cols; cx++ {
+			u, v := cellUV(cx, cy)
+			pts = append(pts, selfFlatPoint{u: u, v: v, val: truth(u, v), w: 100})
+		}
+	}
+
+	rad, _, _, err := fitSelfFlatRadial(pts, selfFlatRadialTerms, true)
+	if err != nil {
+		return fmt.Errorf("radial fit: %w", err)
+	}
+	poly, _, _, err := fitSelfFlatPoly(pts, selfFlatGridDegree, true)
+	if err != nil {
+		return fmt.Errorf("poly fit: %w", err)
+	}
+
+	var radSumSq, polySumSq float64
+	var n int
+	for cy := 0; cy < rows; cy++ {
+		for cx := 0; cx < cols; cx++ {
+			u, v := cellUV(cx, cy)
+			want := truth(u, v)
+			dr := evalSelfFlatRadial(rad, u, v) - want
+			dp := evalSelfFlatPoly(poly, u, v, selfFlatGridDegree) - want
+			radSumSq += dr * dr
+			polySumSq += dp * dp
+			n++
+		}
+	}
+	radRMS := math.Sqrt(radSumSq / float64(n))
+	polyRMS := math.Sqrt(polySumSq / float64(n))
+	if radRMS > 0.005 {
+		return fmt.Errorf("radial RMS %.4f exceeds 0.005 (poly %.4f)", radRMS, polyRMS)
+	}
+	if radRMS > polyRMS+0.002 {
+		return fmt.Errorf("radial RMS %.4f did not match the 2-D poly RMS %.4f", radRMS, polyRMS)
+	}
+
+	// Corner extrapolation must stay close to the truth.
+	for _, u := range []float64{-1, 1} {
+		for _, v := range []float64{-1, 1} {
+			want := truth(u, v)
+			got := evalSelfFlatRadial(rad, u, v)
+			if math.Abs(got-want) > 0.02 {
+				return fmt.Errorf("radial corner (%.0f,%.0f) %.4f vs truth %.4f", u, v, got, want)
+			}
+		}
+	}
+	return nil
+}
+
 func testSelfFlatGridApplication() error {
 	const w, h = 32, 8
 	pix := make([]float32, w*h*3)
@@ -13258,6 +14058,9 @@ func runSelfTests() int {
 		{"self-flat eligibility", testSelfFlatEligible},
 		{"self-flat recovery", testSelfFlatRecovery},
 		{"self-flat grid recovery", testSelfFlatGridRecovery},
+		{"self-flat grid nebula", testSelfFlatGridNebula},
+		{"self-flat IRLS robust", testSelfFlatIRLSRobust},
+		{"self-flat radial model", testSelfFlatRadialModel},
 		{"self-flat grid application", testSelfFlatGridApplication},
 		{"self-flat grid no registration", testSelfFlatGridNoRegistration},
 		{"self-flat model default", testSelfFlatModelDefault},

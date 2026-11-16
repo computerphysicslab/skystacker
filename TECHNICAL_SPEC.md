@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.0
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 178. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 181. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -62,9 +62,15 @@ Flags are accepted before or after the positional input directory. Default input
   coarse grid, robust rejection, IRLS polynomial) applied before
   resampling; see `research/04-calibration-and-self-flat.md` §9-14 and
   `ROADMAP_SYNTHETIC_CALIBRATION.md` §2.3.
-- `--self-flat-model` is `registered` (default, v1) or `grid` (Phase-1
-  sensor-space prototype: unregistered frames, source mask, 64 px cells,
-  degree-4 Chebyshev least squares, applied before resampling).
+- `--self-flat-model` is `registered` (default, v1) or `grid` (Phase-3
+  sensor-space model: unregistered frames, local-contrast source mask,
+  SExtractor cell mode with low-quantile consistency, 5x5 median/MAD cell
+  rejection, 64 px cells, degree-4 Chebyshev fit refined by asymmetric
+  Huber IRLS, radial-model comparison, and positivity/extrapolation
+  diagnostics, applied before resampling). If extrapolation is flagged and
+  `min < 0.45`, the model is rejected with a warning. `report.txt` records
+  fit RMS, OLS RMS, radial RMS, IRLS iterations and the Chebyshev
+  coefficients.
 - `--calib-root` (auto-detect `Bias/Darks/Flats/<filter>` subfolders).
 
 ### Normalization (requires registration)

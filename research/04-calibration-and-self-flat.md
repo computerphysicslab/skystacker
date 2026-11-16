@@ -665,3 +665,155 @@ is star-matched to an external reference image and warped in memory into
 its pixel frame. This does not change the calibration status above; Phase 2
 of the self-flat is still the next calibration task. See `COMPARISON.md`
 for the Fitswork comparison.
+
+## 17. Phase 2 implementation (2026-11-15)
+
+Phase 2 (robust masking and cell rejection) is implemented behind
+`--self-flat-model=grid`; the default remains `registered`.
+
+### 17.1 Source mask
+
+The Phase-1 mask thresholded luminance at `median + 2.5*MAD` globally. Any
+extended emission above that threshold was masked like a star, which caused
+the 67.6% mask fraction on Orion. The Phase-2 mask works on **local
+contrast** instead:
+
+- luminance `L = 0.2126 R + 0.7152 G + 0.0722 B`;
+- subtract a separable `(2r+1)^2` box mean with `r = 8` (clipped at the
+  frame border);
+- estimate the residual scale from `1.4826*MAD(L - box)` on a strided
+  sample, floored at `0.008` so a noiseless gradient is not masked by
+  numerical structure;
+- mask pixels with residual `> median(residual) + 5*scale`, plus saturated
+  pixels and invalid (`-1`) pixels;
+- dilate the mask by 12 px for PSF wings and blooming.
+
+Extended emission raises the local background by nearly the same amount as
+the pixel, so its residual stays below the threshold. Stars keep their full
+contrast against the box mean and are still masked. The per-frame global
+median used for channel normalisation is unchanged.
+
+### 17.2 Cell estimator and consistency
+
+Each cell/channel now stores the SExtractor-style mode
+
+```text
+mode = 2.5*median - 1.5*trimmed_mean(10%..90%)
+```
+
+instead of the 25th percentile. The lower and upper quartiles are kept as a
+contamination check: when the upper quartile is farther from the median
+than `1.6x` the lower distance, the cell is rejected before the fit. A
+symmetric sky cell has upper/lower ~= 1, so the check does not reject clean
+noisy cells; a nebula or star wing inflates the upper tail. `mode` is
+clamped to the low quantile if it becomes non-positive.
+
+The across-frame combination remains the median of the per-frame cell
+values, with the frame sample counts as fit weights.
+
+### 17.3 5x5 grid rejection
+
+After building the cell grid, each channel applies the §10.4 filter:
+collect the valid cells in the 5x5 neighbourhood, compute their median and
+MAD, and reject a cell when
+
+```text
+|B - median_5x5| > 2.5 * MAD_5x5
+```
+
+Rejected cells are given zero weight and are not interpolated. The result
+reports `cells=valid/total (rejected=N)`. `RejectedCells` is the number of
+unique grid cells rejected in at least one channel.
+
+### 17.4 Diagnostics and results
+
+New synthetic test `testSelfFlatGridNebula` (384x288, 30 frames, moving
+stars, a static `sigma=24 px` Gaussian nebula, a 32x32 bright patch and a
+32x32 dark patch that stands in for a dust shadow):
+
+- mask fraction must stay below 50%;
+- at least one cell must be removed by the 5x5 filter;
+- the global flat RMS must stay below 0.03;
+- the recovered flat at the nebula centre must stay within 0.02 of the
+  truth. This is the regression test for the v1 failure.
+
+Orion-135mm, `--limit 20 --method mean --stack-only
+--self-flat-model=grid --export-masters` (`/tmp/orion_p2_grid`):
+
+| Quantity | Phase 1 | Phase 2 |
+| --- | --- | --- |
+| Mask fraction | 67.6% | 31.7% |
+| Valid cells | 391/950 | 851/950 (66 rejected) |
+| Fit RMS | 0.01337 | 0.01606 |
+| Center/edge | 1.2449 | 1.2226 |
+| Min / max | 0.4855 / 1.2081 | 0.5316 / 1.1315 |
+| Master min / max | - | 0.48913 / 1.15756 |
+
+The corrected `stacked_mean` center/border ratio is 1.019 (within 2% of
+flat), and the M42 dome that reached ~1.9 in v1 is absent (grid max 1.13).
+The sigma path reproduces the same cell statistics exactly.
+
+The remaining low corner (master min 0.489) is degree-4 extrapolation over
+the masked border, not scene absorption. It is the Phase-3 target.
+
+Registered self-tests: **179**. No new dependencies; v1 and the Phase-1
+least-squares path are unchanged.
+
+## 18. Phase 3 — robust IRLS polynomial (shipped 2026-11-16)
+
+The grid estimator now fits a degree-4 Chebyshev tensor surface per
+channel with asymmetric Huber IRLS instead of a single OLS solve:
+
+- **Base fit.** Weighted least squares using cell sample counts, as
+  before. This is also the IRLS initialization and the fallback if a
+  robust iteration fails.
+- **Robust refinement.** Residual scale is `1.4826*MAD(|r|)`, floored at
+  `1e-6`. Huber weights are `min(1, c*sigma/|r|)` with `c=1.5` for
+  positive residuals (cells brighter than the smooth surface: residual
+  star/nebula tails) and `c=3.0` for negative ones. At most 15 iterations,
+  stopping when the largest coefficient change is below `1e-7`.
+- **Diagnostics.** `fit RMS` is the robust-fit residual over valid cells;
+  `OLS RMS` refits with the same basis and no IRLS; `radial RMS` fits
+  `1, r^2, r^4, r^6` (radial comparison). All three are normalized by the
+  fitted channel means. `report.txt` also prints the 25 Chebyshev
+  coefficients per channel.
+- **Positivity/extrapolation.** The grid gate rejects
+  `center/edge < 0.5 || > 5.0`, `min < 0.25`, or `max > 4.0`. A note is
+  emitted when an edge cell was dropped, so the model had to extrapolate
+  to the frame border.
+
+New synthetic tests:
+
+- `testSelfFlatIRLSRobust`: 16x12 cells, degree-4 truth, right four
+  columns omitted, every ninth remaining cell spiked by +0.45. The robust
+  fit must beat OLS by at least 2x and stay below 0.02 RMS, and the
+  extrapolated edge must stay within 0.05.
+- `testSelfFlatRadialModel`: purely radial truth `1 + 0.12 r^2 - 0.03 r^4`.
+  The radial fit must reach < 0.005 RMS, match the 2-D polynomial to
+  within 0.002, and stay within 0.02 at the corners.
+
+Orion-135mm, `--limit 20 --method mean --stack-only
+--self-flat-model=grid --export-masters` (`/tmp/orion_p3_grid`):
+
+| Quantity | Phase 1 | Phase 2 | Phase 3 |
+| --- | --- | --- | --- |
+| Mask fraction | 67.6% | 31.7% | 31.7% |
+| Valid cells | 391/950 | 851/950 (66 rejected) | 851/950 (66 rejected) |
+| Fit RMS | 0.01337 | 0.01606 | 0.01634 |
+| OLS RMS | - | - | 0.01608 |
+| Radial RMS | - | - | 0.07496 |
+| IRLS iterations | - | - | 11 |
+| Center/edge | 1.2449 | 1.2226 | 1.2180 |
+| Min / max | 0.4855 / 1.2081 | 0.5316 / 1.1315 | 0.5312 / 1.1300 |
+
+The corrected `stacked_mean` linear center/border ratio is 1.023, matching
+Phase 2's 1.019. The radial model is much worse (0.075) because the Orion
+field has a non-radial illumination gradient; the 2-D model remains the
+correct choice. OLS has a slightly lower RMS on this clean field because it
+minimizes exactly the squared cell residual, while the robust fit trades a
+little RMS for stability against contamination; the synthetic outlier test
+shows the robust fit wins decisively when outliers are present.
+
+Registered self-tests: **181**. No new dependencies; v1 and the Phase-1
+least-squares path are unchanged. Phase 4 (default switch, gamma-aware
+correction, real-flat validation) remains.

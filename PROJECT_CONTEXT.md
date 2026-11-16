@@ -1569,3 +1569,31 @@ rejection and disk spill. `--scale N` downsamples.
   (empirical) plus a small per-pixel cost for non-RAW frames. The
   `--calib-root` path resolution moved before the estimate for this reason.
   Verified on a 1-light/3-calibration subset: estimated 2m0s, actual 1m32s.
+- Self-flat Phase 2 shipped behind `--self-flat-model=grid` (default still
+  `registered`). The source mask is now local-contrast based (box radius 8,
+  residual > 5*MAD, floor 0.008, 12 px dilation) so extended emission is
+  not masked like a star. Cells store the SExtractor mode from a 10-90%
+  trimmed mean and reject a heavy upper tail (`upper > 1.6*lower`). A 5x5
+  median/MAD filter (`|B-med| > 2.5*MAD`) removes residual outliers with
+  zero weight. `RejectedCells` is reported in the log, `report.txt`, and
+  the processing report.
+- Orion-135mm `--limit 20` grid result in `/tmp/orion_p2_grid`: mask
+  31.7% (was 67.6%), cells 851/950 (66 rejected), fit RMS 0.01606,
+  center/edge 1.2226, min/max 0.5316/1.1315. Corrected mean
+  center/border 1.019. New `testSelfFlatGridNebula`; registered self-tests
+  now 179. Phase 3 (IRLS) is the next calibration task.
+- Self-flat Phase 3 shipped behind `--self-flat-model=grid` (default still
+  `registered`). The single OLS solve is now a degree-4 Chebyshev fit
+  refined by asymmetric Huber IRLS (c=1.5 positive, c=3.0 negative,
+  1.4826*MAD scale, 15 iterations max, 1e-7 tolerance). `finalize` also
+  reports OLS RMS, radial-model RMS (`1, r^2, r^4, r^6`) and IRLS
+  iteration count; the 25 coefficients per channel are written to
+  `report.txt`. The grid gate now rejects `center/edge` outside [0.5, 5],
+  `min < 0.25`, or `max > 4.0`, and a note flags edge-cell extrapolation.
+- Orion-135mm `--limit 20` grid result in `/tmp/orion_p3_grid`: mask
+  31.7%, cells 851/950 (66 rejected), fit RMS 0.01634, OLS RMS 0.01608,
+  radial RMS 0.07496, IRLS 11, center/edge 1.2180, min/max 0.5312/1.1300.
+  Corrected mean center/border 1.023. New `testSelfFlatIRLSRobust` and
+  `testSelfFlatRadialModel`; registered self-tests now 181. Phase 4
+  (default switch, gamma-aware correction, real-flat validation) remains.
+- Phase 4 validation (2026-11-16): with `--self-flat-model=grid`, `--method mean|median|sigma --limit 20 --export-masters` each produce identical self-flat diagnostics in `/tmp/orion_p4_*_grid` to Phase 3 (mask 31.7%, 851/950, 66 rejected, fit RMS ~0.0163, OLS 0.01608, radial 0.075, IRLS 11, center/edge ~1.218, min/max ~0.531/1.13). `--no-register --self-flat-model=grid --limit 20` also applies the grid model without errors in `/tmp/orion_p4_noreg_grid`. A soft guard rejects the grid model if extrapolated at an edge and `min < 0.45` (current Orion still passes with extrapolation note). All 181 self-tests unchanged/passing.

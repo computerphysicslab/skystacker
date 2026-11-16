@@ -110,10 +110,17 @@ Both items are independently shippable in one commit.
     before resampling, no registration needed for the build. Orion-135mm
     `--limit 20`: center/edge 1.2449, max 1.208 (v1 M42 dome absent),
     mask fraction 67.6% (too high; Phase 2). Default remains `registered`.
-  - Phase 2 (masking): large static nebula; recovered flat at the nebula
-    within 0.02 of truth; bright-patch and dust-shadow cells rejected.
-  - Phase 3 (IRLS): fit RMS < 0.02; robust fit beats OLS with injected
-    cell outliers; degree/cell-size diagnostics reported.
+  - Phase 2 (masking, shipped 2026-11-15): local-contrast source mask,
+    SExtractor cell mode with low-quantile consistency, and 5x5 median/MAD
+    cell rejection. Synthetic large nebula plus bright and dark
+    (dust-shadow-like) patches: recovered flat at the nebula within 0.02 of
+    truth; outlier cells rejected. Orion-135mm `--limit 20`: mask fraction
+    31.7% (was 67.6%), cells 851/950 (66 rejected), fit RMS 0.01606,
+    center/edge 1.2226, max 1.13. Default remains `registered`.
+  - Phase 3 (IRLS, shipped 2026-11-16): degree-4 Chebyshev with asymmetric
+    Huber IRLS; OLS and radial comparison diagnostics; fit RMS 0.01634
+    (< 0.02) on Orion; synthetic outlier and radial tests pass. Default
+    still `registered`.
   - Phase 4 (integration): `mean`, `median`, `sigma`, registered and
     `--no-register` outputs all corrected; section-E tests unchanged;
     Orion E2E no longer shows the M42 dome.
