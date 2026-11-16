@@ -400,6 +400,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--export-masters` | Write `master_<kind>.f32raw` + `.jpg` preview for loaded calibration products | `false` |
 | `--self-flat` | Derive a relative illumination flat from ≥ 15 dithered lights (auto when no flat loaded) | `true` (auto) |
 | `--self-flat-model string` | Self-flat model: `grid` (default, Phase-3 sensor-space with IRLS) or `registered` (v1 compatibility) | `grid` |
+| `--self-flat-linear-srgb` | Experimental: apply grid self-flat in linear light via sRGB EOTF (approximation; off by default) | off |
 
 ### Normalization
 

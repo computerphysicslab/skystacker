@@ -172,6 +172,7 @@ type cliOptions struct {
 	SelfFlat             bool
 	NoSelfFlat           bool
 	SelfFlatModel        string
+	SelfFlatLinearSRGB   bool
 	ReferenceCrop        string
 
 	CreateTIFF  bool
@@ -238,6 +239,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.SelfFlat, "self-flat", false, "derive a relative flat from >=15 lights; on by default when no flat frames are found")
 	fs.BoolVar(&o.NoSelfFlat, "no-self-flat", false, "do not derive a self-flat when no flat frames are found")
 	fs.StringVar(&o.SelfFlatModel, "self-flat-model", "grid", "self-flat estimator: registered (v1 compatibility) or grid (sensor-space, default)")
+	fs.BoolVar(&o.SelfFlatLinearSRGB, "self-flat-linear-srgb", false, "apply grid self-flat in linear light via sRGB EOTF before division (experimental)")
 	fs.StringVar(&o.ReferenceCrop, "reference-crop", "", "warp every light into the star-matched pixel frame of this reference image")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
 	var noAffine bool
@@ -342,7 +344,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -671,6 +673,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --self-flat       derive a relative illumination flat from the lights (default when no flats are found)")
 	fmt.Fprintln(w, "  --no-self-flat    do not derive a self-flat when no flat frames are found")
 	fmt.Fprintln(w, "  --self-flat-model string  self-flat estimator: registered (v1 compatibility) or grid (sensor-space, default)")
+	fmt.Fprintln(w, "  --self-flat-linear-srgb  apply grid self-flat in linear light via sRGB EOTF (experimental)")
 	fmt.Fprintln(w, "  --synthetic-calibration         report what is recoverable from lights; never fabricates frames")
 	fmt.Fprintln(w, "  --synthetic-calibration-report  print the recovery report and exit")
 	fmt.Fprintln(w, "  --synthetic-dark|flat|bias      REFUSED: see --synthetic-calibration")
@@ -3913,6 +3916,7 @@ type runOptions struct {
 	SelfFlat             bool
 	NoSelfFlat           bool
 	SelfFlatModel        string
+	SelfFlatLinearSRGB   bool
 	// ReferenceCrop is a path to an image whose frame defines the output.
 	// Every light is matched to that image by star patterns and warped
 	// into its pixel frame in memory; the output is exactly refW x refH.
@@ -7060,22 +7064,68 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	}, nil
 }
 
+// sRGBToLinearF32 converts an sRGB-encoded float in [0,1] to linear light.
+// Approximate EOTF; used only when --self-flat-linear-srgb is enabled.
+func sRGBToLinearF32(v float32) float32 {
+	if v <= 0 {
+		return 0
+	}
+	if v >= 1 {
+		return 1
+	}
+	f := float64(v)
+	if f <= 0.04045 {
+		return float32(f / 12.92)
+	}
+	return float32(math.Pow((f+0.055)/1.055, 2.4))
+}
+
+// linearToSRGBF32 converts linear light in [0,1] to sRGB-encoded float.
+func linearToSRGBF32(v float32) float32 {
+	if v <= 0 {
+		return 0
+	}
+	if v >= 1 {
+		return 1
+	}
+	f := float64(v)
+	var out float64
+	if f <= 0.0031308 {
+		out = 12.92 * f
+	} else {
+		out = 1.055*math.Pow(f, 1.0/2.4) - 0.055
+	}
+	if out < 0 {
+		out = 0
+	}
+	if out > 1 {
+		out = 1
+	}
+	return float32(out)
+}
+
 // applySensorFlat divides a sensor-coordinate frame by a full-frame flat.
-func applySensorFlat(f *frame, flat *frame) {
+func applySensorFlat(f *frame, flat *frame, linearSRGB bool) {
 	if f == nil || flat == nil || f.Width != flat.Width || f.Height != flat.Height {
 		return
 	}
-	divideSliceByFlat(f.Pix, flat)
+	divideSliceByFlat(f.Pix, flat, linearSRGB)
 }
 
 // divideSliceByFlat divides an interleaved RGB float32 buffer by a full-frame flat.
-func divideSliceByFlat(pix []float32, flat *frame) {
+func divideSliceByFlat(pix []float32, flat *frame, linearSRGB bool) {
 	if flat == nil || len(pix) != len(flat.Pix) {
 		return
 	}
 	for i, d := range flat.Pix {
 		if d > 1e-6 && pix[i] >= 0 {
-			pix[i] /= d
+			if linearSRGB {
+				pv := sRGBToLinearF32(pix[i])
+				pv /= d
+				pix[i] = linearToSRGBF32(pv)
+			} else {
+				pix[i] /= d
+			}
 		}
 	}
 }
@@ -8192,7 +8242,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				needsNormalize = false
 			} else {
 				if selfFlatApplied && selfFlatModel == "grid" {
-					applySensorFlat(refFrame, selfFlat.Frame)
+					applySensorFlat(refFrame, selfFlat.Frame, opts.SelfFlatLinearSRGB)
 				}
 				normRefGlobal = computeNormStats(refFrame)
 				if opts.LocalNormalize {
@@ -8276,7 +8326,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				applyBadPixelMap(f, bpmPoints, opts.Scale)
 			}
 			if selfFlatApplied && selfFlatModel == "grid" {
-				applySensorFlat(f, selfFlat.Frame)
+				applySensorFlat(f, selfFlat.Frame, opts.SelfFlatLinearSRGB)
 			}
 			var resampled *frame
 			if transforms[i].aff != nil {
@@ -8614,8 +8664,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return fmt.Errorf("reduce unregistered: %w", rerr)
 		}
 		if selfFlatApplied && selfFlatModel == "grid" {
-			divideSliceByFlat(sum1, selfFlat.Frame)
-			divideSliceByFlat(mean1, selfFlat.Frame)
+			divideSliceByFlat(sum1, selfFlat.Frame, opts.SelfFlatLinearSRGB)
+			divideSliceByFlat(mean1, selfFlat.Frame, opts.SelfFlatLinearSRGB)
 		}
 		unregSumPix = sum1
 		unregMeanPix = mean1
@@ -8842,7 +8892,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		} else {
 			sumPix = append([]float32(nil), unregAcc.Pix...)
 			if selfFlatApplied && selfFlatModel == "grid" {
-				divideSliceByFlat(sumPix, selfFlat.Frame)
+				divideSliceByFlat(sumPix, selfFlat.Frame, opts.SelfFlatLinearSRGB)
 			}
 			sumMax = 0
 			for _, v := range sumPix {
@@ -13551,7 +13601,7 @@ func testSelfFlatGridApplication() error {
 		}
 	}
 	fr := &frame{Width: w, Height: h, Pix: append([]float32(nil), pix...)}
-	applySensorFlat(fr, &frame{Width: w, Height: h, Pix: flatPix})
+	applySensorFlat(fr, &frame{Width: w, Height: h, Pix: flatPix}, false)
 	for i, v := range fr.Pix {
 		if math.Abs(float64(v-0.5)) > 1e-4 {
 			return fmt.Errorf("sensor-space division pixel %d = %.5f, want 0.5", i, v)
@@ -13568,7 +13618,7 @@ func testSelfFlatGridApplication() error {
 			shifted[(y*w+x)*3+2] = pix[(y*w+(x-4))*3+2]
 		}
 	}
-	applySensorFlat(&frame{Width: w, Height: h, Pix: shifted}, &frame{Width: w, Height: h, Pix: flatPix})
+	applySensorFlat(&frame{Width: w, Height: h, Pix: shifted}, &frame{Width: w, Height: h, Pix: flatPix}, false)
 	var bad int
 	for x := 8; x < w-4; x++ {
 		if math.Abs(float64(shifted[x*3]-0.5)) > 0.02 {
@@ -20910,6 +20960,7 @@ func main() {
 		SelfFlat:             opts.SelfFlat,
 		NoSelfFlat:           opts.NoSelfFlat,
 		SelfFlatModel:        opts.SelfFlatModel,
+		SelfFlatLinearSRGB:   opts.SelfFlatLinearSRGB,
 		ReferenceCrop:        opts.ReferenceCrop,
 		CreateTIFF:           opts.CreateTIFF,
 		PostCA:               opts.PostCA,
