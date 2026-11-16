@@ -121,9 +121,13 @@ Both items are independently shippable in one commit.
     Huber IRLS; OLS and radial comparison diagnostics; fit RMS 0.01634
     (< 0.02) on Orion; synthetic outlier and radial tests pass. Default
     still `registered`.
-  - Phase 4 (integration): `mean`, `median`, `sigma`, registered and
-    `--no-register` outputs all corrected; section-E tests unchanged;
-    Orion E2E no longer shows the M42 dome.
+  - Phase 4 (integration, in progress 2026-11-16): validated `mean`,
+    `median`, `sigma`, and `--no-register` with `--self-flat-model=grid`
+    on Orion `--limit 20` (diagnostics match Phase 3; corrected center/
+    border ~1.023, M42 dome absent in grid outputs); extrapolation + `min
+    < 0.45` guard added; gamma-aware correction documented as out of
+    scope for the sRGB pipeline; no real flat found (deferred). Section-E
+    tests unchanged. Default remains `registered`.
 - **Main risks:** (1) a stable sky gradient is degenerate with the flat
   and will be absorbed; document it and prefer a radial model when
   possible. (2) A large nebula with small dithers remains partially

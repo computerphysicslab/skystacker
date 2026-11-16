@@ -8921,7 +8921,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if selfFlatApplied {
 		if selfFlat.Model == "grid" {
 			notes = append(notes, fmt.Sprintf(
-				"Self-flat (grid): derived from %d unregistered frames in sensor coordinates (degree-%d Chebyshev, %d px cells, %d/%d valid cells, %d rejected by the 5x5 filter, mask fraction %.1f%%) and applied before resampling (center/edge=%.4f, fit RMS=%.5f, OLS RMS=%.5f, radial RMS=%.5f, IRLS iterations=%d, min=%.4f, max=%.4f). This is a relative illumination model, not a sensor-level flat: it cannot correct dust, and a stable sky gradient may be absorbed.",
+				"Self-flat (grid): derived from %d unregistered frames in sensor coordinates (degree-%d Chebyshev, %d px cells, %d/%d valid cells, %d rejected by the 5x5 filter, mask fraction %.1f%%) and applied before resampling (center/edge=%.4f, fit RMS=%.5f, OLS RMS=%.5f, radial RMS=%.5f, IRLS iterations=%d, min=%.4f, max=%.4f). This is a relative illumination model, not a sensor-level flat: it cannot correct dust, and a stable sky gradient may be absorbed. Gamma-aware (EOTF) correction is not applied; division is approximate for sRGB/encoded pipeline data.",
 				selfFlat.Frames, selfFlat.Degree, selfFlat.CellSize, selfFlat.ValidCells, selfFlat.TotalCells,
 				selfFlat.RejectedCells, 100*selfFlat.MaskedFrac, selfFlat.CenterEdge, selfFlat.ResidualRMS,
 				selfFlat.OLSRMS, selfFlat.RadialRMS, selfFlat.IRLSIters, selfFlat.Min, selfFlat.Max))
