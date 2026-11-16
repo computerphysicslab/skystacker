@@ -829,3 +829,11 @@ See `../05-research-deep-dive-2026-11-16.md` for the full English synthesis (pil
 - Self-supervised denoising (N2V/PN2V risks, TDR/ASTERIS safeguards): do not adopt blind-spot denoisers as default without photometric validation and bounded restoration logic.
 - Cosmic rays/satellites: stacking rejection exists; learned CR masks and Radon/sat tools are future research.
 - **Local dataset note:** `assets/OrionNebula/` now has 16 lights but lowercase calibration subfolders (`darks/flats/biases/lights`) caused a calibration-root path issue in a test run — tracked in §8 of `05-research-deep-dive-2026-11-16.md`; fix `detectCalibrationSubdirs`/`--calib-root` logic if desired.
+
+## 20. OrionNebula quick comparison (2026-11-16, 16 lights)
+
+With `assets/OrionNebula/lights` (16 CR2), `--calib-root` resolved to `darks/`, `biases/`, `flats/` (lowercase) after code fix:
+- **Grid only** (`--dark --bias`, grid default): self-flat applied (fit RMS 0.11222, min 0.8737, max 1.0979, center/edge 1.1097, extrapolated, masked 4.8%, 2220/2542 cells valid). Approx `stacked_mean.jpg` luminance center/border (gamma-encoded): gamma ratio ~0.995, linear approx ~0.990.
+- **Real flat** (`--dark --flat --bias`, flat loaded): no self-flat; calibration applied. Approx `stacked_mean.jpg`: gamma ratio ~1.016, linear approx ~1.033.
+
+This is a rough, run-based comparison (separate outputs). A tighter ablation would apply the same calibration path and toggle only the self-flat source; real-flat validation remains “informal” until a dedicated dataset/protocol is used.
