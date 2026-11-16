@@ -208,6 +208,7 @@ type cliOptions struct {
 	CreateXISF         bool
 	HFRQuality         bool
 	Annotate           bool
+	Starless           bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -345,6 +346,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.CreateXISF, "xisf", false, "write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
+	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -840,6 +842,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --xisf             write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
+	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -3978,6 +3981,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Annotate {
 		add("--annotate")
 	}
+	if o.Starless {
+		add("--starless")
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4346,6 +4352,7 @@ type runOptions struct {
 	CreateXISF  bool
 	HFRQuality  bool
 	Annotate    bool
+	Starless    bool
 	PostCA      bool
 	PostColor   bool
 	PostFlatten bool
@@ -14904,6 +14911,7 @@ func runSelfTests() int {
 		{"pipeline post-only", testPipelinePostOnly},
 		{"plate solve post-only starless", testPlateSolvePostOnlyNoStars},
 		{"catalog annotation skip", testCatalogAnnotationSkip},
+		{"pipeline starless", testPipelineStarless},
 		{"remove stars basic", testRemoveStarsBasic},
 		{"remove stars empty", testRemoveStarsEmpty},
 		{"remove stars edge", testRemoveStarsEdge},
@@ -16172,6 +16180,51 @@ func testPipelineStackOnly() error {
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "TIFF")); err == nil {
 		return errors.New("TIFF folder should not exist without --tiff flag")
+	}
+	return nil
+}
+
+func testPipelineStarless() error {
+	dir, err := os.MkdirTemp("", "skystacker-starless-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	outDir := filepath.Join(dir, "0_skystacker_results")
+	os.MkdirAll(filepath.Join(outDir, "_work"), 0o755)
+	const w, h = 64, 64
+	pix := make([]float32, w*h*3)
+	for i := range pix {
+		pix[i] = 0.1
+	}
+	for dy := -2; dy <= 2; dy++ {
+		for dx := -2; dx <= 2; dx++ {
+			i := ((30+dy)*w + 32 + dx) * 3
+			pix[i], pix[i+1], pix[i+2] = 0.9, 0.9, 0.9
+		}
+	}
+	if err := writeFileAtomic(filepath.Join(outDir, "_work", "stacked_mean.f32raw"),
+		func(out io.Writer) error { return writeRawFloat32RGB(out, w, h, pix) }); err != nil {
+		return err
+	}
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, PostOnly: true, Starless: true, Workers: 2,
+		BGDegree: 2, StretchFactor: 10, SharpenAmount: 0.8, SharpenRadius: 1.5,
+		BgPercentile: 10, HDRBlendFactor: 1.0, DenoiseStrength: 1.0, DenoiseRadius: 3,
+	}); err != nil {
+		return fmt.Errorf("post-only starless: %w", err)
+	}
+	for _, name := range []string{
+		"_work/stacked_starless.f32raw", "_work/stacked_stars.f32raw",
+		"stacked_starless.jpg", "stacked_stars.jpg",
+	} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			return fmt.Errorf("missing %s: %w", name, err)
+		}
+	}
+	opts, err := parseArgs([]string{"--starless"})
+	if err != nil || !opts.Starless {
+		return fmt.Errorf("--starless parse: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -20971,7 +21024,38 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 
 	// Star removal (ALWAYS): replace detected stars with local background
 	logf("  post: star removal (sigma=%g, radius=%d)", opts.StarSigma, opts.StarRadius)
-	cur = removeStars(cur, opts.StarSigma, opts.StarRadius)
+	if opts.Starless {
+		beforeStars := &frame{Width: cur.Width, Height: cur.Height, Pix: append([]float32(nil), cur.Pix...)}
+		cur = removeStars(cur, opts.StarSigma, opts.StarRadius)
+		starLayer := &frame{Width: cur.Width, Height: cur.Height, Pix: make([]float32, len(cur.Pix))}
+		for i, v := range beforeStars.Pix {
+			d := v - cur.Pix[i]
+			if d < 0 {
+				d = 0
+			}
+			starLayer.Pix[i] = d
+		}
+		for _, out := range []struct {
+			name string
+			fr   *frame
+		}{
+			{"stacked_starless", cur},
+			{"stacked_stars", starLayer},
+		} {
+			rawPath := filepath.Join(outputDir, "_work", out.name+".f32raw")
+			if err := writeFileAtomic(rawPath, func(w io.Writer) error {
+				return writeRawFloat32RGB(w, out.fr.Width, out.fr.Height, out.fr.Pix)
+			}); err != nil {
+				logf("  WARNING: %s: %v", out.name, err)
+			}
+			jpgPath := filepath.Join(outputDir, out.name+".jpg")
+			if err := writePostPreview(outputDir, filepath.Base(jpgPath), out.fr); err != nil {
+				logf("  WARNING: %s preview: %v", out.name, err)
+			}
+		}
+	} else {
+		cur = removeStars(cur, opts.StarSigma, opts.StarRadius)
+	}
 	p = filepath.Join(outputDir, "post_step2_star_removed.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
 		logf("  WARNING: %v", err)
@@ -22169,6 +22253,7 @@ func main() {
 		CreateXISF:           opts.CreateXISF,
 		HFRQuality:           opts.HFRQuality,
 		Annotate:             opts.Annotate,
+		Starless:             opts.Starless,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

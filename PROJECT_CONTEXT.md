@@ -1631,3 +1631,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added asymmetric sigma clipping (`--sigma-clip-low`, `--sigma-clip-high`, 0 = symmetric); threaded through `reduceTilesStack`/`reduceTile` via optional params so all existing call sites keep symmetric behavior. `testSigmaClipAsymmetric`; selftests 192.
 
 - Added `--annotate`: offline catalog annotation projects cached Gaia stars through the stored plate solution (SIP applied via `wcsTanForward`), draws `stacked_annotated.jpg`, and writes unmatched detections to `anomalies.json` (8 px tolerance). `testCatalogAnnotationSkip`; selftests 193.
+
+- Added `--starless`: writes `_work/stacked_starless.f32raw`, `_work/stacked_stars.f32raw` and JPEG previews from the existing post-processing star-removal step (crude annulus-median baseline). `testPipelineStarless`; selftests 194.

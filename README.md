@@ -428,6 +428,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--self-flat-linear-srgb` | Experimental: apply grid self-flat in linear light via sRGB EOTF (approximation; off by default) | off |
 | `--hfr-quality` | Use median star HFR (`FWHM ≈ 1.995·HFR`) instead of blob size for advanced frame-quality weighting | `false` |
 | `--annotate` | Project cached Gaia stars through the plate solution into `stacked_annotated.jpg`; write unmatched detections to `anomalies.json` (offline) | `false` |
+| `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 
 ### Normalization
 
@@ -638,7 +639,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 193 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 194 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -677,7 +678,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 - **Drizzle & Bayer drizzle integration**: Per-input-pixel *drop* onto the output grid with the drizzle kernel (`pixfrac`, `scale`), a weight/coverage accumulator, and a final normalise. Replaces `resampleToReference` in the registered path; pairs with `--scale < 1` upsampling. Bayer drizzle recovers colour without conventional demosaicing first. Tests: `testDrizzleKernel`, `testDrizzleIdentity`.
 - **Multiscale background modelling**: Sample-based extraction, robust polynomial fitting that protects extended astronomical objects, and multiscale wavelet processing. Supersedes the current single 2nd-degree polynomial.
 - **PSF-based deconvolution**: Richardson–Lucy, Wiener filtering, and regularized deconvolution to recover fine detail lost to atmospheric seeing. Depends on PSF modelling (Tier 2).
-- **Star separation**: Generate a starless image plus an independent star layer for isolated nebular processing. The existing `removeStars` (annulus median) is the crude first step; real separation needs a proper star mask.
+- **Star separation**: `--starless` writes a starless image and a complementary star layer (original minus starless) as float32 and JPEG from the post-processing star-removal step; this is a crude annulus-median baseline, not a PSF-based separation.
 - **Advanced noise reduction**: Multiscale noise estimation and spatially adaptive denoising (the current guided filter + two-scale chroma pass is the baseline).
 - **Advanced photometric & colour calibration (PCC / SPCC)**: Use stellar spectral information from Gaia DR3 plus camera sensor response and filter transmission to derive true colour. Depends on plate solving (Tier 2) and the Gaia layer.
 - **Narrowband & advanced calibration**: Monochrome Hα / OIII / SII support with HOO / SHO / LRGB mappings, dark-frame scaling, and separate RGB channel normalization.
