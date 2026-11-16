@@ -175,7 +175,7 @@ Additional optional stages can be toggled via CLI flags: chromatic-aberration re
 
 ### Astrometric Plate Solving & Gaia DR3 Layer
 
-- **WCS solver (`--plate-solve`)**: Solves a TAN WCS astrometric solution after stacking using star pattern matching against Gaia DR3, writing `plate_solution.json` (including fitted SIP order-2 distortion coefficients). Supply `--plate-center RA,DEC` in decimal degrees or rely on the reference frame's FITS `RA`/`DEC` header keywords.
+- **WCS solver (`--plate-solve`)**: Solves a TAN WCS astrometric solution after stacking using star pattern matching against Gaia DR3, writing `plate_solution.json` (including fitted SIP order-2 distortion coefficients). Supply `--plate-center RA,DEC` in decimal degrees or rely on the reference frame's FITS `RA`/`DEC` header keywords. With `--post-only`, the solver runs on stars detected in the existing `_work/stacked_mean.f32raw` (requires `--plate-center`; no FITS header available).
 - **HEALPix & TAP client**: Implements the HEALPix nested scheme (`nside` power of 2 from `2` to `8192`, default `64` at ~0.84 deg² per tile) and queries ESA's Gaia TAP `/sync` endpoint with a 180 s per-attempt timeout, 5 s progress heartbeat, automatic retries (`2 s` / `4 s` backoff on 5xx/network errors), and 1 req/sec rate limiting.
 - **Persistent tile cache**: Since Gaia DR3 is a frozen catalogue, downloaded tiles are cached permanently in your OS user cache directory (`~/.cache/skystacker/gaia_cache/` on Linux, `~/Library/Caches/skystacker/gaia_cache/` on macOS), enabling offline operation with `--gaia-offline`.
 
@@ -514,7 +514,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `--plate-solve` | Run TAN WCS plate solve after stacking; writes `plate_solution.json` | `false` |
+| `--plate-solve` | Run TAN WCS plate solve after stacking or on the existing stack with `--post-only`; writes `plate_solution.json` | `false` |
 | `--plate-center RA,DEC` | Pointing seed in decimal degrees (falls back to FITS `RA`/`DEC`; blind mode scans only 3×3 `nside=64` around `(0,0)`) | — |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
 | `--gaia-cache-dir string` | Gaia HEALPix tile cache directory | OS user cache dir (`~/.cache/skystacker/gaia_cache`) |
@@ -632,7 +632,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 187 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 188 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -659,7 +659,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 
 - **FITS output**: `--fits` writes `stacked_sum.fits` (2880-byte header blocks, big-endian, `BITPIX=-32`, `NAXIS=3`). The reader already exists, so this is the easy half of interoperability. Test: `testFITSWriterRoundTrip`.
 - **Distortion correction (SIP)**: `fitSIPFromMatches` already exists and is tested (`testWCSSIP`); the missing piece is *applying* it. Add `wcsTanInverseSIP` (adds the polynomial terms after the linear CD projection) and a resampler path that uses it when a plate solution exists. Gate behind `--plate-solve` + `--use-sip` so it never fires on unsolved fields. Closes a `COMPARISON.md` gap. Test: `testSIPResampleRoundTrip`.
-- **Astrometric plate solving & WCS (completion)**: The data-access layer (HEALPix nested math, TAP client, per-tile JSON cache, `--test-gaia`) and solver (`solvePlate`, `fitWCSFromMatches`, `fitSIPFromMatches`) are committed and tested, with `plate_solution.json` written on `--plate-solve`. Remaining work: applying SIP to the resampler (above) and wiring the solver into `--post-only`. Reference: Astrometry.net / local Gaia catalogues. Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
+- **Astrometric plate solving & WCS (completion)**: The data-access layer (HEALPix nested math, TAP client, per-tile JSON cache, `--test-gaia`) and solver (`solvePlate`, `fitWCSFromMatches`, `fitSIPFromMatches`) are committed and tested, with `plate_solution.json` written on `--plate-solve`. Remaining work: applying SIP to the resampler (above). The solver is wired into `--post-only` (stars detected from the stored float32 stack). Reference: Astrometry.net / local Gaia catalogues. Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
 - **PSF modelling & HFR**: Gaussian and Moffat profile fits per star; Half Flux Radius; elliptical Gaussian fitting for tracking errors, tilt, or coma. Feeds the advanced frame-quality formula. Test: `testPSFFit` (synthetic Moffat, recover FWHM within tolerance).
 - **Frame quality weighting (advanced)**: Already partially applied (`computeAdvancedQuality`, `Q_i = w₁·SNR − w₂·FWHM − w₃·E − w₄·B`); remaining work is to consume PSF-derived FWHM/eccentricity instead of the current connected-component proxy.
 - **Adaptive rejection & maps (extended)**: Already partially applied (MAD sigma-clipping, per-pixel rejection/weight maps, coverage map); remaining work is asymmetric thresholds and richer per-pixel metadata.

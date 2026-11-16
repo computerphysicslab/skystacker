@@ -9,3 +9,4 @@
 - Added `--comet-ephem-strict-exif` to fail instead of falling back when a light lacks EXIF time; comet-target examples in README.
 - Documented SIP stacking-resampler limitation and a reproducible OrionNebula grid-vs-real-flat validation protocol.
 - Added `--bpm-auto` / `--bpm-auto-sigma` (bad-pixel map from master dark/bias) with `testBPMAuto`; self-tests 187.
+- Wired `--plate-solve` into `--post-only` (re-detect stars from the stored float32 stack); `testPlateSolvePostOnlyNoStars` added; self-tests 188.

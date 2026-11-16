@@ -1619,3 +1619,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--fits` writer (`stacked_sum.fits`, big-endian BITPIX=-32, NAXIS=3, 2880-byte blocks), verified with `testFITSWriterRoundTrip` and ImageMagick `identify` (3 planes). selftests 186; README/TECH/prompt/CHANGELOG updated.
 
 - Added `--bpm-auto` / `--bpm-auto-sigma`: builds a bad-pixel map from the master dark (or bias) via median + N*1.4826*MAD on a strided sample (mean-deviation fallback when MAD=0), flags full-frame outliers, merges with explicit `--bpm`. `testBPMAuto` added; selftests 187.
+
+- Wired `--plate-solve` into `--post-only`: re-detects stars from `_work/stacked_mean.f32raw` and writes `plate_solution.json` (no FITS header in post-only, so `--plate-center` is the practical seed). `testPlateSolvePostOnlyNoStars` added; selftests 188.

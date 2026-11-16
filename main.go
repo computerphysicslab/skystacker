@@ -298,7 +298,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.KeepCache, "keep-cache", false, "keep the star/transform cache after a successful run (default: remove it)")
 	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
-	fs.BoolVar(&o.PlateSolve, "plate-solve", false, "run TAN WCS plate solve after stacking (writes plate_solution.json)")
+	fs.BoolVar(&o.PlateSolve, "plate-solve", false, "run TAN WCS plate solve after stacking or in --post-only (writes plate_solution.json)")
 	fs.StringVar(&o.PlateTest, "test-plate", "", "one-shot plate solve on RA,DEC in decimal degrees: prints WCS, then exits")
 	fs.StringVar(&o.PlateCenter, "plate-center", "", "RA,DEC seed for plate solve in decimal degrees (falls back to the reference frame's FITS RA/DEC)")
 	fs.BoolVar(&o.WritePNG, "png", false, "write stacked_mean.png alongside the JPEGs")
@@ -817,7 +817,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
 	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
-	fmt.Fprintln(w, "  --plate-solve      run TAN WCS plate solve after stacking (writes plate_solution.json)")
+	fmt.Fprintln(w, "  --plate-solve      run TAN WCS plate solve after stacking, or on the existing stack with --post-only (writes plate_solution.json)")
 	fmt.Fprintln(w, "  --test-plate R,D   one-shot plate solve on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --plate-center R,D seed the plate solver with RA,DEC in decimal degrees")
 	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
@@ -7587,6 +7587,36 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return fmt.Errorf("--post-only: %s not found: %w", meanPath, err)
 		}
 		logf("Post-only mode: reading %s", meanPath)
+		if opts.PlateSolve {
+			iw, ih, pix, rerr := readRawFloat32RGB(meanPath)
+			if rerr != nil {
+				return fmt.Errorf("--post-only plate solve: read stack: %w", rerr)
+			}
+			stackFrame := &frame{Width: iw, Height: ih, Pix: pix}
+			stars := detectStars(stackFrame, 200)
+			logf("Post-only plate solve: %d stars from existing stack", len(stars))
+			if len(stars) < 3 {
+				logf("WARNING: plate solve skipped, only %d stars in stack", len(stars))
+			} else {
+				plateGaiaOffline = opts.GaiaOffline
+				seedRA, seedDec := 0.0, 0.0
+				if opts.PlateCenter != "" {
+					if r, d, perr := parseRADecArg(opts.PlateCenter, "--plate-center"); perr == nil {
+						seedRA, seedDec = r, d
+					}
+				}
+				sol, perr := solvePlate(stars, iw, ih, seedRA, seedDec, "", gaiaDefaultMirror)
+				if perr != nil {
+					logf("Post-only plate solve: FAILED (%v)", perr)
+				} else {
+					logf("Post-only plate solved: CRVAL=(%.6f, %.6f) RMS=%.2f arcsec N=%d",
+						sol.WCS.CRVAL1*180/math.Pi, sol.WCS.CRVAL2*180/math.Pi, sol.RMSArcsec, sol.NMatches)
+					if jerr := writeJSON(filepath.Join(outputDir, "plate_solution.json"), sol); jerr != nil {
+						logf("WARNING: could not write plate_solution.json: %v", jerr)
+					}
+				}
+			}
+		}
 		postOutputs, err := runPostProcessing(outputDir, opts)
 		if err != nil {
 			return fmt.Errorf("post-processing: %w", err)
@@ -14518,6 +14548,7 @@ func runSelfTests() int {
 		{"pipeline grid self-flat median stack-only", testPipelineGridSelfFlatMedianStackOnly},
 		{"pipeline grid self-flat sigma stack-only", testPipelineGridSelfFlatSigmaStackOnly},
 		{"pipeline post-only", testPipelinePostOnly},
+		{"plate solve post-only starless", testPlateSolvePostOnlyNoStars},
 		{"remove stars basic", testRemoveStarsBasic},
 		{"remove stars empty", testRemoveStarsEmpty},
 		{"remove stars edge", testRemoveStarsEdge},
@@ -15690,6 +15721,36 @@ func testPipelineStackOnly() error {
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "TIFF")); err == nil {
 		return errors.New("TIFF folder should not exist without --tiff flag")
+	}
+	return nil
+}
+
+func testPlateSolvePostOnlyNoStars() error {
+	dir, err := os.MkdirTemp("", "skystacker-postonly-plate-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	outDir := filepath.Join(dir, "0_skystacker_results")
+	os.MkdirAll(filepath.Join(outDir, "_work"), 0o755)
+	const w, h = 64, 64
+	pix := make([]float32, w*h*3)
+	for i := range pix {
+		pix[i] = 0.1
+	}
+	if err := writeFileAtomic(filepath.Join(outDir, "_work", "stacked_mean.f32raw"),
+		func(out io.Writer) error { return writeRawFloat32RGB(out, w, h, pix) }); err != nil {
+		return err
+	}
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, PostOnly: true, PlateSolve: true, Workers: 2,
+		BGDegree: 2, StretchFactor: 10, SharpenAmount: 0.8, SharpenRadius: 1.5,
+		BgPercentile: 10, HDRBlendFactor: 1.0, DenoiseStrength: 1.0, DenoiseRadius: 3,
+	}); err != nil {
+		return fmt.Errorf("post-only plate solve on starless stack: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "plate_solution.json")); err == nil {
+		return errors.New("unexpected plate_solution.json from a starless stack")
 	}
 	return nil
 }
