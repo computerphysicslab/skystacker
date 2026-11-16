@@ -12,3 +12,4 @@
 - Wired `--plate-solve` into `--post-only` (re-detect stars from the stored float32 stack); `testPlateSolvePostOnlyNoStars` added; self-tests 188.
 - Detected stars now carry a flux-weighted half-flux radius (HFR); `testStarHFR` added; self-tests 189.
 - Added `--xisf` writer (monolithic XISF 1.0, planar Float32) with `testXISFWrite`; self-tests 190.
+- Added `--hfr-quality` opt-in: median star HFR replaces blob size as FWHM proxy for frame quality; `testHFRQuality`; self-tests 191.

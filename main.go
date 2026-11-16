@@ -204,6 +204,7 @@ type cliOptions struct {
 	WriteBMP           bool
 	CreateFITS         bool
 	CreateXISF         bool
+	HFRQuality         bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -337,6 +338,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
 	fs.BoolVar(&o.CreateFITS, "fits", false, "write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fs.BoolVar(&o.CreateXISF, "xisf", false, "write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
+	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -825,6 +827,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
 	fmt.Fprintln(w, "  --fits             write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fmt.Fprintln(w, "  --xisf             write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
+	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -3951,6 +3954,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.CreateXISF {
 		add("--xisf")
 	}
+	if o.HFRQuality {
+		add("--hfr-quality")
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4315,6 +4321,7 @@ type runOptions struct {
 	CreateTIFF  bool
 	CreateFITS  bool
 	CreateXISF  bool
+	HFRQuality  bool
 	PostCA      bool
 	PostColor   bool
 	PostFlatten bool
@@ -5266,6 +5273,36 @@ func medianBlobSize(stars []star) float64 {
 	}
 	sort.Float64s(sizes)
 	return sizes[len(sizes)/2]
+}
+
+// medianHFR returns the median half-flux radius across detected stars.
+func medianHFR(stars []star) float64 {
+	if len(stars) == 0 {
+		return 0
+	}
+	vals := make([]float64, 0, len(stars))
+	for _, st := range stars {
+		if st.HFR > 0 {
+			vals = append(vals, st.HFR)
+		}
+	}
+	if len(vals) == 0 {
+		return 0
+	}
+	sort.Float64s(vals)
+	return vals[len(vals)/2]
+}
+
+// qualityFWHM returns the FWHM proxy used by computeAdvancedQuality. The
+// default is the connected-component blob size; with --hfr-quality the
+// flux-weighted HFR is converted to FWHM (Gaussian: FWHM ≈ 1.995*HFR).
+func qualityFWHM(stars []star, blob float64, useHFR bool) float64 {
+	if useHFR {
+		if h := medianHFR(stars); h > 0 {
+			return 1.995 * h
+		}
+	}
+	return blob
 }
 
 // estimateFrameBgNoise returns the MAD-based background noise sigma of the
@@ -8542,7 +8579,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			stats := frameImageStats{
 				StarCount: len(starLists[i]),
 				SNR:       computeFrameSNR(starLists[i], c.bgNoise),
-				FWHM:      c.medianBlob,
+				FWHM:      qualityFWHM(starLists[i], c.medianBlob, opts.HFRQuality),
 				Ecc:       c.medianEcc,
 				BgNoise:   c.bgNoise,
 			}
@@ -8558,7 +8595,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				stats := frameImageStats{
 					StarCount: len(starLists[i]),
 					SNR:       computeFrameSNR(starLists[i], c.bgNoise),
-					FWHM:      c.medianBlob,
+					FWHM:      qualityFWHM(starLists[i], c.medianBlob, opts.HFRQuality),
 					Ecc:       c.medianEcc,
 					BgNoise:   c.bgNoise,
 				}
@@ -8929,7 +8966,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			td.IntrinsicQ = computeAdvancedQuality(frameImageStats{
 				StarCount: td.Stars,
 				SNR:       computeFrameSNR(starLists[i], td.BgSigma),
-				FWHM:      td.MedianBlob,
+				FWHM:      qualityFWHM(starLists[i], td.MedianBlob, opts.HFRQuality),
 				Ecc:       accepted[i].medianEcc,
 				BgNoise:   td.BgSigma,
 			})
@@ -14662,6 +14699,7 @@ func runSelfTests() int {
 		{"similarity inverse", testSimilarityInverse},
 		{"star detection synthetic", testStarDetectionSynthetic},
 		{"star HFR", testStarHFR},
+		{"hfr quality flag", testHFRQuality},
 		{"star registration synthetic", testStarRegistrationSynthetic},
 		{"bilinear sampling", testBilinearSample},
 		{"resample identity", testResampleIdentity},
@@ -15267,6 +15305,24 @@ func testSimilarityInverse() error {
 	back := inv.apply(q)
 	if math.Abs(back.X-p.X) > 1e-9 || math.Abs(back.Y-p.Y) > 1e-9 {
 		return fmt.Errorf("inverse roundtrip: %v -> %v -> %v", p, q, back)
+	}
+	return nil
+}
+
+func testHFRQuality() error {
+	stars := []star{{HFR: 2.5}, {HFR: 3.0}, {HFR: 3.5}}
+	if got := medianHFR(stars); math.Abs(got-3.0) > 1e-9 {
+		return fmt.Errorf("median HFR %g", got)
+	}
+	if got := qualityFWHM(stars, 9, false); got != 9 {
+		return fmt.Errorf("default FWHM %g", got)
+	}
+	if got := qualityFWHM(stars, 9, true); math.Abs(got-1.995*3.0) > 1e-6 {
+		return fmt.Errorf("HFR FWHM %g", got)
+	}
+	opts, err := parseArgs([]string{"--hfr-quality"})
+	if err != nil || !opts.HFRQuality {
+		return fmt.Errorf("--hfr-quality parse: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -21899,6 +21955,7 @@ func main() {
 		CreateTIFF:           opts.CreateTIFF,
 		CreateFITS:           opts.CreateFITS,
 		CreateXISF:           opts.CreateXISF,
+		HFRQuality:           opts.HFRQuality,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

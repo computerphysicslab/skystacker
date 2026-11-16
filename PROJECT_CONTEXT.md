@@ -1625,3 +1625,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added flux-weighted half-flux radius (HFR) to detected stars (`starHFR`, `testStarHFR`), a primitive for future PSF-based quality scoring. selftests 189.
 
 - Added `--xisf`: minimal monolithic XISF 1.0 writer (`XISF0100`, XML Metadata, one RGB Float32 Image with planar attached block, no compression) verified by `testXISFWrite`. selftests 190.
+
+- Added `--hfr-quality` (opt-in): advanced frame-quality FWHM proxy uses median star HFR (`1.995*HFR`) instead of connected-component blob size. `testHFRQuality`; selftests 191.
