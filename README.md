@@ -384,7 +384,7 @@ The reference image is star-matched automatically; the light frames are warped i
 2026-01-01T00:30:00Z 83.805 22.012
 ```
 
-Comet-aligned outputs are written as `stacked_comet.f32raw`/`stacked_comet.jpg` when enabled (if EXIF `DateTimeOriginal` is missing for a frame, reference time is used with a warning).
+Comet-aligned outputs are written as `stacked_comet.f32raw`/`stacked_comet.jpg` when enabled (if EXIF `DateTimeOriginal` is missing for a frame, reference time is used with a warning unless `--comet-ephem-strict-exif` is set, in which case the run fails).
 
 ---
 
