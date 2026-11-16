@@ -11,3 +11,4 @@
 - Added `--bpm-auto` / `--bpm-auto-sigma` (bad-pixel map from master dark/bias) with `testBPMAuto`; self-tests 187.
 - Wired `--plate-solve` into `--post-only` (re-detect stars from the stored float32 stack); `testPlateSolvePostOnlyNoStars` added; self-tests 188.
 - Detected stars now carry a flux-weighted half-flux radius (HFR); `testStarHFR` added; self-tests 189.
+- Added `--xisf` writer (monolithic XISF 1.0, planar Float32) with `testXISFWrite`; self-tests 190.

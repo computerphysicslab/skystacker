@@ -203,6 +203,7 @@ type cliOptions struct {
 	WritePNG           bool
 	WriteBMP           bool
 	CreateFITS         bool
+	CreateXISF         bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -335,6 +336,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.BPMAutoSigma, "bpm-auto-sigma", 5.0, "sigma threshold for --bpm-auto (default 5.0)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
 	fs.BoolVar(&o.CreateFITS, "fits", false, "write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
+	fs.BoolVar(&o.CreateXISF, "xisf", false, "write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -822,6 +824,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --plate-center R,D seed the plate solver with RA,DEC in decimal degrees")
 	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
 	fmt.Fprintln(w, "  --fits             write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
+	fmt.Fprintln(w, "  --xisf             write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -3041,6 +3044,82 @@ func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor 
 	return nil
 }
 
+// writeFloat32RGBXISF writes a minimal monolithic XISF 1.0 file: the
+// 16-byte XISF0100 preamble, an XML header with the mandatory Metadata
+// properties and one RGB Float32 Image, and a single attached planar data
+// block of little-endian float32 samples (default byte order/codec).
+func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor float32) error {
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("xisf: invalid dimensions %dx%d", width, height)
+	}
+	n := width * height * 3
+	if len(pix) != n {
+		return fmt.Errorf("xisf: pixel buffer length %d does not match %dx%dx3 = %d", len(pix), width, height, n)
+	}
+	if divisor == 0 {
+		return errors.New("xisf: divisor must be non-zero")
+	}
+	dataLen := n * 4
+	xmlBody := fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"+
+		"<xisf version=\"1.0\" xmlns=\"http://www.pixinsight.com/xisf\" "+
+		"xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "+
+		"xsi:schemaLocation=\"http://www.pixinsight.com/xisf http://pixinsight.com/xisf/xisf-1.0.xsd\">\n"+
+		" <Metadata>\n"+
+		"  <Property id=\"XISF:CreationTime\" type=\"TimePoint\" value=\"%s\" />\n"+
+		"  <Property id=\"XISF:CreatorApplication\" type=\"String\">SkyStacker %s</Property>\n"+
+		" </Metadata>\n"+
+		" <Image id=\"StackedSum\" geometry=\"%d:%d:3\" sampleFormat=\"Float32\" bounds=\"0:1\" "+
+		"colorSpace=\"RGB\" pixelStorage=\"Planar\" location=\"attachment:{POS}:%d\" />\n"+
+		"</xisf>\n", time.Now().UTC().Format(time.RFC3339), version, width, height, dataLen)
+	xmlBody = strings.Replace(xmlBody, "{POS}", "0000000000", 1)
+	header := []byte(xmlBody)
+	pos := 16 + len(header)
+	if pad := (4 - pos%4) % 4; pad != 0 {
+		pos += pad
+	}
+	xmlBody = strings.Replace(xmlBody, "0000000000", fmt.Sprintf("%d", pos), 1)
+	header = []byte(xmlBody)
+	if _, err := w.Write([]byte("XISF0100")); err != nil {
+		return err
+	}
+	var hdrLen [4]byte
+	binary.LittleEndian.PutUint32(hdrLen[:], uint32(len(header)))
+	if _, err := w.Write(hdrLen[:]); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte{0, 0, 0, 0}); err != nil {
+		return err
+	}
+	if _, err := w.Write(header); err != nil {
+		return err
+	}
+	if pad := pos - (16 + len(header)); pad > 0 {
+		if _, err := w.Write(make([]byte, pad)); err != nil {
+			return err
+		}
+	}
+	const bufFloats = 4096
+	scratch := make([]byte, bufFloats*4)
+	inv := float32(1.0) / divisor
+	for plane := 0; plane < 3; plane++ {
+		base := plane * width * height
+		for i := 0; i < width*height; {
+			count := width*height - i
+			if count > bufFloats {
+				count = bufFloats
+			}
+			for j := 0; j < count; j++ {
+				binary.LittleEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[base+i+j]*inv))
+			}
+			if _, err := w.Write(scratch[:count*4]); err != nil {
+				return err
+			}
+			i += count
+		}
+	}
+	return nil
+}
+
 func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -3869,6 +3948,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.CreateFITS {
 		add("--fits")
 	}
+	if o.CreateXISF {
+		add("--xisf")
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4232,6 +4314,7 @@ type runOptions struct {
 
 	CreateTIFF  bool
 	CreateFITS  bool
+	CreateXISF  bool
 	PostCA      bool
 	PostColor   bool
 	PostFlatten bool
@@ -9144,6 +9227,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	sumTiff := filepath.Join(tiffDir, "stacked_sum.tif")
 	sumFits := filepath.Join(outputDir, "stacked_sum.fits")
+	sumXisf := filepath.Join(outputDir, "stacked_sum.xisf")
 	sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
 	meanWorkPath := filepath.Join(workDir, "stacked_mean.f32raw")
 	meanJPG := filepath.Join(outputDir, "stacked_mean.jpg")
@@ -9208,6 +9292,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor)
 			}); err != nil {
 				return fmt.Errorf("write sum fits: %w", err)
+			}
+		}
+		if opts.CreateXISF {
+			logf("Writing registered sum XISF")
+			if err := writeFileAtomic(sumXisf, func(w io.Writer) error {
+				return writeFloat32RGBXISF(w, outW, outH, sumPix, sumDivisor)
+			}); err != nil {
+				return fmt.Errorf("write sum xisf: %w", err)
 			}
 		}
 		logf("Writing registered sum preview")
@@ -9336,6 +9428,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor)
 			}); err != nil {
 				return fmt.Errorf("write sum fits: %w", err)
+			}
+		}
+		if opts.CreateXISF {
+			logf("Writing sum XISF")
+			if err := writeFileAtomic(sumXisf, func(w io.Writer) error {
+				return writeFloat32RGBXISF(w, outW, outH, sumPix, sumDivisor)
+			}); err != nil {
+				return fmt.Errorf("write sum xisf: %w", err)
 			}
 		}
 		logf("Writing sum preview")
@@ -14551,6 +14651,7 @@ func runSelfTests() int {
 		{"accumulator masked", testAccumulatorMasked},
 		{"TIFF round trip", testTIFFRoundTrip},
 		{"fits writer round-trip", testFITSWriterRoundTrip},
+		{"xisf writer round-trip", testXISFWrite},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
 		{"TIFF bad input", testTIFFBadInput},
@@ -14929,6 +15030,59 @@ func testFITSWriterRoundTrip() error {
 	for i := range pix {
 		if math.Abs(float64(got[i]-pix[i]/2)) > 1e-6 {
 			return fmt.Errorf("FITS pixel[%d] = %g, want %g", i, got[i], pix[i]/2)
+		}
+	}
+	return nil
+}
+
+func testXISFWrite() error {
+	const w, h = 3, 2
+	pix := []float32{0, 0.25, 0.5, 1, 0.5, 0.75, 0.125, 0.375, 0.625, 0.1, 0.2, 0.3, 0, 0, 1, 0.99, 0.5, 0.01}
+	var buf bytes.Buffer
+	if err := writeFloat32RGBXISF(&buf, w, h, pix, 2); err != nil {
+		return err
+	}
+	data := buf.Bytes()
+	if string(data[:8]) != "XISF0100" {
+		return errors.New("bad XISF signature")
+	}
+	hlen := int(binary.LittleEndian.Uint32(data[8:12]))
+	if hlen < 65 || 16+hlen > len(data) {
+		return fmt.Errorf("bad XISF header length %d", hlen)
+	}
+	hdr := string(data[16 : 16+hlen])
+	for _, want := range []string{"XISF:CreationTime", "XISF:CreatorApplication", "geometry=\"3:2:3\"", "sampleFormat=\"Float32\"", "bounds=\"0:1\"", "attachment:"} {
+		if !strings.Contains(hdr, want) {
+			return fmt.Errorf("XISF header missing %q", want)
+		}
+	}
+	loc := strings.Index(hdr, "attachment:")
+	if loc < 0 {
+		return errors.New("no attachment location")
+	}
+	end := strings.IndexByte(hdr[loc:], '"')
+	parts := strings.Split(strings.TrimPrefix(hdr[loc:loc+end], "attachment:"), ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("bad attachment location %q", hdr[loc:loc+end])
+	}
+	pos, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return err
+	}
+	size, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return err
+	}
+	if size != len(pix)*4 || pos < 16+hlen || pos+size > len(data) {
+		return fmt.Errorf("bad attachment pos=%d size=%d (file %d, header %d)", pos, size, len(data), hlen)
+	}
+	got := make([]float32, len(pix))
+	for i := range got {
+		got[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[pos+i*4:]))
+	}
+	for i := range pix {
+		if math.Abs(float64(got[i]-pix[i]/2)) > 1e-6 {
+			return fmt.Errorf("XISF pixel[%d] = %g, want %g", i, got[i], pix[i]/2)
 		}
 	}
 	return nil
@@ -21744,6 +21898,7 @@ func main() {
 		ReferenceCrop:        opts.ReferenceCrop,
 		CreateTIFF:           opts.CreateTIFF,
 		CreateFITS:           opts.CreateFITS,
+		CreateXISF:           opts.CreateXISF,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

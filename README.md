@@ -529,6 +529,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | --- | --- | --- |
 | `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
 | `--fits` | Write `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3) | `false` |
+| `--xisf` | Write `stacked_sum.xisf` (monolithic XISF 1.0, planar Float32) | `false` |
 | `--png` | Write lossless `stacked_mean.png` alongside JPEGs (same gamma `0.5` LUT) | `false` |
 | `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
 | `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query diagnostic; prints `nside`, `ipix`, first 5 stars, and exits | — |
@@ -554,6 +555,7 @@ By default, SkyStacker writes all outputs into `<input>/0_skystacker_results/` (
 ├── TIFF/
 │   └── *.tif                                  # Uncompressed little-endian RGB IEEE float32 single-strip TIFFs
 ├── stacked_sum.fits                           # Optional big-endian float32 FITS sum, BITPIX=-32, NAXIS=3 (--fits)
+├── stacked_sum.xisf                           # Optional monolithic XISF 1.0 sum, planar Float32 (--xisf)
 ├── stacked_mean.jpg                           # 8-bit gamma-0.5 display preview (plus post-processed & weighted mix JPEGs)
 ├── stacked_mean.png                           # Optional lossless gamma-0.5 PNG (--png)
 ├── stacked_mean.bmp                           # Optional uncompressed 24-bit BMP (--bmp)
@@ -632,7 +634,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 189 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 190 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -667,7 +669,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 ### Tier 3 — Large, multi-day (`L`)
 
 - **Astrometric catalog annotation & unassociated-source (anomaly) flagging**: Consume `plate_solution.json` (WCS + optional SIP) during stacking or `--post-only` to project reference catalog entries (Gaia DR3 plus bundled/cached NGC/IC, PGC, Messier, and HD tables) into image pixel coordinates and emit an annotated overlay (`stacked_annotated.jpg` / `.png`) with scaled elliptical apertures, leader lines, and morphological/photometric labels. Cross-match blind detections against the projected catalog within an angular tolerance radius to highlight uncatalogued sources or photometric outliers (transients, minor planets, high-proper-motion objects, or unclipped artifacts) with distinct anomaly reticles and emit an `anomalies.json` manifest. Depends on astrometric plate solving (Tier 2). Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`.
-- **XISF output**: Block-structured container with an XML header and optional compression. A minimal writer (no compression, `Float32` sample format, one image block) is ~200 lines. Lower priority than FITS — most tools read FITS. Test: `testXISFWrite`.
+- **XISF output**: `--xisf` writes a minimal monolithic XISF 1.0 unit (`XISF0100` preamble, XML header with Metadata, one RGB `Float32` Image, one attached planar data block, no compression). Test: `testXISFWrite`.
 - **Drizzle & Bayer drizzle integration**: Per-input-pixel *drop* onto the output grid with the drizzle kernel (`pixfrac`, `scale`), a weight/coverage accumulator, and a final normalise. Replaces `resampleToReference` in the registered path; pairs with `--scale < 1` upsampling. Bayer drizzle recovers colour without conventional demosaicing first. Tests: `testDrizzleKernel`, `testDrizzleIdentity`.
 - **Multiscale background modelling**: Sample-based extraction, robust polynomial fitting that protects extended astronomical objects, and multiscale wavelet processing. Supersedes the current single 2nd-degree polynomial.
 - **PSF-based deconvolution**: Richardson–Lucy, Wiener filtering, and regularized deconvolution to recover fine detail lost to atmospheric seeing. Depends on PSF modelling (Tier 2).
@@ -696,7 +698,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 | **Distribution & Runtime** | Single cross-platform Go binary (MIT License), CLI-only, zero external runtime dependencies (aside from optional `dcraw`/`ImageMagick` for RAW decoding) |
 | **Core Stacking & Calibration** | Dark/Flat/Bias + synthetic self-flat; Mean/Median/Quality-weighted Sigma clipping; global & local per-tile normalization; end-to-end `float32` |
 | **Built-in Post-Processing** | 8-step pipeline (polynomial background extraction, star removal, STF auto-stretch, guided + chroma denoise, curves, HDR blend, weighted mixes, diffraction spikes) |
-| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no PSF deconvolution, no GPU acceleration. Comet tracking is pixel-mode only. SER input exists; XISF does not. SIP distortion is fitted/stored rather than applied during resampling |
+| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no PSF deconvolution, no GPU acceleration. Comet tracking is pixel-mode only. SER/XISF/FITS output exist. SIP distortion is fitted/stored rather than applied during resampling |
 
 See [COMPARISON.md](COMPARISON.md) for a detailed matrix comparing SkyStacker against DeepSkyStacker, Siril, Astro Pixel Processor, PixInsight, Sequator, ASTAP, IRIS, Nebulosity, MaxIm DL, AstroImageJ, Starry Landscape Stacker, and AutoStakkert!.
 

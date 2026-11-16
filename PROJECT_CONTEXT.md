@@ -1623,3 +1623,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Wired `--plate-solve` into `--post-only`: re-detects stars from `_work/stacked_mean.f32raw` and writes `plate_solution.json` (no FITS header in post-only, so `--plate-center` is the practical seed). `testPlateSolvePostOnlyNoStars` added; selftests 188.
 
 - Added flux-weighted half-flux radius (HFR) to detected stars (`starHFR`, `testStarHFR`), a primitive for future PSF-based quality scoring. selftests 189.
+
+- Added `--xisf`: minimal monolithic XISF 1.0 writer (`XISF0100`, XML Metadata, one RGB Float32 Image with planar attached block, no compression) verified by `testXISFWrite`. selftests 190.
