@@ -192,3 +192,7 @@ See `../05-research-deep-dive-2026-11-16.md` (pillars B/C). Key items for this r
 - Gaia Archive v3.15 / DR4 timing and client constraints (concurrency, queue, timeouts, 50k row limit, renamed DataLink products) if any TAP/DataLink client is added or audited.
 - Observatory automation patterns (ASCOM Alpaca, REST/WebSocket telemetry) — potential future metadata ingestion before FITS header sealing (not implemented).
 - IVOA ProvenanceDM (ActivityDescription/ActivityConfiguration) — recommended for auditable runs (version, flags, catalogue/cache versions). Current run reports are text/JSON-adjacent in practice; provenance emission is a future enhancement.
+
+### Deep dive addendum (2026-11-16)
+
+See `../05-research-deep-dive-2026-11-16.md` §9 (ASTAP `-analyse`/`-focus` encoding, 32-bit HFD ceiling, catalogue cascade notes including G05), §10 (temporal rejection memory + Swiss Tables/Go), §12 (Gaia v3.15/DR4, Alpaca/REST telemetry patterns, ProvenanceDM).

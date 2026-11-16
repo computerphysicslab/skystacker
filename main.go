@@ -200,13 +200,20 @@ type cliOptions struct {
 	WritePNG         bool
 	WriteBMP         bool
 	Limit            int
-	CometCenter      string
-	CometRate        string
-	CometOn          bool
-	CometX           float64
-	CometY           float64
-	CometRateX       float64
-	CometRateY       float64
+	CometCenter        string
+	CometRate          string
+	CometRADec         string
+	CometSkyRateArcsec string
+	CometOn            bool
+	CometRADECRad      bool
+	CometX             float64
+	CometY             float64
+	CometRatePxX       float64
+	CometRatePxY       float64
+	CometRateSkyDXRad  float64
+	CometRateSkyDYRad  float64
+	CometRA            float64
+	CometDec           float64
 }
 
 func parseArgs(args []string) (*cliOptions, error) {
@@ -291,6 +298,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.IntVar(&o.Limit, "limit", 0, "process at most N discovered frames (0 = unlimited)")
 	fs.StringVar(&o.CometCenter, "comet-center", "", "comet position in the reference frame, X,Y pixels")
 	fs.StringVar(&o.CometRate, "comet-rate", "", "comet motion in reference pixels per second, dX,dY")
+	fs.StringVar(&o.CometRADec, "comet-radec", "", "comet RA,DEC seed in decimal degrees (requires --plate-solve)")
+	fs.StringVar(&o.CometSkyRateArcsec, "comet-sky-rate-arcsec", "", "comet sky rate in arcsec/sec: dRA, dDec (uses plate-solution scale; for RA the rate is interpreted as dRA*cosDec in arcsec/sec along the plate scale direction)")
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
@@ -464,6 +473,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.Limit < 0 {
 		return nil, fmt.Errorf("--limit must be >= 0, got %d", o.Limit)
 	}
+	if o.CometCenter != "" && o.CometRADec != "" {
+		return nil, errors.New("--comet-center and --comet-radec are mutually exclusive")
+	}
 	if o.CometCenter != "" {
 		x, y, err := parseFloatPair(o.CometCenter, "--comet-center")
 		if err != nil {
@@ -472,15 +484,39 @@ func parseArgs(args []string) (*cliOptions, error) {
 		o.CometOn = true
 		o.CometX, o.CometY = x, y
 	}
+	if o.CometRADec != "" {
+		x, y, err := parseFloatPair(o.CometRADec, "--comet-radec")
+		if err != nil {
+			return nil, err
+		}
+		o.CometOn = true
+		o.CometRADECRad = true
+		o.CometRA, o.CometDec = x*math.Pi/180, y*math.Pi/180
+	}
 	if o.CometRate != "" {
 		x, y, err := parseFloatPair(o.CometRate, "--comet-rate")
 		if err != nil {
 			return nil, err
 		}
-		o.CometRateX, o.CometRateY = x, y
+		o.CometRatePxX, o.CometRatePxY = x, y
+	}
+	if o.CometSkyRateArcsec != "" {
+		x, y, err := parseFloatPair(o.CometSkyRateArcsec, "--comet-sky-rate-arcsec")
+		if err != nil {
+			return nil, err
+		}
+		arcsecPerRad := 180.0 / math.Pi * 3600.0
+		o.CometRateSkyDXRad = x / arcsecPerRad
+		o.CometRateSkyDYRad = y / arcsecPerRad
+	}
+	if o.CometSkyRateArcsec != "" && !o.CometRADECRad {
+		return nil, errors.New("--comet-sky-rate-arcsec requires --comet-radec with --plate-solve")
 	}
 	if o.CometRate != "" && !o.CometOn {
 		return nil, errors.New("--comet-rate requires --comet-center X,Y")
+	}
+	if o.CometRADECRad && o.CometRate != "" {
+		return nil, errors.New("with --comet-radec use --comet-sky-rate-arcsec (arcsec/sec), not --comet-rate (px/sec)")
 	}
 	if o.ReferenceCrop != "" {
 		info, err := os.Stat(o.ReferenceCrop)
@@ -652,6 +688,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
 	fmt.Fprintln(w, "  --comet-center X,Y comet pixel in the reference frame")
 	fmt.Fprintln(w, "  --comet-rate dX,dY comet motion in reference pixels per second")
+	fmt.Fprintln(w, "  --comet-radec RA,DEC comet RA,DEC (decimal degrees); requires --plate-solve")
+	fmt.Fprintln(w, "  --comet-sky-rate-arcsec dRA,dDec comet motion in arcsec/sec along RA* and Dec")
 	fmt.Fprintln(w, "  --reference-crop P warp every light into the star-matched frame of image P (output size = P)")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
@@ -3434,10 +3472,15 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Limit > 0 {
 		add(fmt.Sprintf("--limit %d", o.Limit))
 	}
-	if o.CometOn {
+	if o.CometRADECRad {
+		add(fmt.Sprintf("--comet-radec %g,%g", o.CometRA*180/math.Pi, o.CometDec*180/math.Pi))
+		if o.CometRateSkyDXRad != 0 || o.CometRateSkyDYRad != 0 {
+			add(fmt.Sprintf("--comet-sky-rate-arcsec %g,%g", o.CometRateSkyDXRad*180/math.Pi*3600, o.CometRateSkyDYRad*180/math.Pi*3600))
+		}
+	} else if o.CometOn {
 		add(fmt.Sprintf("--comet-center %g,%g", o.CometX, o.CometY))
-		if o.CometRateX != 0 || o.CometRateY != 0 {
-			add(fmt.Sprintf("--comet-rate %g,%g", o.CometRateX, o.CometRateY))
+		if o.CometRatePxX != 0 || o.CometRatePxY != 0 {
+			add(fmt.Sprintf("--comet-rate %g,%g", o.CometRatePxX, o.CometRatePxY))
 		}
 	}
 	if o.Scale > 1 {
@@ -3902,12 +3945,17 @@ type runOptions struct {
 	// accumulates. 0 = unlimited (default). Applied after discoverFiles and
 	// before the per-frame decode loop, so a huge session can be sampled
 	// for a quick end-to-end smoke test without waiting for every sub.
-	Limit      int
-	CometOn    bool
-	CometX     float64
-	CometY     float64
-	CometRateX float64
-	CometRateY float64
+	Limit           int
+	CometOn         bool
+	CometX          float64
+	CometY          float64
+	CometRatePxX    float64
+	CometRatePxY    float64
+	CometRADECRad   bool
+	CometRA         float64
+	CometDec        float64
+	CometRateSkyDXRad float64
+	CometRateSkyDYRad float64
 }
 
 func isCR2Path(path string) bool {
@@ -8180,8 +8228,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CometOn {
 			cometAcc = newAccumulator(refW, refH)
 			cometValid = make([]int32, refW*refH)
-			logf("Comet stack: freezing pixel (%.1f, %.1f) at rate (%.4f, %.4f) px/s",
-				opts.CometX, opts.CometY, opts.CometRateX, opts.CometRateY)
+			if opts.CometRADECRad {
+				logf("Comet stack (RA/Dec): RA=%.6f° Dec=%.6f° rate (%.4f, %.4f) arcsec/s",
+					opts.CometRA*180/math.Pi, opts.CometDec*180/math.Pi,
+					opts.CometRateSkyDXRad*180/math.Pi*3600, opts.CometRateSkyDYRad*180/math.Pi*3600)
+			} else {
+				logf("Comet stack: freezing pixel (%.1f, %.1f) at rate (%.4f, %.4f) px/s",
+					opts.CometX, opts.CometY, opts.CometRatePxX, opts.CometRatePxY)
+			}
 		}
 		if opts.Method != "mean" || selfFlatActive {
 			spillDir2 = filepath.Join(outputDir, "_work", "_spill2")
@@ -8237,7 +8291,20 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 						dt = t.Sub(tRef).Seconds()
 					}
 				}
-				dx, dy := cometDelta(dt, opts.CometRateX, opts.CometRateY)
+				dx, dy := 0.0, 0.0
+				if opts.CometRADECRad {
+					if plateSolutionOut == nil {
+						return fmt.Errorf("comet RA/Dec mode requires a plate solution (run with --plate-solve)")
+					}
+					w := &plateSolutionOut.WCS
+					c0x, c0y := wcsTanForward(w, opts.CometRA, opts.CometDec)
+					cra := opts.CometRA + dt*opts.CometRateSkyDXRad
+					cdec := opts.CometDec + dt*opts.CometRateSkyDYRad
+					cxi, cyi := wcsTanForward(w, cra, cdec)
+					dx, dy = cxi-c0x, cyi-c0y
+				} else {
+					dx, dy = cometDelta(dt, opts.CometRatePxX, opts.CometRatePxY)
+				}
 				var cometFrame *frame
 				if transforms[i].aff != nil {
 					cometFrame = resampleToReferenceAffineShift(f, *transforms[i].aff, dx, dy, refW, refH, workers)
@@ -9081,7 +9148,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if cometRawPath != "" {
 		outputFiles = append(outputFiles, cometRawPath, cometJPGPath)
 		notes = append(notes, fmt.Sprintf("Comet stack: %d frames aligned so the reference comet pixel (%.1f, %.1f) stays fixed. Rate is (%.4f, %.4f) reference pixels per second from EXIF DateTimeOriginal. Stars trail in stacked_comet; the star stack is unchanged.",
-			cometFrames, opts.CometX, opts.CometY, opts.CometRateX, opts.CometRateY))
+			cometFrames, opts.CometX, opts.CometY, opts.CometRatePxX, opts.CometRatePxY))
 	}
 	rep := &processingReport{
 		Version:               version,
@@ -13661,11 +13728,17 @@ func testCometTranslation() error {
 	if err != nil {
 		return err
 	}
-	if !opts.CometOn || opts.CometX != 8 || opts.CometRateX != 1 {
+	if !opts.CometOn || opts.CometX != 8 || opts.CometRatePxX != 1 {
 		return fmt.Errorf("flags not parsed: %+v", opts)
 	}
 	if _, err := parseArgs([]string{"--comet-rate", "1,0"}); err == nil {
 		return errors.New("--comet-rate without --comet-center should fail")
+	}
+	if _, err := parseArgs([]string{"--comet-sky-rate-arcsec", "1,0"}); err == nil {
+		return errors.New("--comet-sky-rate-arcsec without --comet-radec should fail")
+	}
+	if _, err := parseArgs([]string{"--comet-radec", "1,2", "--comet-rate", "1,0"}); err == nil {
+		return errors.New("--comet-radec with --comet-rate should fail")
 	}
 	return nil
 }
@@ -20854,11 +20927,16 @@ func main() {
 		WritePNG:             opts.WritePNG,
 		WriteBMP:             opts.WriteBMP,
 		Limit:                opts.Limit,
-		CometOn:              opts.CometOn,
-		CometX:               opts.CometX,
-		CometY:               opts.CometY,
-		CometRateX:           opts.CometRateX,
-		CometRateY:           opts.CometRateY,
+		CometOn:          opts.CometOn,
+		CometX:           opts.CometX,
+		CometY:           opts.CometY,
+		CometRatePxX:     opts.CometRatePxX,
+		CometRatePxY:     opts.CometRatePxY,
+		CometRADECRad:    opts.CometRADECRad,
+		CometRA:          opts.CometRA,
+		CometDec:         opts.CometDec,
+		CometRateSkyDXRad: opts.CometRateSkyDXRad,
+		CometRateSkyDYRad: opts.CometRateSkyDYRad,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)

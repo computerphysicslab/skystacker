@@ -616,7 +616,7 @@ The following capabilities have been implemented through `0.6.0`:
 - **Gaia DR3 data-access layer & TAN WCS plate solving**: HEALPix nested geometry (verified against `healpy` up to `nside=256`; reference fixtures in `assets/testdata/healpix_reference.json`), ESA Gaia TAP client with 180 s timeout and 5 s heartbeat, persistent OS user cache (`gaia_cache/`), `--test-gaia RA,DEC` diagnostic, and `--plate-solve` writing `plate_solution.json`.
 - **Reference-frame crop**: `--reference-crop PATH` detects stars in the reference image, matches each light by triangle pattern, and warps it in memory into the reference pixel frame. The output is exactly the reference dimensions, including rotation and scale differences. A single light (`--limit 1`) yields one cropped frame. Test: `testReferenceCropAlignment`.
 - **SER video input**: `.ser` is discovered and expanded to one frame per `#frame=N`. `readSERHeader` / `decodeSERFrame` support 8/16-bit mono, Bayer-as-gray and RGB/BGR. Test: `testSERDecode`.
-- **Comet tracking (pixel mode)**: `--comet-center X,Y --comet-rate dX,dY` (reference pixels per second, timed by EXIF `DateTimeOriginal`). Writes `stacked_comet.f32raw` and `stacked_comet.jpg`. The star stack is unchanged. Test: `testCometTranslation`.
+- **Comet tracking**: pixel mode `--comet-center X,Y --comet-rate dX,dY` (reference pixels/sec, EXIF `DateTimeOriginal`). RA/Dec mode `--comet-radec RA,DEC --comet-sky-rate-arcsec dRA*,dDec` (decimal degrees, arcsec/sec; requires `--plate-solve` and a TAN WCS) projects the sky track into reference pixels per frame. Outputs `stacked_comet.f32raw`/`.jpg` when used; star stack unchanged. Test: `testCometTranslation`.
 - **Bad-pixel map**: `--bpm PATH` loads a FITS or `x,y` text map and marks those pixels invalid before stacking. Test: `testBPMMasksPixels`.
 
 ---
@@ -625,9 +625,8 @@ The following capabilities have been implemented through `0.6.0`:
 
 ### Tier 1 — Small, self-contained (`S`)
 
-Shipped items (SER input, pixel-mode comet stacking, `--bpm`) are listed under Recently Implemented. Still open:
+Shipped items (SER input, pixel/RA-Dec comet stacking, `--bpm`) are listed under Recently Implemented. Still open:
 
-- **Comet RA/Dec mode**: `--comet RA,DEC` plus a sky rate, using the plate solution and EXIF time. Pixel mode is already shipped.
 - **`--bpm-auto`**: build a bad-pixel map from a master dark (pixels `> Nσ` from the dark median). Loading a user map with `--bpm` is already shipped.
 
 ### Tier 2 — Medium, a day each (`M`)

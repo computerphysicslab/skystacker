@@ -160,3 +160,91 @@ Suggested additions (keep as research-driven backlog, not all for next session):
 - **Automation/provenance:** Alpaca/REST metadata ingest design doc; ProvenanceDM JSON/VOTable emission plan tied to run reports.
 - **Repo hygiene:** fix `--calib-root` / `detectCalibrationSubdirs` to accept common lowercase names (`lights`, `darks`, `flats`, `biases`) on Linux (observed with `assets/OrionNebula`).
 
+
+## 9. ASTAP CLI interoperability audit (deep dive, 2026-11-16)
+
+This section translates and extends the ASTAP interoperability notes from an internal audit (Spanish source) against `cli-integration-and-observatory-automation.md` expectations.
+
+### 9.1 `-analyse` / `%errorlevel%` encoding (Windows) — critical bug in draft docs
+
+Official ASTAP behaviour (per hnsky.org references in the audit): for example, `HFD 3.26` with `666` stars returns exit/errorlevel value **326000666**. The draft formula in some notes incorrectly encoded as `round(median HFD × 1,000,000) + stars detected` would give **3,260,666** and decoding via `trunc(%errorlevel%/1e8)/100` would yield **0.03** (wrong by ×100). The correct encoding is:
+
+- `errorlevel_real = round(median_HFD × 100) × 1_000_000 + stars_detected`
+- `median_HFD = trunc(errorlevel_real / 1_000_000) / 100`
+
+**32-bit signed integer ceiling:** with this packing, reserving 6 digits for star count, the maximum representable median HFD before INT32_MAX overflow is **21.46 px**. For heavily defocused recovery sessions, adapters should fall back to parsing stdout (`HFD_MEDIAN=... STARS=...` on Linux/macOS in practice) rather than relying only on `%errorlevel%`.
+
+### 9.2 `-focus` / focus routines
+
+Official ASTAP documents `-focus1`..`-focus8` (4–8 samples). A hyperbolic focus fit is done in the GUI/`-debug` path, not as a standalone `astap_cli` hyperbolic fit in the same way implied by some draft text. Do **not** assume the CLI returns a hyperbolic-fit result code; implement hyperbolic focusing natively if required or invoke the GUI debug path only if explicitly designed.
+
+### 9.3 Other ASTAP notes (verified intent)
+
+- Exit codes reported in practice include 1, 2, 16, 32, 33, 34 (context-dependent). On macOS Apple Silicon, code signing (`codesign`) matters for some distributions.
+- ASTAP Android integrations (OpenLiveStacker, Stellar Finder contexts) and **StarNet2** integration in ASTAP (noted around 2026-09) for comet star separation are relevant ecosystem notes.
+- `-ra` units: verify against installed CLI version (drafts mentioned hours decimal vs degrees inconsistency risk).
+- ARM64 “375%” performance claim: treat as developer-reported, not an independent benchmark.
+- Catalogue selection by **surface density per deg²** (not a single uniform mag limit). SkyStacker notes should mention **G05** in the automatic cascade context (e.g. W08 for very wide FOV, G05 bridge in mid ranges, D80/V50/D50/D20/D05 branches as per ASTAP docs) to avoid misleading tables.
+
+### 9.4 Recommended SkyStacker actions (ASTAP interop)
+
+- Fix any internal doc/examples showing the wrong `%errorlevel%` scale; add a unit test for the decoding formula if a Windows parser is added.
+- Prefer parsing textual output (`HFD_MEDIAN`, `STARS`) when available; clamp/guard HFD > 21.46 px in packed errorlevel handling.
+- Do not call `astap_cli` for hyperbolic autofocus in an automated pipeline unless a verified CLI path exists.
+
+
+## 10. Memory model, rejection, Swiss Tables (deep dive)
+
+### 10.1 Tile streaming vs temporal rejection (critical)
+
+- Calibration/alignment stages: tile-based streaming with `sync.Pool`-style reuse keeps working sets small (example figures from the audit: 1024×1024 tiles imply modest per-worker buffers; 512×512 smaller).
+- **Stage 5 (temporal outlier rejection)** must hold **N frames** worth of pixel values simultaneously for statistical rejection: if each worker buffers a full spatial tile across all N frames, memory explodes (e.g. ~6.25 GiB at N=100, ~18.75 GiB at N=300 for the example sensor class) vs a **64×64** sub-tile scheme giving ~75 MiB at N=300 with 16 workers in that model — a strong argument to **decouple input/alignment tile size from rejection sub-tiles** (e.g. 64×64 or 128×128 with concurrency limits).
+- Actionable: document this constraint in `TECHNICAL_SPEC.md` / implementation notes and consider a dedicated `sync.Pool` for temporal rejection buffers.
+
+### 10.2 Swiss Tables / Go runtime (update notes)
+
+- `dolthub/swiss` is archived; Go 1.24+ uses native Swiss Tables in `internal/runtime/maps` (8-slot groups conceptually in that design), and Go 1.26 removed the legacy bucket implementation/flag in practice. SkyStacker should **not** depend on `dolthub/swiss`; require **Go 1.24+** for builds that assume Swiss Tables.
+- SIMD width folklore (16-slot groups in some C++ designs) vs Go’s 8-slot groups: use portable assumptions; measure with `pprof` for real maps (e.g. quadrangle/index maps) rather than trusting generic memory-savings claims.
+
+
+## 11. Astrometry (TAN–SIP) and stacking maths (reference notes)
+
+### 11.1 TAN–SIP (FITS WCS)
+
+When polynomial distortion is modelled (CTYPE `RA---TAN-SIP` / `DEC--TAN-SIP`, Shupe et al. 2005, SIP v1.0): relative pixel `(u,v) = (x-CRPIX1, y-CRPIX2)`, direct polynomial terms applied to `(u,v)` to get `(U,V)` before linear CD matrix uses A/B up to orders A_ORDER/B_ORDER (2–9), with linear terms in CD:
+
+- \(U = u + \sum_{p+q\ge2}^{A\_ORDER} A_{p,q} u^p v^q\), \(V = v + \sum_{p+q\ge2}^{B\_ORDER} B_{p,q} u^p v^q\).
+
+Inverse (for resampling back to detector): coefficients **AP/BP** must include linear terms `(p+q==1)` for accurate inversion on large sensors; omitting them degrades corners.
+
+SkyStacker currently fits/stores SIP order-2 in plate solving output but does **not** apply SIP in the pixel-registration resampler (see `TECHNICAL_SPEC.md`, `PROJECT_CONTEXT.md`) — a design gap for full WCS-based stacking/resampling.
+
+### 11.2 Robust temporal rejection (practical notes)
+
+- Classical σ-clipping fails under masking when a single extreme (e.g. satellite trail) inflates mean/std (example from audit: sky ~100 ADU plus a 2450 ADU outlier gives large inflated σ; MAD-based σ_MAD = 1.4826·MAD is robust).
+- Common algorithms (names vary by tool): **percentile clipping** (very small stacks), **sigma/MAD/median sigma** (iterative), **Winsorized sigma clipping**, **linear fit clipping** (PixInsight lineage), **GESDT** for multiple outliers in large stacks — choose by N, sky gradients, and artifact density.
+
+### 11.3 Non-linear stretching (reference equations)
+
+- **MTF**: normalize to \([0,1]\) via `(original-shadows)/(highlights-shadows)=x_p`, then \(\text{MTF}(x_p)=\frac{(m-1)x_p}{(2m-1)x_p-m}\), \(m\in(0,1)\).
+- **Arcsinh**: stretch by `asinh(rgb_original·stretch)/(rgb_original·asinh(stretch))` with blackpoint; RGB blend clipping may be applied to avoid channel overflow (clamp factor k).
+- **GHS (Generalized Hyperbolic Stretch)**: uses D = e^Stretch−1 (or related parameters), midpoint SP, shadow/highlight protection LP/HP, branch functions T1–T4 with C¹ continuity and normalization NormT; inverse forms exist for round-trip editing in tools that support it. Exact parameter mapping should be validated against Siril/GHS docs when re-implementing.
+
+
+## 12. Gaia v3.15, DR4 window, observatory telemetry, ProvenanceDM (horizon 2026-11)
+
+### 12.1 Gaia ESA Archive v3.15 (operational notes from audit)
+
+- Deployed **14 October 2026** in that account: backend migration (Greenplum → EDB WarehousePG described), partitioning of `gaiadr3.gaia_source`, IVOA UDFs mentioned (`gaia_healpix_index`, `ivo_healpix_index`, `ivo_healpix_center`), and **incompatible DataLink renames**: “RAW”/“INDIVIDUAL” → **DATAMODEL_GAIA** / **DATAMODEL_STANDARD** (and “COMBINED” removed earlier). Any SkyStacker/TAP client must be updated accordingly.
+- **Archive shutdown:** **25 November 2026 12:00 CET** to **2 December 2026 12:00 CET** (DR4 publication window stated). Offline caches (ASTAP catalogues, local Gaia extracts) are essential for automation during blackout and spikes.
+- **Quotas (summary):** anonymous sync 60s, async 1 min, 50k rows returned; authenticated 60s sync, 120 min async, unlimited rows in that description; DataLink max 50 sources anonymous vs 5000 authenticated; global concurrency ~100 anonymous pool, 5 parallel jobs authenticated, queue 50 then reject. Dense cone searches on the Galactic plane will truncate anonymously.
+
+### 12.2 Observatory telemetry before FITS sealing (ASCOM Alpaca / REST/WebSocket)
+
+- ASCOM Alpaca patterns: REST/JSON (often port 11111), binary `imagebytes` for cameras in some cases, UDP discovery (32227). Modern stacks combine Alpaca REST with WebSocket streams and PHD2 JSON guiding for weather/safety/dome/focus telemetry.
+- Recommended pattern for a **static CGO_ENABLED=0** SkyStacker: **do not** embed hardware control in the binary; use an external daemon/sidecar that polls REST/WebSocket and writes a **declarative mapping file** (CSV/JSON) of Alpaca device properties → FITS keywords (e.g. `TELESCOP`, coordinates, environmental telemetry) before sealing. Serve JPEG previews in memory over HTTP to avoid unnecessary temp files in live sessions (design note).
+
+### 12.3 IVOA ProvenanceDM
+
+- Use **ActivityDescription** / **Parameter** (typed `valueType`) for static pipeline stage definitions; each run is an **Activity** linked via **WasConfiguredBy** to an **ActivityConfiguration** holding config files and effective values (binary version, plate-solve tolerances, tile/rejection params, stretch params, and exact catalogue/cache version e.g. Gaia DR3 vs DR4, ASTAP D50/V50). Export a structured provenance graph under `skystacker_results/` (XML/JSON/VOTable per IVOA conventions as feasible) for auditability without changing the Go core.
+

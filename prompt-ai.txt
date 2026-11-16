@@ -48,7 +48,7 @@ Current product state (do not re-implement)
   pedestal and grid self-flat. Darks are not fabricated. --no-self-flat and
   --black-level off opt out.
 - SER input (.ser expanded to #frame=N) and pixel-mode comet stacking
-  (--comet-center, --comet-rate) are implemented. RA/Dec comet mode is not.
+  (--comet-center/--comet-rate, and --comet-radec/--comet-sky-rate-arcsec with --plate-solve) are implemented.
 - --reference-crop PATH warps lights into an external reference frame by
   star-pattern matching. Output size equals the reference. Single-frame
   crop works with --limit 1. Do not revert to the old "output must match

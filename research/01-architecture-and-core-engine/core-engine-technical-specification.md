@@ -593,3 +593,9 @@ debayer, calibration masters, self-flat, SER input, pixel-mode comet stack,
 Gaia/HEALPix, TAN WCS. Not shipped: compressed FITS, XISF, drizzle, live
 API, SIP applied in the resampler. See `TECHNICAL_SPEC.md` for the short
 current spec.
+
+---
+
+## 2026-11-16 deep dive addendum (SkyStacker)
+
+See `../05-research-deep-dive-2026-11-16.md` §10–§11: tile-vs-temporal rejection memory budgets (recommend 64×64 sub-tiles for Stage 5 at deep stacks), Swiss Tables/Go 1.24+ notes (no `dolthub/swiss`), TAN–SIP direct/inverse polynomials and need for AP/BP linear terms in resampling, robust rejection algorithms (MAD/Winsorized/linear-fit/GESDT), and non-linear stretch math (MTF, Arcsinh, GHS branch forms) for documentation alignment. Also note SIP is fitted/stored but not applied in the current pixel-registration resampler.
