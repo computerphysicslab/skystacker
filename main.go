@@ -10054,6 +10054,7 @@ type wcsTan struct {
 	CRVAL1, CRVAL2 float64
 	CRPIX1, CRPIX2 float64
 	CD             [2][2]float64
+	SIP            []float64
 }
 
 // plateSolution is the output of a successful plate solve.
@@ -10095,6 +10096,12 @@ func wcsTanForward(w *wcsTan, ra, dec float64) (x, y float64) {
 	invDet := 1.0 / det
 	u := (w.CD[1][1]*xi - w.CD[0][1]*eta) * invDet
 	v := (-w.CD[1][0]*xi + w.CD[0][0]*eta) * invDet
+	if len(w.SIP) >= 6 {
+		fu := w.SIP[0]*u*u + w.SIP[1]*u*v + w.SIP[2]*v*v
+		fv := w.SIP[3]*u*u + w.SIP[4]*u*v + w.SIP[5]*v*v
+		u += fu
+		v += fv
+	}
 	return w.CRPIX1 + u, w.CRPIX2 + v
 }
 
@@ -10108,6 +10115,47 @@ func wcsTanInverse(w *wcsTan, x, y float64) (ra, dec float64) {
 	}
 	u := x - w.CRPIX1
 	v := y - w.CRPIX2
+	xi := w.CD[0][0]*u + w.CD[0][1]*v
+	eta := w.CD[1][0]*u + w.CD[1][1]*v
+	rho := math.Hypot(xi, eta)
+	sd0 := math.Sin(w.CRVAL2)
+	cd0 := math.Cos(w.CRVAL2)
+	if rho < 1e-15 {
+		return w.CRVAL1, w.CRVAL2
+	}
+	sinc := rho / math.Sqrt(1.0+rho*rho)
+	cosc := 1.0 / math.Sqrt(1.0+rho*rho)
+	dec = math.Asin(sd0*cosc + eta*sinc*cd0/rho)
+	ra = w.CRVAL1 + math.Atan2(xi*sinc, rho*cd0*cosc-eta*sd0*sinc)
+	return ra, dec
+}
+
+// wcsTanInverseSIP inverts SIP (order 2) distortion if present: iteratively
+// refines (u,v) offsets from observed (x-CRPIX, y-CRPIX) by removing the
+// SIP polynomial evaluated at the current estimate, then inverts the TAN
+// projection. If no SIP is stored, behaves like wcsTanInverse.
+func wcsTanInverseSIP(w *wcsTan, x, y float64) (ra, dec float64) {
+	if len(w.SIP) < 6 {
+		return wcsTanInverse(w, x, y)
+	}
+	up := x - w.CRPIX1
+	vp := y - w.CRPIX2
+	u, v := up, vp
+	for iter := 0; iter < 12; iter++ {
+		fu := w.SIP[0]*u*u + w.SIP[1]*u*v + w.SIP[2]*v*v
+		fv := w.SIP[3]*u*u + w.SIP[4]*u*v + w.SIP[5]*v*v
+		un := up - fu
+		vn := vp - fv
+		if math.Abs(un-u) < 1e-10 && math.Abs(vn-v) < 1e-10 {
+			u, v = un, vn
+			break
+		}
+		u, v = un, vn
+	}
+	det := w.CD[0][0]*w.CD[1][1] - w.CD[0][1]*w.CD[1][0]
+	if det == 0 {
+		return w.CRVAL1, w.CRVAL2
+	}
 	xi := w.CD[0][0]*u + w.CD[0][1]*v
 	eta := w.CD[1][0]*u + w.CD[1][1]*v
 	rho := math.Hypot(xi, eta)
@@ -11663,6 +11711,17 @@ func testWCSSIP() error {
 	}
 	if len(sipFit) != 6 {
 		return fmt.Errorf("SIP coeffs = %d, want 6", len(sipFit))
+	}
+	// test forward+inverse with SIP
+	w2 := *w
+	w2.SIP = sipFit
+	x, y := wcsTanForward(&w2, gaiaStars[0].RA, gaiaStars[0].Dec)
+	ra2, dec2 := wcsTanInverseSIP(&w2, x, y)
+	if math.Abs((ra2-gaiaStars[0].RA)*math.Cos(gaiaStars[0].Dec)*180/math.Pi*3600) > 0.05 ||
+		math.Abs((dec2-gaiaStars[0].Dec)*180/math.Pi*3600) > 0.05 {
+		return fmt.Errorf("sip roundtrip arcsec too large: %.3f %.3f",
+			(ra2-gaiaStars[0].RA)*math.Cos(gaiaStars[0].Dec)*180/math.Pi*3600,
+			(dec2-gaiaStars[0].Dec)*180/math.Pi*3600)
 	}
 	return nil
 }

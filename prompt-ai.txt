@@ -52,6 +52,5 @@ Current product state (do not re-implement)
   star-pattern matching. Output size equals the reference. Single-frame
   crop works with --limit 1. Do not revert to the old "output must match
   input dimensions" assumption in the pass-1/pass-2 spill paths.
-- Plate solving is wired. SIP coefficients are fit and stored, not applied
-  during resampling.
+- Plate solving is wired; SIP order-2 is applied in WCS forward/inverse helpers (`wcsTanForward`/`wcsTanInverseSIP`) but not in the stacking resampler (affine/similarity warp).
 - Self-flat Phase 4 done: grid model is the default (v1 `registered` kept for compatibility). Validated on Orion limit 20 with mean/median/sigma and `--no-register`; extrapolation+min<0.45 guard added; gamma-aware correction documented as out of scope for sRGB. Real flat validation deferred.

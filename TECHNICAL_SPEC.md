@@ -24,7 +24,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
-- Drizzle, Bayer drizzle, and SIP distortion *application* to the resampler (the SIP fit is computed and stored, but the resampler still uses the linear TAN CD matrix).
+- Drizzle and Bayer drizzle not wired. SIP order-2 is supported in `wcsTanForward`/`wcsTanInverseSIP` (used by WCS/plate-solve paths); the image resampler used for stacking still applies linear TAN/affine transforms unless explicitly extended.
 - Higher-order distortion models beyond SIP order 2.
 - Whole-sky blind plate solving. TAN WCS plate solving is included and wired via `--plate-solve`; blind mode is a 3x3 nside=64 local scan around (0,0) and will fail on a real field, so a pointing seed (`--plate-center` or the reference frame's FITS `RA`/`DEC`) is required in practice.
 - GUI.
