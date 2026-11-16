@@ -188,19 +188,19 @@ type cliOptions struct {
 	KeepCache   bool
 	TestDebayer string
 
-	GaiaTest         string
-	GaiaMirror       string
-	GaiaCacheDir     string
-	GaiaNside        int
-	GaiaMagLimit     float64
-	GaiaOffline      bool
-	GaiaCacheRefresh bool
-	PlateSolve       bool
-	PlateTest        string
-	PlateCenter      string
-	WritePNG         bool
-	WriteBMP         bool
-	Limit            int
+	GaiaTest           string
+	GaiaMirror         string
+	GaiaCacheDir       string
+	GaiaNside          int
+	GaiaMagLimit       float64
+	GaiaOffline        bool
+	GaiaCacheRefresh   bool
+	PlateSolve         bool
+	PlateTest          string
+	PlateCenter        string
+	WritePNG           bool
+	WriteBMP           bool
+	Limit              int
 	CometCenter        string
 	CometRate          string
 	CometRADec         string
@@ -4068,18 +4068,18 @@ type runOptions struct {
 	// accumulates. 0 = unlimited (default). Applied after discoverFiles and
 	// before the per-frame decode loop, so a huge session can be sampled
 	// for a quick end-to-end smoke test without waiting for every sub.
-	Limit           int
-	CometOn         bool
-	CometX          float64
-	CometY          float64
-	CometRatePxX    float64
-	CometRatePxY    float64
-	CometRADECRad   bool
-	CometRA         float64
-	CometDec        float64
+	Limit             int
+	CometOn           bool
+	CometX            float64
+	CometY            float64
+	CometRatePxX      float64
+	CometRatePxY      float64
+	CometRADECRad     bool
+	CometRA           float64
+	CometDec          float64
 	CometRateSkyDXRad float64
 	CometRateSkyDYRad float64
-	CometEphemPath  string
+	CometEphemPath    string
 }
 
 func isCR2Path(path string) bool {
@@ -21130,16 +21130,16 @@ func main() {
 		WritePNG:             opts.WritePNG,
 		WriteBMP:             opts.WriteBMP,
 		Limit:                opts.Limit,
-		CometOn:          opts.CometOn,
-		CometX:           opts.CometX,
-		CometY:           opts.CometY,
-		CometRatePxX:     opts.CometRatePxX,
-		CometRatePxY:     opts.CometRatePxY,
-		CometRADECRad:    opts.CometRADECRad,
-		CometRA:          opts.CometRA,
-		CometDec:         opts.CometDec,
-		CometRateSkyDXRad: opts.CometRateSkyDXRad,
-		CometRateSkyDYRad: opts.CometRateSkyDYRad,
+		CometOn:              opts.CometOn,
+		CometX:               opts.CometX,
+		CometY:               opts.CometY,
+		CometRatePxX:         opts.CometRatePxX,
+		CometRatePxY:         opts.CometRatePxY,
+		CometRADECRad:        opts.CometRADECRad,
+		CometRA:              opts.CometRA,
+		CometDec:             opts.CometDec,
+		CometRateSkyDXRad:    opts.CometRateSkyDXRad,
+		CometRateSkyDYRad:    opts.CometRateSkyDYRad,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)
