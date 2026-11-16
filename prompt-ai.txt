@@ -10,9 +10,9 @@ touching code. Documentation in English. Final user reports in Spanish.
 Version and tests
 -----------------
 - Source version is v0.6.1 (`var version` in main.go).
-- Registered self-tests: 186. Count entries in `runSelfTests`, not every
+- Registered self-tests: 187. Count entries in `runSelfTests`, not every
   function whose name starts with `test`. Expect:
-      all 186 self-tests passed
+      all 187 self-tests passed
   Update this number only when a case is added or removed.
 
 Build and install
@@ -54,4 +54,5 @@ Current product state (do not re-implement)
   input dimensions" assumption in the pass-1/pass-2 spill paths.
 - Plate solving is wired; SIP order-2 is applied in WCS forward/inverse helpers (`wcsTanForward`/`wcsTanInverseSIP`) but not in the stacking resampler (affine/similarity warp).
 - `--fits` writes `stacked_sum.fits` (big-endian BITPIX=-32, NAXIS=3); `testFITSWriterRoundTrip` verifies header/padding/values.
+- `--bpm-auto` derives a bad-pixel map from master dark/bias (median + N*sigma*MAD, `--bpm-auto-sigma`, default 5); `testBPMAuto` verifies detection and masking.
 - Self-flat Phase 4 done: grid model is the default (v1 `registered` kept for compatibility). Validated on Orion limit 20 with mean/median/sigma and `--no-register`; extrapolation+min<0.45 guard added; gamma-aware correction documented as out of scope for sRGB. Real flat validation deferred.

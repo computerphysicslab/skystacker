@@ -8,3 +8,4 @@
 - Added `--fits` writer (`stacked_sum.fits`, big-endian BITPIX=-32, NAXIS=3) and round-trip selftest; self-tests 186.
 - Added `--comet-ephem-strict-exif` to fail instead of falling back when a light lacks EXIF time; comet-target examples in README.
 - Documented SIP stacking-resampler limitation and a reproducible OrionNebula grid-vs-real-flat validation protocol.
+- Added `--bpm-auto` / `--bpm-auto-sigma` (bad-pixel map from master dark/bias) with `testBPMAuto`; self-tests 187.

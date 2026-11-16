@@ -168,6 +168,8 @@ type cliOptions struct {
 	SynthCalibReport     bool
 	BlackLevel           string
 	BPMFile              string
+	BPMAuto              bool
+	BPMAutoSigma         float64
 	ExportMasters        bool
 	SelfFlat             bool
 	NoSelfFlat           bool
@@ -329,6 +331,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.SynthCalibReport, "synthetic-calibration-report", false, "print the synthetic-calibration guardrail report to stdout and exit")
 	fs.StringVar(&o.BlackLevel, "black-level", "", "black-level pedestal: auto reads EXIF/FITS metadata")
 	fs.StringVar(&o.BPMFile, "bpm", "", "bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs")
+	fs.BoolVar(&o.BPMAuto, "bpm-auto", false, "derive a bad-pixel map from the master dark (or bias): pixels > median + N*sigma*MAD")
+	fs.Float64Var(&o.BPMAutoSigma, "bpm-auto-sigma", 5.0, "sigma threshold for --bpm-auto (default 5.0)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
 	fs.BoolVar(&o.CreateFITS, "fits", false, "write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
@@ -798,6 +802,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
 	fmt.Fprintln(w, `  --black-level string  black-level pedestal: "auto" reads EXIF BlackLevel / FITS BLACK_LVL and subtracts it (default: off)`)
 	fmt.Fprintln(w, "  --bpm string      bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs; coordinates are native pixels (default: off)")
+	fmt.Fprintln(w, "  --bpm-auto        derive a bad-pixel map from the master dark (or bias) via median + N*sigma*MAD")
+	fmt.Fprintln(w, "  --bpm-auto-sigma F sigma threshold for --bpm-auto (default 5.0)")
 	fmt.Fprintln(w, "  --export-masters  write master_bias/dark/flat.f32raw + .jpg for inspection (default: off)")
 	fmt.Fprintln(w, "  --self-flat       derive a relative illumination flat from the lights (default when no flats are found)")
 	fmt.Fprintln(w, "  --no-self-flat    do not derive a self-flat when no flat frames are found")
@@ -1065,6 +1071,58 @@ func applyBadPixelMap(f *frame, points []badPixelPoint, scale int) int {
 		f.Pix[pix*3+2] = -1
 	}
 	return len(seen)
+}
+
+// badPixelsFromMaster derives a bad-pixel map from a master dark (or bias)
+// by flagging pixels whose luminance exceeds median + sigma*1.4826*MAD.
+// The median and MAD are estimated on a strided sample, then the full frame
+// is scanned for outliers. This detects hot pixels / defective columns in
+// the master; it never modifies the master itself.
+func badPixelsFromMaster(f *frame, sigma float64) []badPixelPoint {
+	if f == nil || f.Width <= 0 || f.Height <= 0 || sigma <= 0 {
+		return nil
+	}
+	n := f.Width * f.Height
+	stride := n/50000 + 1
+	vals := make([]float32, 0, n/stride+1)
+	for p := 0; p < n; p += stride {
+		v := (f.Pix[p*3] + f.Pix[p*3+1] + f.Pix[p*3+2]) / 3
+		if v >= 0 && !math.IsNaN(float64(v)) {
+			vals = append(vals, v)
+		}
+	}
+	if len(vals) < 16 {
+		return nil
+	}
+	med := medianInPlace(vals)
+	devs := make([]float32, len(vals))
+	for i, v := range vals {
+		devs[i] = float32(math.Abs(float64(v - med)))
+	}
+	mad := medianInPlace(devs)
+	scale := 1.4826 * mad
+	if mad <= 0 {
+		var sum float64
+		for _, d := range devs {
+			sum += float64(d)
+		}
+		meanDev := float32(sum / float64(len(devs)))
+		if meanDev <= 0 {
+			return nil
+		}
+		scale = meanDev
+	}
+	thr := med + float32(sigma)*scale
+	var pts []badPixelPoint
+	for y := 0; y < f.Height; y++ {
+		for x := 0; x < f.Width; x++ {
+			p := y*f.Width + x
+			if f.Pix[p*3] > thr || f.Pix[p*3+1] > thr || f.Pix[p*3+2] > thr {
+				pts = append(pts, badPixelPoint{X: x, Y: y})
+			}
+		}
+	}
+	return pts
 }
 
 // findCR2Tool returns the first available CR2 decoder, or "".
@@ -3723,6 +3781,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.BPMFile != "" {
 		add("--bpm " + quoteReportArg(o.BPMFile))
 	}
+	if o.BPMAuto {
+		add(fmt.Sprintf("--bpm-auto --bpm-auto-sigma %g", o.BPMAutoSigma))
+	}
 	if o.ReferenceCrop != "" {
 		add("--reference-crop " + quoteReportArg(o.ReferenceCrop))
 	}
@@ -4119,6 +4180,8 @@ type runOptions struct {
 	SynthCalib           bool
 	BlackLevel           string
 	BPMFile              string
+	BPMAuto              bool
+	BPMAutoSigma         float64
 	ExportMasters        bool
 	SelfFlat             bool
 	NoSelfFlat           bool
@@ -8001,6 +8064,24 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		bpmPoints = pts
 		logf("Bad pixel map: %s (%d pixels)", opts.BPMFile, len(pts))
+	}
+	if opts.BPMAuto {
+		src := darkFrame
+		srcName := "master dark"
+		if src == nil {
+			src = biasFrame
+			srcName = "master bias"
+		}
+		if src == nil {
+			return errors.New("--bpm-auto requires a master dark (or bias) frame")
+		}
+		sigma := opts.BPMAutoSigma
+		if sigma <= 0 {
+			sigma = 5.0
+		}
+		auto := badPixelsFromMaster(src, sigma)
+		bpmPoints = append(bpmPoints, auto...)
+		logf("Bad pixel map (auto): %d pixels from %s (sigma=%.1f)", len(auto), srcName, sigma)
 	}
 	bpmMaskedCount := 0
 	bpmCounted := false
@@ -14455,6 +14536,7 @@ func runSelfTests() int {
 		{"black point shift", testBlackPointShift},
 		{"subtract black level", testSubtractBlackLevel},
 		{"bpm masks pixels", testBPMMasksPixels},
+		{"bpm auto from master", testBPMAuto},
 		{"frame bg noise reported", testFrameBgNoiseReported},
 		{"MTF", testMTF},
 		{"auto stretch", testAutoStretch},
@@ -16143,6 +16225,42 @@ func testFrameBgNoiseReported() error {
 	}
 	if !strings.Contains(out.String(), "BgSigma") || !strings.Contains(out.String(), "0.02000") {
 		return errors.New("frame diagnostics report omits BgSigma header or value")
+	}
+	return nil
+}
+
+func testBPMAuto() error {
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.05
+	}
+	hot := []badPixelPoint{{X: 10, Y: 10}, {X: 40, Y: 30}}
+	for _, p := range hot {
+		i := (p.Y*w + p.X) * 3
+		f.Pix[i], f.Pix[i+1], f.Pix[i+2] = 0.9, 0.9, 0.9
+	}
+	pts := badPixelsFromMaster(f, 5)
+	if len(pts) != len(hot) {
+		return fmt.Errorf("auto BPM found %d pixels, want %d", len(pts), len(hot))
+	}
+	got := map[badPixelPoint]bool{}
+	for _, p := range pts {
+		got[p] = true
+	}
+	for _, p := range hot {
+		if !got[p] {
+			return fmt.Errorf("auto BPM missed %v", p)
+		}
+	}
+	// Masking the derived points must invalidate exactly those pixels.
+	masked := applyBadPixelMap(&frame{Width: w, Height: h, Pix: append([]float32(nil), f.Pix...)}, pts, 1)
+	if masked != len(hot) {
+		return fmt.Errorf("auto BPM masked %d, want %d", masked, len(hot))
+	}
+	opts, err := parseArgs([]string{"--bpm-auto", "--bpm-auto-sigma", "7"})
+	if err != nil || !opts.BPMAuto || opts.BPMAutoSigma != 7 {
+		return fmt.Errorf("--bpm-auto flags: %+v, err=%v", opts, err)
 	}
 	return nil
 }
@@ -21492,6 +21610,8 @@ func main() {
 		SynthCalib:           opts.SynthCalib,
 		BlackLevel:           opts.BlackLevel,
 		BPMFile:              opts.BPMFile,
+		BPMAuto:              opts.BPMAuto,
+		BPMAutoSigma:         opts.BPMAutoSigma,
 		ExportMasters:        opts.ExportMasters,
 		SelfFlat:             opts.SelfFlat,
 		NoSelfFlat:           opts.NoSelfFlat,

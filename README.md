@@ -421,6 +421,8 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--bias string` | Bias frame file or directory path | — |
 | `--calib-root string` | Root directory containing `Bias`/`Darks`/`Flats` folders | — |
 | `--export-masters` | Write `master_<kind>.f32raw` + `.jpg` preview for loaded calibration products | `false` |
+| `--bpm-auto` | Derive a bad-pixel map from the master dark (or bias) via `median + N*sigma*MAD` | `false` |
+| `--bpm-auto-sigma float` | Sigma threshold for `--bpm-auto` | `5.0` |
 | `--self-flat` | Derive a relative illumination flat from ≥ 15 dithered lights (auto when no flat loaded) | `true` (auto) |
 | `--self-flat-model string` | Self-flat model: `grid` (default, Phase-3 sensor-space with IRLS) or `registered` (v1 compatibility) | `grid` |
 | `--self-flat-linear-srgb` | Experimental: apply grid self-flat in linear light via sRGB EOTF (approximation; off by default) | off |
@@ -630,7 +632,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 186 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 187 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -643,7 +645,7 @@ The following capabilities have been implemented through `0.6.1`:
 - **Reference-frame crop**: `--reference-crop PATH` detects stars in the reference image, matches each light by triangle pattern, and warps it in memory into the reference pixel frame. The output is exactly the reference dimensions, including rotation and scale differences. A single light (`--limit 1`) yields one cropped frame. Test: `testReferenceCropAlignment`.
 - **SER video input**: `.ser` is discovered and expanded to one frame per `#frame=N`. `readSERHeader` / `decodeSERFrame` support 8/16-bit mono, Bayer-as-gray and RGB/BGR. Test: `testSERDecode`.
 - **Comet tracking**: pixel mode `--comet-center X,Y --comet-rate dX,dY` (reference pixels/sec, EXIF `DateTimeOriginal`). RA/Dec mode `--comet-radec RA,DEC --comet-sky-rate-arcsec dRA*,dDec` (decimal degrees, arcsec/sec; requires `--plate-solve`, TAN WCS). Ephemeris mode `--comet-target PATH`: file with lines `ISO8601 RA_deg Dec_deg` (`#`/blank ignored), requires `--plate-solve`; position interpolated linearly by EXIF `DateTimeOriginal` (reference time as base). If a frame has no EXIF time, reference time is used with a warning. Outputs `stacked_comet.f32raw`/`.jpg` when used; star stack unchanged. Test: `testCometTranslation`.
-- **Bad-pixel map**: `--bpm PATH` loads a FITS or `x,y` text map and marks those pixels invalid before stacking. Test: `testBPMMasksPixels`.
+- **Bad-pixel map**: `--bpm PATH` loads a FITS or `x,y` text map and marks those pixels invalid before stacking. `--bpm-auto` derives a map from the master dark (or bias) using `median + N*sigma*MAD` (`--bpm-auto-sigma`, default 5). Tests: `testBPMMasksPixels`, `testBPMAuto`.
 
 ---
 
@@ -651,9 +653,7 @@ The following capabilities have been implemented through `0.6.1`:
 
 ### Tier 1 — Small, self-contained (`S`)
 
-Shipped items (SER input, pixel/RA-Dec comet stacking, `--bpm`) are listed under Recently Implemented. Still open:
-
-- **`--bpm-auto`**: build a bad-pixel map from a master dark (pixels `> Nσ` from the dark median). Loading a user map with `--bpm` is already shipped.
+Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm-auto`) are listed under Recently Implemented.
 
 ### Tier 2 — Medium, a day each (`M`)
 
