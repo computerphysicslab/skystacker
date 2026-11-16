@@ -14327,6 +14327,8 @@ func runSelfTests() int {
 		{"atomic write cleanup", testAtomicWriteCleanup},
 		{"pipeline stack-only", testPipelineStackOnly},
 		{"pipeline grid self-flat mean stack-only", testPipelineGridSelfFlatStackOnly},
+		{"pipeline grid self-flat median stack-only", testPipelineGridSelfFlatMedianStackOnly},
+		{"pipeline grid self-flat sigma stack-only", testPipelineGridSelfFlatSigmaStackOnly},
 		{"pipeline post-only", testPipelinePostOnly},
 		{"remove stars basic", testRemoveStarsBasic},
 		{"remove stars empty", testRemoveStarsEmpty},
@@ -15278,6 +15280,92 @@ func testPipelineGridSelfFlatStackOnly() error {
 		Method: "mean", SelfFlat: true, SelfFlatModel: "grid", NoSelfFlat: false,
 	}); err != nil {
 		return fmt.Errorf("runPipeline grid mean: %w", err)
+	}
+	outDir := filepath.Join(dir, "0_skystacker_results")
+	if _, err := os.Stat(filepath.Join(outDir, "report.txt")); err != nil {
+		return fmt.Errorf("missing report.txt: %w", err)
+	}
+	return nil
+}
+
+func testPipelineGridSelfFlatMedianStackOnly() error {
+	dir, err := os.MkdirTemp("", "skystacker-e2e-gridmed-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 32, 32
+	for i := 0; i < 20; i++ {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
+			}
+		}
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				img.SetRGBA(16+dx, 16+dy, color.RGBA{255, 255, 255, 255})
+			}
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%02d.jpg", i))
+		fp, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		if err := jpeg.Encode(fp, img, &jpeg.Options{Quality: 95}); err != nil {
+			fp.Close()
+			return err
+		}
+		fp.Close()
+	}
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1,
+		Method: "median", SelfFlat: true, SelfFlatModel: "grid", NoSelfFlat: false,
+	}); err != nil {
+		return fmt.Errorf("runPipeline grid median: %w", err)
+	}
+	outDir := filepath.Join(dir, "0_skystacker_results")
+	if _, err := os.Stat(filepath.Join(outDir, "report.txt")); err != nil {
+		return fmt.Errorf("missing report.txt: %w", err)
+	}
+	return nil
+}
+
+func testPipelineGridSelfFlatSigmaStackOnly() error {
+	dir, err := os.MkdirTemp("", "skystacker-e2e-gridsig-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 32, 32
+	for i := 0; i < 20; i++ {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
+			}
+		}
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				img.SetRGBA(16+dx, 16+dy, color.RGBA{255, 255, 255, 255})
+			}
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%02d.jpg", i))
+		fp, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		if err := jpeg.Encode(fp, img, &jpeg.Options{Quality: 95}); err != nil {
+			fp.Close()
+			return err
+		}
+		fp.Close()
+	}
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1,
+		Method: "sigma", SelfFlat: true, SelfFlatModel: "grid", NoSelfFlat: false,
+	}); err != nil {
+		return fmt.Errorf("runPipeline grid sigma: %w", err)
 	}
 	outDir := filepath.Join(dir, "0_skystacker_results")
 	if _, err := os.Stat(filepath.Join(outDir, "report.txt")); err != nil {
