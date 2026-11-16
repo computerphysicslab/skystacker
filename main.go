@@ -1143,6 +1143,14 @@ func badPixelsFromMaster(f *frame, sigma float64) []badPixelPoint {
 			}
 		}
 	}
+	// A master with a very tight distribution can make the robust scale
+	// tiny and flag a large fraction of the sensor; that indicates the
+	// threshold is not meaningful. Refuse to build a map in that case.
+	if len(pts) > n/1000 {
+		logf("WARNING: --bpm-auto would flag %d/%d pixels (%.2f%%); ignoring the map",
+			len(pts), n, 100*float64(len(pts))/float64(n))
+		return nil
+	}
 	return pts
 }
 
@@ -16892,6 +16900,19 @@ func testBPMAuto() error {
 	masked := applyBadPixelMap(&frame{Width: w, Height: h, Pix: append([]float32(nil), f.Pix...)}, pts, 1)
 	if masked != len(hot) {
 		return fmt.Errorf("auto BPM masked %d, want %d", masked, len(hot))
+	}
+	// A pathological master that would flag a large fraction of the
+	// sensor must not produce a map.
+	bad := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range bad.Pix {
+		bad.Pix[i] = 0.05
+	}
+	for i := 0; i < 1000; i++ {
+		p := (i * 7 % (w * h)) * 3
+		bad.Pix[p], bad.Pix[p+1], bad.Pix[p+2] = 0.9, 0.9, 0.9
+	}
+	if pts := badPixelsFromMaster(bad, 5); len(pts) != 0 {
+		return fmt.Errorf("pathological master produced %d bad pixels", len(pts))
 	}
 	opts, err := parseArgs([]string{"--bpm-auto", "--bpm-auto-sigma", "7"})
 	if err != nil || !opts.BPMAuto || opts.BPMAutoSigma != 7 {

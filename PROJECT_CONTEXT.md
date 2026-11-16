@@ -1635,3 +1635,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--starless`: writes `_work/stacked_starless.f32raw`, `_work/stacked_stars.f32raw` and JPEG previews from the existing post-processing star-removal step (crude annulus-median baseline). `testPipelineStarless`; selftests 194.
 
 - `--fits` writes TAN WCS keywords (CRVAL/CRPIX/CD in degrees) from the plate solution when available; `testFITSWriterRoundTrip` covers both plain and WCS headers.
+
+- Hardened `--bpm-auto`: if >0.1% of pixels would be flagged, the map is rejected (previously a low-MAD master could flag ~10% of the sensor). E2E `--fits --xisf --bpm-auto` run on OrionNebula limit 4 verified output files.
