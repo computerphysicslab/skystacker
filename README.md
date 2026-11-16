@@ -534,8 +534,8 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
-| `--fits` | Write `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3; TAN WCS keywords when plate-solved) | `false` |
-| `--xisf` | Write `stacked_sum.xisf` (monolithic XISF 1.0, planar Float32) | `false` |
+| `--fits` | Write `stacked_sum.fits` + `stacked_mean.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3; TAN WCS when plate-solved) | `false` |
+| `--xisf` | Write `stacked_sum.xisf` + `stacked_mean.xisf` (monolithic XISF 1.0, planar Float32) | `false` |
 | `--png` | Write lossless `stacked_mean.png` alongside JPEGs (same gamma `0.5` LUT) | `false` |
 | `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
 | `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query diagnostic; prints `nside`, `ipix`, first 5 stars, and exits | — |
@@ -561,7 +561,9 @@ By default, SkyStacker writes all outputs into `<input>/0_skystacker_results/` (
 ├── TIFF/
 │   └── *.tif                                  # Uncompressed little-endian RGB IEEE float32 single-strip TIFFs
 ├── stacked_sum.fits                           # Optional big-endian float32 FITS sum, BITPIX=-32, NAXIS=3 (--fits)
+├── stacked_mean.fits                          # Optional float32 FITS mean stack (--fits)
 ├── stacked_sum.xisf                           # Optional monolithic XISF 1.0 sum, planar Float32 (--xisf)
+├── stacked_mean.xisf                          # Optional XISF 1.0 mean stack (--xisf)
 ├── stacked_mean.jpg                           # 8-bit gamma-0.5 display preview (plus post-processed & weighted mix JPEGs)
 ├── stacked_mean.png                           # Optional lossless gamma-0.5 PNG (--png)
 ├── stacked_mean.bmp                           # Optional uncompressed 24-bit BMP (--bmp)

@@ -1639,3 +1639,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Hardened `--bpm-auto`: if >0.1% of pixels would be flagged, the map is rejected (previously a low-MAD master could flag ~10% of the sensor). E2E `--fits --xisf --bpm-auto` run on OrionNebula limit 4 verified output files.
 
 - Added `--json-report`: writes the existing processing report as `report.json`; covered by `testPipelineStackOnly`.
+
+- `--fits`/`--xisf` now emit the linear mean stack as `stacked_mean.fits`/`stacked_mean.xisf` in addition to the sum; e2e verified on OrionNebula limit 4 for `--fits --xisf --bpm-auto`.

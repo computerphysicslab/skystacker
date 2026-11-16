@@ -9352,6 +9352,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	sumFits := filepath.Join(outputDir, "stacked_sum.fits")
 	sumXisf := filepath.Join(outputDir, "stacked_sum.xisf")
 	sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
+	meanFits := filepath.Join(outputDir, "stacked_mean.fits")
+	meanXisf := filepath.Join(outputDir, "stacked_mean.xisf")
 	meanWorkPath := filepath.Join(workDir, "stacked_mean.f32raw")
 	meanJPG := filepath.Join(outputDir, "stacked_mean.jpg")
 	noCorrJPG := filepath.Join(outputDir, "stacked_no_correction_mean.jpg")
@@ -9445,6 +9447,20 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return writeRawFloat32RGB(w, outW, outH, meanPix)
 		}); err != nil {
 			return fmt.Errorf("write mean work file: %w", err)
+		}
+		if opts.CreateFITS {
+			if err := writeFileAtomic(meanFits, func(w io.Writer) error {
+				return writeFloat32RGBFITS(w, outW, outH, meanPix, 1, fitsWCS(plateSolutionOut))
+			}); err != nil {
+				return fmt.Errorf("write mean fits: %w", err)
+			}
+		}
+		if opts.CreateXISF {
+			if err := writeFileAtomic(meanXisf, func(w io.Writer) error {
+				return writeFloat32RGBXISF(w, outW, outH, meanPix, 1)
+			}); err != nil {
+				return fmt.Errorf("write mean xisf: %w", err)
+			}
 		}
 		logf("Writing registered mean preview")
 		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
@@ -9581,6 +9597,20 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return writeRawFloat32RGB(w, outW, outH, meanPix)
 		}); err != nil {
 			return fmt.Errorf("write mean work file: %w", err)
+		}
+		if opts.CreateFITS {
+			if err := writeFileAtomic(meanFits, func(w io.Writer) error {
+				return writeFloat32RGBFITS(w, outW, outH, meanPix, 1, fitsWCS(plateSolutionOut))
+			}); err != nil {
+				return fmt.Errorf("write mean fits: %w", err)
+			}
+		}
+		if opts.CreateXISF {
+			if err := writeFileAtomic(meanXisf, func(w io.Writer) error {
+				return writeFloat32RGBXISF(w, outW, outH, meanPix, 1)
+			}); err != nil {
+				return fmt.Errorf("write mean xisf: %w", err)
+			}
 		}
 		logf("Writing mean preview")
 		if err := writeFileAtomic(meanJPG, func(w io.Writer) error {
