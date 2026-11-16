@@ -844,3 +844,15 @@ This is a rough, run-based comparison (separate outputs). A tighter ablation wou
 - WCS helpers: `wcsTanForward` applies SIP order-2 if `wcsTan.SIP` present; `wcsTanInverseSIP` iteratively inverts SIP for astrometric queries (used with plate-solve outputs). `plate_solution.json` stores fitted SIP coefficients.
 - **Stacking resampler limitation:** `resampleToReference*` in the main pipeline warps lights to the reference frame using star-registration similarity/affine transforms (pixel-space). It does **not** apply SIP distortion polynomials and does not use a WCS-based per-pixel reprojection path for stacking. Fields with significant high-order distortion beyond what the affine/star model captures at the field scale may show residual distortion; SIP is currently a plate-solve/metadata concern, not a stacking-resample correction.
 - Potential future work (design): add an optional WCS+SIP reprojection mode for stacking (requires consistent WCS per light or ref, inverse mapping, and performance trade-offs) or document as out of scope for now.
+
+## 22. Grid vs real flat validation protocol (2026-11-16, OrionNebula, reproducible runs)
+
+Dataset: `assets/OrionNebula` (16 CR2 lights in `lights/`, calibration `darks/`, `biases/`, `flats/` lowercase). Case-insensitive calib discovery/fallback helps when resolving `--calib-root`/per-path args.
+
+Commands (repo root):
+```bash
+./skystacker --output /tmp/onb_val_grid --overwrite --stack-only --self-flat-model=grid --dark assets/OrionNebula/darks --bias assets/OrionNebula/biases --limit 16 assets/OrionNebula/lights
+./skystacker --output /tmp/onb_val_flat --overwrite --stack-only --dark assets/OrionNebula/darks --flat assets/OrionNebula/flats --bias assets/OrionNebula/biases --limit 16 assets/OrionNebula/lights
+```
+
+Observed (2026-11-16, `report.txt` excerpts): **grid** run (`/tmp/onb_val_grid`) applied grid self-flat (model=grid, 16 frames, degree=4, 64 px cells, 2220/2542 valid, rejected 308, mask 4.8%, center/edge 1.1097, fit RMS 0.11222, OLS 0.10119, radial 0.12333, IRLS 16, min 0.8737, max 1.0979, extrapolated) with dark+bias; **real flat** run (`/tmp/onb_val_flat`) used dark+flat+bias (no grid self-flat) with sum normalisation factor 16.0 in that run. This is an informal comparison (separate outputs, not a single toggle in one process); stricter ablation would share the exact same calibration pipeline except the illumination correction source. The qualitative note from earlier runs (grid-only vs real-flat JPEG center/border approximation) is preserved in §20; treat numerical parity as indicative only.
