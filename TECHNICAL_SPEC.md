@@ -86,7 +86,7 @@ Flags are accepted before or after the positional input directory. Default input
 ### Stacking
 - `--sigma-clip` (default 3.0), `--sigma-clip-iters` (default 2), optional `--sigma-clip-low` / `--sigma-clip-high` for asymmetric MAD rejection on each side (0 = symmetric).
 - `--tile-size` (default 0 = auto, capped at ~256 MB tile buffer).
-- `--tiff` writes `TIFF/stacked_sum.tif`; `--fits` writes `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3, 2880-byte blocks); `--xisf` writes `stacked_sum.xisf` (monolithic XISF 1.0, planar little-endian Float32, no compression). Both divide by the same sum normalisation factor as the TIFF. `--no-exif`.
+- `--tiff` writes `TIFF/stacked_sum.tif`; `--fits` writes `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3, 2880-byte blocks, TAN WCS keywords when a plate solution exists); `--xisf` writes `stacked_sum.xisf` (monolithic XISF 1.0, planar little-endian Float32, no compression). Both divide by the same sum normalisation factor as the TIFF. `--no-exif`.
 
 ### Post-processing
 - `--mask-bg`, `--bg-degree` (1-3, default 2), `--bg-percentile` (default 10), `--stretch` (default 10).

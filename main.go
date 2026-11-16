@@ -2995,7 +2995,7 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 // record-order [plane][row][col], i.e. channel-major). Header cards are
 // 80 bytes, padded to a 2880-byte block before data, and data is padded to
 // a multiple of 2880 bytes. Each input float is divided by divisor.
-func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor float32) error {
+func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor float32, wcses ...*wcsTan) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("fits: invalid dimensions %dx%d", width, height)
 	}
@@ -3015,10 +3015,25 @@ func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor 
 		"NAXIS3  =                    3",
 		"BSCALE  =                  1.0",
 		"BZERO   =                  0.0",
-		"CTYPE1  = 'LINEAR  '",
-		"CTYPE2  = 'LINEAR  '",
-		"END",
 	}
+	if len(wcses) > 0 && wcses[0] != nil {
+		ww := wcses[0]
+		cards = append(cards,
+			"CTYPE1  = 'RA---TAN'",
+			"CTYPE2  = 'DEC--TAN'",
+			fmt.Sprintf("CRVAL1  = %20.12f", ww.CRVAL1*180/math.Pi),
+			fmt.Sprintf("CRVAL2  = %20.12f", ww.CRVAL2*180/math.Pi),
+			fmt.Sprintf("CRPIX1  = %20.8f", ww.CRPIX1),
+			fmt.Sprintf("CRPIX2  = %20.8f", ww.CRPIX2),
+			fmt.Sprintf("CD1_1   = %20.12e", ww.CD[0][0]*180/math.Pi),
+			fmt.Sprintf("CD1_2   = %20.12e", ww.CD[0][1]*180/math.Pi),
+			fmt.Sprintf("CD2_1   = %20.12e", ww.CD[1][0]*180/math.Pi),
+			fmt.Sprintf("CD2_2   = %20.12e", ww.CD[1][1]*180/math.Pi),
+		)
+	} else {
+		cards = append(cards, "CTYPE1  = 'LINEAR  '", "CTYPE2  = 'LINEAR  '")
+	}
+	cards = append(cards, "END")
 	var hdr bytes.Buffer
 	for _, c := range cards {
 		if len(c) > 80 {
@@ -3136,6 +3151,17 @@ func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor 
 		}
 	}
 	return nil
+}
+
+// fitsWCS returns the plate-solution WCS with SIP coefficients attached,
+// or nil when no solution is available.
+func fitsWCS(sol *plateSolution) *wcsTan {
+	if sol == nil {
+		return nil
+	}
+	w := sol.WCS
+	w.SIP = sol.SIP
+	return &w
 }
 
 func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
@@ -9371,7 +9397,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateFITS {
 			logf("Writing registered sum FITS")
 			if err := writeFileAtomic(sumFits, func(w io.Writer) error {
-				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor)
+				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor, fitsWCS(plateSolutionOut))
 			}); err != nil {
 				return fmt.Errorf("write sum fits: %w", err)
 			}
@@ -9507,7 +9533,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateFITS {
 			logf("Writing sum FITS")
 			if err := writeFileAtomic(sumFits, func(w io.Writer) error {
-				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor)
+				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor, fitsWCS(plateSolutionOut))
 			}); err != nil {
 				return fmt.Errorf("write sum fits: %w", err)
 			}
@@ -15254,6 +15280,18 @@ func testFITSWriterRoundTrip() error {
 	for i := range pix {
 		if math.Abs(float64(got[i]-pix[i]/2)) > 1e-6 {
 			return fmt.Errorf("FITS pixel[%d] = %g, want %g", i, got[i], pix[i]/2)
+		}
+	}
+	var wbuf bytes.Buffer
+	solWCS := &wcsTan{CRVAL1: 1.0, CRVAL2: -0.5, CRPIX1: 100, CRPIX2: 200,
+		CD: [2][2]float64{{1e-6, 2e-7}, {-3e-7, -1e-6}}, SIP: []float64{1, 2, 3, 4, 5, 6}}
+	if err := writeFloat32RGBFITS(&wbuf, w, h, pix, 2, solWCS); err != nil {
+		return err
+	}
+	wh := string(wbuf.Bytes()[:2880])
+	for _, want := range []string{"CTYPE1  = 'RA---TAN'", "CRVAL1  =", "CD1_1   ="} {
+		if !strings.Contains(wh, want) {
+			return fmt.Errorf("FITS WCS header missing %q", want)
 		}
 	}
 	return nil

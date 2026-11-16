@@ -1633,3 +1633,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--annotate`: offline catalog annotation projects cached Gaia stars through the stored plate solution (SIP applied via `wcsTanForward`), draws `stacked_annotated.jpg`, and writes unmatched detections to `anomalies.json` (8 px tolerance). `testCatalogAnnotationSkip`; selftests 193.
 
 - Added `--starless`: writes `_work/stacked_starless.f32raw`, `_work/stacked_stars.f32raw` and JPEG previews from the existing post-processing star-removal step (crude annulus-median baseline). `testPipelineStarless`; selftests 194.
+
+- `--fits` writes TAN WCS keywords (CRVAL/CRPIX/CD in degrees) from the plate solution when available; `testFITSWriterRoundTrip` covers both plain and WCS headers.

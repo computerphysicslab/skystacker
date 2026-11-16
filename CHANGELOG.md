@@ -16,3 +16,4 @@
 - Added `--sigma-clip-low` / `--sigma-clip-high` asymmetric MAD rejection; `testSigmaClipAsymmetric`; self-tests 192.
 - Added `--annotate`: offline Gaia catalog projection onto the plate-solved stack, annotated JPEG, and `anomalies.json`; `testCatalogAnnotationSkip`; self-tests 193.
 - Added `--starless`: starless + star-layer float32/JPEG outputs from the post-processing star-removal step; `testPipelineStarless`; self-tests 194.
+- `--fits` now writes TAN WCS keywords (CRVAL/CRPIX/CD, degrees) when a plate solution is available.

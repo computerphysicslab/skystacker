@@ -533,7 +533,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
-| `--fits` | Write `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3) | `false` |
+| `--fits` | Write `stacked_sum.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3; TAN WCS keywords when plate-solved) | `false` |
 | `--xisf` | Write `stacked_sum.xisf` (monolithic XISF 1.0, planar Float32) | `false` |
 | `--png` | Write lossless `stacked_mean.png` alongside JPEGs (same gamma `0.5` LUT) | `false` |
 | `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
