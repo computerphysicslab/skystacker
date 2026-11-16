@@ -14326,6 +14326,7 @@ func runSelfTests() int {
 		{"parse args", testParseArgs},
 		{"atomic write cleanup", testAtomicWriteCleanup},
 		{"pipeline stack-only", testPipelineStackOnly},
+		{"pipeline grid self-flat mean stack-only", testPipelineGridSelfFlatStackOnly},
 		{"pipeline post-only", testPipelinePostOnly},
 		{"remove stars basic", testRemoveStarsBasic},
 		{"remove stars empty", testRemoveStarsEmpty},
@@ -15238,6 +15239,49 @@ func testAtomicWriteCleanup() error {
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		return fmt.Errorf("orphan .tmp file after failure")
+	}
+	return nil
+}
+
+func testPipelineGridSelfFlatStackOnly() error {
+	dir, err := os.MkdirTemp("", "skystacker-e2e-grid-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 32, 32
+	for i := 0; i < 20; i++ {
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
+			}
+		}
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				img.SetRGBA(16+dx, 16+dy, color.RGBA{255, 255, 255, 255})
+			}
+		}
+		path := filepath.Join(dir, fmt.Sprintf("frame_%02d.jpg", i))
+		fp, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		if err := jpeg.Encode(fp, img, &jpeg.Options{Quality: 95}); err != nil {
+			fp.Close()
+			return err
+		}
+		fp.Close()
+	}
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, Workers: 2, Register: true, StackOnly: true, Scale: 1,
+		Method: "mean", SelfFlat: true, SelfFlatModel: "grid", NoSelfFlat: false,
+	}); err != nil {
+		return fmt.Errorf("runPipeline grid mean: %w", err)
+	}
+	outDir := filepath.Join(dir, "0_skystacker_results")
+	if _, err := os.Stat(filepath.Join(outDir, "report.txt")); err != nil {
+		return fmt.Errorf("missing report.txt: %w", err)
 	}
 	return nil
 }

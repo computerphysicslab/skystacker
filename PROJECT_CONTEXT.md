@@ -1614,3 +1614,4 @@ rejection and disk spill. `--scale N` downsamples.
 - **Comet ephemeris:** `--comet-target PATH` (`ISO8601 RA_deg Dec_deg`, `#` comments, ≥2 points, RA 0–360°, |Dec|≤90°), requires `--plate-solve`; interpolated linearly by EXIF `DateTimeOriginal` (fallback to reference time + warning). Docs in README/prompt-ai; help updated.
 - **SIP order-2 (WCS helpers):** `wcsTan.SIP` stored; `wcsTanForward` applies SIP; `wcsTanInverseSIP` added (iterative). Stacking resampler (affine/similarity) still does **not** apply SIP (documented). `testWCSSIP` extended with round-trip sanity.
 - **CI:** pushes `2c7e031`, `c84221c` verified locally green; check remote runs as needed.
+- Added selftest `pipeline grid self-flat mean stack-only` (E2E runPipeline with `--self-flat-model=grid --method mean --stack-only`); self-tests 183.
