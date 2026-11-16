@@ -1607,3 +1607,10 @@ rejection and disk spill. `--scale N` downsamples.
 - Comet RA/Dec mode added: `--comet-radec RA,DEC` (decimal degrees) + `--comet-sky-rate-arcsec dRA*,dDec` (arcsec/sec) with `--plate-solve`; per-frame tangent-plane offsets computed from WCS. Mutually exclusive with pixel `--comet-center`/`--comet-rate`. Self-tests still 181.
 - Gamma/EOTF option (experimental): `--self-flat-linear-srgb` applies grid self-flat division in linear light after sRGB EOTF decode of frame samples and re-encodes with sRGB OETF. Default off (approximate encoded-space division preserved). No new deps; needs validation on real data.
 - OrionNebula (16 lights): compared grid self-flat (`/tmp/onb_grid_only`, dark+bias, grid default) vs real flat (`/tmp/onb_realflat_run`, dark+flat+bias). Grid report: fit RMS 0.112, min/max 0.874–1.098, center/edge 1.11, extrapolated, masked 4.8%. Approx gamma-space center/border from `stacked_mean.jpg`: grid_only gamma 0.995 (linear ~0.990), realflat gamma 1.016 (linear ~1.033). Note: flat present disables grid; comparison is run-to-run in these temp dirs, not a single-pass ablation in-place except by separate outputs.
+
+## 2026-11-16 — v0.6.1, comet ephemeris, SIP in WCS helpers
+
+- **v0.6.1:** bumped from 0.6.0; self-tests 182 (added `testCometEphemerisParse`, extended `testCometTranslation`).
+- **Comet ephemeris:** `--comet-target PATH` (`ISO8601 RA_deg Dec_deg`, `#` comments, ≥2 points, RA 0–360°, |Dec|≤90°), requires `--plate-solve`; interpolated linearly by EXIF `DateTimeOriginal` (fallback to reference time + warning). Docs in README/prompt-ai; help updated.
+- **SIP order-2 (WCS helpers):** `wcsTan.SIP` stored; `wcsTanForward` applies SIP; `wcsTanInverseSIP` added (iterative). Stacking resampler (affine/similarity) still does **not** apply SIP (documented). `testWCSSIP` extended with round-trip sanity.
+- **CI:** pushes `2c7e031`, `c84221c` verified locally green; check remote runs as needed.
