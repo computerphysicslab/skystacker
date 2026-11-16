@@ -47,8 +47,7 @@ Current product state (do not re-implement)
 - Default recoverable calibration when no user masters exist: metadata
   pedestal and grid self-flat. Darks are not fabricated. --no-self-flat and
   --black-level off opt out.
-- SER input (.ser expanded to #frame=N) and pixel-mode comet stacking
-  (--comet-center/--comet-rate, and --comet-radec/--comet-sky-rate-arcsec with --plate-solve) are implemented.
+- SER input (.ser expanded to #frame=N) and comet stacking: pixel (`--comet-center`/`--comet-rate`), RA/Dec rate (`--comet-radec`/`--comet-sky-rate-arcsec`) and ephemeris (`--comet-target`) require `--plate-solve` when using WCS/ephemerides; ephemeris uses EXIF times and linear interpolation (fallback to reference time if missing).
 - --reference-crop PATH warps lights into an external reference frame by
   star-pattern matching. Output size equals the reference. Single-frame
   crop works with --limit 1. Do not revert to the old "output must match
