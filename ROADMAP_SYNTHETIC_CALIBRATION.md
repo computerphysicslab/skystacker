@@ -109,14 +109,14 @@ Both items are independently shippable in one commit.
     moving stars; recovered flat RMS < 0.05, full-frame master, applied
     before resampling, no registration needed for the build. Orion-135mm
     `--limit 20`: center/edge 1.2449, max 1.208 (v1 M42 dome absent),
-    mask fraction 67.6% (too high; Phase 2). Default remains `registered`.
+    mask fraction 67.6% (too high; Phase 2). Default was `registered` until Phase 4.
   - Phase 2 (masking, shipped 2026-11-15): local-contrast source mask,
     SExtractor cell mode with low-quantile consistency, and 5x5 median/MAD
     cell rejection. Synthetic large nebula plus bright and dark
     (dust-shadow-like) patches: recovered flat at the nebula within 0.02 of
     truth; outlier cells rejected. Orion-135mm `--limit 20`: mask fraction
     31.7% (was 67.6%), cells 851/950 (66 rejected), fit RMS 0.01606,
-    center/edge 1.2226, max 1.13. Default remains `registered`.
+    center/edge 1.2226, max 1.13. Default was `registered` until Phase 4.
   - Phase 3 (IRLS, shipped 2026-11-16): degree-4 Chebyshev with asymmetric
     Huber IRLS; OLS and radial comparison diagnostics; fit RMS 0.01634
     (< 0.02) on Orion; synthetic outlier and radial tests pass. Default
@@ -127,7 +127,7 @@ Both items are independently shippable in one commit.
     border ~1.023, M42 dome absent in grid outputs); extrapolation + `min
     < 0.45` guard added; gamma-aware correction documented as out of
     scope for the sRGB pipeline; no real flat found (deferred). Section-E
-    tests unchanged. Default remains `registered`.
+    tests unchanged. Default was `registered` until Phase 4; now `grid`.
 - **Main risks:** (1) a stable sky gradient is degenerate with the flat
   and will be absorbed; document it and prefer a radial model when
   possible. (2) A large nebula with small dithers remains partially

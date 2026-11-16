@@ -55,10 +55,4 @@ Current product state (do not re-implement)
   input dimensions" assumption in the pass-1/pass-2 spill paths.
 - Plate solving is wired. SIP coefficients are fit and stored, not applied
   during resampling.
-- Self-flat Phase 3 is done: Phase-2 masking plus a degree-4 Chebyshev
-  fit refined by asymmetric Huber IRLS, a radial-model comparison, and
-  fit/extrapolation diagnostics. Orion --limit 20: mask 31.7%, 851/950
-  cells (66 rejected), fit RMS 0.0163, OLS RMS 0.0161, radial RMS 0.0750,
-  IRLS 11 iterations, center/edge 1.2180, min/max 0.5312/1.1300. Phase 4
-  (integration/default switch, gamma-aware correction) is next. The grid
-  model is still not the default.
+- Self-flat Phase 4 done: grid model is the default (v1 `registered` kept for compatibility). Validated on Orion limit 20 with mean/median/sigma and `--no-register`; extrapolation+min<0.45 guard added; gamma-aware correction documented as out of scope for sRGB. Real flat validation deferred.

@@ -62,7 +62,7 @@ Flags are accepted before or after the positional input directory. Default input
   coarse grid, robust rejection, IRLS polynomial) applied before
   resampling; see `research/04-calibration-and-self-flat.md` §9-14 and
   `ROADMAP_SYNTHETIC_CALIBRATION.md` §2.3.
-- `--self-flat-model` is `registered` (default, v1) or `grid` (Phase-3
+- `--self-flat-model` is `grid` (default, Phase-3
   sensor-space model: unregistered frames, local-contrast source mask,
   SExtractor cell mode with low-quantile consistency, 5x5 median/MAD cell
   rejection, 64 px cells, degree-4 Chebyshev fit refined by asymmetric

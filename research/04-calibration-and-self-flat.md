@@ -603,7 +603,7 @@ the self-test count and `PROJECT_CONTEXT.md` when tests are added.
 
 ## 15. Phase 1 implementation (2026-11-15)
 
-`--self-flat-model=grid` is implemented. The default remains `registered`.
+`--self-flat-model=grid` is the default; `registered` remains available.
 
 What shipped:
 
@@ -669,7 +669,7 @@ for the Fitswork comparison.
 ## 17. Phase 2 implementation (2026-11-15)
 
 Phase 2 (robust masking and cell rejection) is implemented behind
-`--self-flat-model=grid`; the default remains `registered`.
+`--self-flat-model=grid` (default).
 
 ### 17.1 Source mask
 
@@ -815,5 +815,5 @@ little RMS for stability against contamination; the synthetic outlier test
 shows the robust fit wins decisively when outliers are present.
 
 Registered self-tests: **181**. No new dependencies; v1 and the Phase-1
-least-squares path are unchanged. Phase 4 (default switch, gamma-aware
+least-squares path are unchanged. Phase 4 (gamma-aware
 correction, real-flat validation) remains.

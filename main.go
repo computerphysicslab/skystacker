@@ -230,7 +230,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.ExportMasters, "export-masters", false, "export loaded calibration masters as master_<kind>.f32raw + .jpg")
 	fs.BoolVar(&o.SelfFlat, "self-flat", false, "derive a relative flat from >=15 lights; on by default when no flat frames are found")
 	fs.BoolVar(&o.NoSelfFlat, "no-self-flat", false, "do not derive a self-flat when no flat frames are found")
-	fs.StringVar(&o.SelfFlatModel, "self-flat-model", "registered", "self-flat estimator: registered (v1) or grid (sensor-space)")
+	fs.StringVar(&o.SelfFlatModel, "self-flat-model", "grid", "self-flat estimator: registered (v1 compatibility) or grid (sensor-space, default)")
 	fs.StringVar(&o.ReferenceCrop, "reference-crop", "", "warp every light into the star-matched pixel frame of this reference image")
 	fs.BoolVar(&noRegister, "no-register", false, "disable star-based registration")
 	var noAffine bool
@@ -379,7 +379,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, fmt.Errorf("--denoise-strength must be in [0, 10], got %g", o.DenoiseStrength)
 	}
 	if o.SelfFlatModel == "" {
-		o.SelfFlatModel = "registered"
+		o.SelfFlatModel = "grid"
 	}
 	if o.SelfFlatModel != "registered" && o.SelfFlatModel != "grid" {
 		return nil, fmt.Errorf("--self-flat-model must be registered or grid, got %q", o.SelfFlatModel)
@@ -634,7 +634,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --export-masters  write master_bias/dark/flat.f32raw + .jpg for inspection (default: off)")
 	fmt.Fprintln(w, "  --self-flat       derive a relative illumination flat from the lights (default when no flats are found)")
 	fmt.Fprintln(w, "  --no-self-flat    do not derive a self-flat when no flat frames are found")
-	fmt.Fprintln(w, "  --self-flat-model string  self-flat estimator: registered (v1) or grid (sensor-space) (default: registered; auto uses grid)")
+	fmt.Fprintln(w, "  --self-flat-model string  self-flat estimator: registered (v1 compatibility) or grid (sensor-space, default)")
 	fmt.Fprintln(w, "  --synthetic-calibration         report what is recoverable from lights; never fabricates frames")
 	fmt.Fprintln(w, "  --synthetic-calibration-report  print the recovery report and exit")
 	fmt.Fprintln(w, "  --synthetic-dark|flat|bias      REFUSED: see --synthetic-calibration")
@@ -7675,7 +7675,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	bpmCounted := false
 	selfFlatModel := opts.SelfFlatModel
 	if selfFlatModel == "" {
-		selfFlatModel = "registered"
+		selfFlatModel = "grid"
 	}
 	var gridAcc *selfFlatGridAccumulator
 	if opts.SelfFlat && selfFlatModel == "grid" {
@@ -8489,7 +8489,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 	// Arithmetic-mean stacking skipped accumulation while the flat was being
-	// derived. Accumulate now, applying the flat when it is available.
+	// derived (v1 registered model). With the grid model the flat is applied
+	// before resampling in Pass 1, so no special reload is needed.
 	if opts.Method == "mean" && opts.SelfFlat && selfFlatModel == "registered" && len(spillPaths2) > 0 {
 		regAcc = newAccumulator(refW, refH)
 		validCount = make([]int32, refW*refH)
@@ -13768,15 +13769,15 @@ func testSelfFlatModelDefault() error {
 	if err != nil {
 		return err
 	}
-	if opts.SelfFlatModel != "registered" {
-		return fmt.Errorf("default model %q, want registered", opts.SelfFlatModel)
+	if opts.SelfFlatModel != "grid" {
+		return fmt.Errorf("default model %q, want grid", opts.SelfFlatModel)
 	}
-	opts, err = parseArgs([]string{"--self-flat-model", "grid"})
+	opts, err = parseArgs([]string{"--self-flat-model", "registered"})
 	if err != nil {
 		return err
 	}
-	if opts.SelfFlatModel != "grid" {
-		return fmt.Errorf("model %q, want grid", opts.SelfFlatModel)
+	if opts.SelfFlatModel != "registered" {
+		return fmt.Errorf("model %q, want registered", opts.SelfFlatModel)
 	}
 	if _, err := parseArgs([]string{"--self-flat-model", "nope"}); err == nil {
 		return errors.New("unknown --self-flat-model should be rejected")
