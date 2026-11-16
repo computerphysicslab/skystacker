@@ -207,6 +207,7 @@ type cliOptions struct {
 	CometSkyRateArcsec string
 	CometTarget        string
 	CometEphemPath     string
+	CometEphemStrict   bool
 	CometOn            bool
 	CometRADECRad      bool
 	CometX             float64
@@ -304,7 +305,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.CometRate, "comet-rate", "", "comet motion in reference pixels per second, dX,dY")
 	fs.StringVar(&o.CometRADec, "comet-radec", "", "comet RA,DEC seed in decimal degrees (requires --plate-solve)")
 	fs.StringVar(&o.CometSkyRateArcsec, "comet-sky-rate-arcsec", "", "comet sky rate in arcsec/sec: dRA, dDec (uses plate-solution scale; for RA the rate is interpreted as dRA*cosDec in arcsec/sec along the plate scale direction)")
-	fs.StringVar(&o.CometTarget, "comet-target", "", "comet ephemeris file: lines of ISO time or seconds-from-ref RA_deg Dec_deg; requires --plate-solve")
+	fs.StringVar(&o.CometTarget, "comet-target", "", "comet ephemeris file: lines ISO8601 RA_deg Dec_deg (# comments); requires --plate-solve")
+	fs.BoolVar(&o.CometEphemStrict, "comet-ephem-strict-exif", false, "with --comet-target, fail if any light frame has no EXIF DateTimeOriginal")
 	fs.StringVar(&o.GaiaMirror, "gaia-mirror", gaiaDefaultMirror, "Gaia TAP mirror URL")
 	fs.StringVar(&o.GaiaCacheDir, "gaia-cache-dir", "", "Gaia tile cache directory (default: OS user cache dir)")
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
@@ -818,7 +820,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --comet-rate dX,dY comet motion in reference pixels per second")
 	fmt.Fprintln(w, "  --comet-radec RA,DEC comet RA,DEC (decimal degrees); requires --plate-solve")
 	fmt.Fprintln(w, "  --comet-sky-rate-arcsec dRA,dDec comet motion in arcsec/sec along RA* and Dec")
-	fmt.Fprintln(w, "  --comet-target PATH ephemeris file: lines ISO8601 RA_deg Dec_deg (# comments), requires --plate-solve; linear interp by EXIF time (fallback to ref time)")
+	fmt.Fprintln(w, "  --comet-target PATH ephemeris file: lines ISO8601 RA_deg Dec_deg (# comments), requires --plate-solve; linear interp by EXIF time")
+	fmt.Fprintln(w, "  --comet-ephem-strict-exif fail if any frame has no EXIF time when using --comet-target (default: use reference time)")
 	fmt.Fprintln(w, "  --reference-crop P warp every light into the star-matched frame of image P (output size = P)")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
@@ -4087,6 +4090,7 @@ type runOptions struct {
 	CometRateSkyDXRad float64
 	CometRateSkyDYRad float64
 	CometEphemPath    string
+	CometEphemStrict  bool
 }
 
 func isCR2Path(path string) bool {
@@ -8496,6 +8500,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					w := &plateSolutionOut.WCS
 					if len(cometEphem) > 0 {
 						if !okFrameTime {
+							if opts.CometEphemStrict {
+								return fmt.Errorf("comet ephemeris: missing EXIF DateTimeOriginal for %s (use without --comet-ephem-strict-exif to fallback to reference time)", filepath.Base(c.path))
+							}
 							logf("  comet ephemeris: no EXIF time for %s, using reference time", filepath.Base(c.path))
 							frameTime = tRef
 						}
@@ -14010,6 +14017,9 @@ func testCometTranslation() error {
 	}
 	if _, err := parseArgs([]string{"--comet-target", "/nonexistent.ephem", "--comet-radec", "1,2"}); err == nil {
 		return errors.New("--comet-target combined with other comet options should fail")
+	}
+	if opts2, err := parseArgs([]string{"--comet-target", "/nonexistent.ephem", "--comet-ephem-strict-exif"}); err != nil || !opts2.CometEphemStrict {
+		return errors.New("--comet-ephem-strict-exif not parsed")
 	}
 	return nil
 }
