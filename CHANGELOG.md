@@ -14,3 +14,4 @@
 - Added `--xisf` writer (monolithic XISF 1.0, planar Float32) with `testXISFWrite`; self-tests 190.
 - Added `--hfr-quality` opt-in: median star HFR replaces blob size as FWHM proxy for frame quality; `testHFRQuality`; self-tests 191.
 - Added `--sigma-clip-low` / `--sigma-clip-high` asymmetric MAD rejection; `testSigmaClipAsymmetric`; self-tests 192.
+- Added `--annotate`: offline Gaia catalog projection onto the plate-solved stack, annotated JPEG, and `anomalies.json`; `testCatalogAnnotationSkip`; self-tests 193.

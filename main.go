@@ -207,6 +207,7 @@ type cliOptions struct {
 	CreateFITS         bool
 	CreateXISF         bool
 	HFRQuality         bool
+	Annotate           bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -343,6 +344,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.CreateFITS, "fits", false, "write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fs.BoolVar(&o.CreateXISF, "xisf", false, "write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
+	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -837,6 +839,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --fits             write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fmt.Fprintln(w, "  --xisf             write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
+	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -3972,6 +3975,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.HFRQuality {
 		add("--hfr-quality")
 	}
+	if o.Annotate {
+		add("--annotate")
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4339,6 +4345,7 @@ type runOptions struct {
 	CreateFITS  bool
 	CreateXISF  bool
 	HFRQuality  bool
+	Annotate    bool
 	PostCA      bool
 	PostColor   bool
 	PostFlatten bool
@@ -7801,6 +7808,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				}
 			}
 		}
+		if opts.Annotate {
+			if err := runCatalogAnnotation(outputDir, opts); err != nil {
+				logf("WARNING: catalog annotation: %v", err)
+			}
+		}
 		postOutputs, err := runPostProcessing(outputDir, opts)
 		if err != nil {
 			return fmt.Errorf("post-processing: %w", err)
@@ -9861,7 +9873,128 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			logf("Cache removed: %s (use --keep-cache to preserve)", cacheDir)
 		}
 	}
+	if opts.Annotate {
+		if err := runCatalogAnnotation(outputDir, opts); err != nil {
+			logf("WARNING: catalog annotation: %v", err)
+		}
+	}
 	logf("Done -> %s", outputDir)
+	return nil
+}
+
+// anomalyRecord is one blind detection that could not be cross-matched
+// against the projected Gaia catalogue within the tolerance radius.
+type anomalyRecord struct {
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	RA   float64 `json:"ra"`
+	Dec  float64 `json:"dec"`
+	Flux float64 `json:"flux"`
+}
+
+// runCatalogAnnotation projects cached Gaia stars through the stored plate
+// solution onto the stacked image, draws a diagnostic overlay, and writes
+// anomalies.json with unmatched blind detections. It is offline-only: no
+// network request is made; a missing Gaia tile simply skips annotation.
+func runCatalogAnnotation(outputDir string, opts runOptions) error {
+	solPath := filepath.Join(outputDir, "plate_solution.json")
+	b, err := os.ReadFile(solPath)
+	if err != nil {
+		logf("Catalog annotation: no plate solution (%v), skipping", err)
+		return nil
+	}
+	var sol plateSolution
+	if err := json.Unmarshal(b, &sol); err != nil {
+		logf("Catalog annotation: invalid plate solution: %v", err)
+		return nil
+	}
+	w := sol.WCS
+	w.SIP = sol.SIP
+	cacheDir := gaiaDefaultCacheDir()
+	nside := gaiaDefaultNside
+	ipix := healpixAng2PixNested(nside, sol.WCS.CRVAL1, sol.WCS.CRVAL2)
+	tile, ok := gaiaLoadTileCache(cacheDir, nside, ipix)
+	if !ok {
+		logf("Catalog annotation: no cached Gaia tile for CRVAL (%.3f, %.3f), skipping",
+			sol.WCS.CRVAL1*180/math.Pi, sol.WCS.CRVAL2*180/math.Pi)
+		return nil
+	}
+	maskPath := filepath.Join(outputDir, "_work", "stacked_mean.f32raw")
+	iw, ih, pix, err := readRawFloat32RGB(maskPath)
+	if err != nil {
+		logf("Catalog annotation: cannot read stack: %v", err)
+		return nil
+	}
+	type projected struct{ x, y float64 }
+	cat := make([]projected, 0, len(tile.Stars))
+	for _, st := range tile.Stars {
+		x, y := wcsTanForward(&w, st.RA, st.Dec)
+		if x >= 0 && y >= 0 && x < float64(iw) && y < float64(ih) {
+			cat = append(cat, projected{x: x, y: y})
+		}
+	}
+	stars := detectStars(&frame{Width: iw, Height: ih, Pix: pix}, 300)
+	const tolPix = 8.0
+	var anomalies []anomalyRecord
+	for _, st := range stars {
+		best := tolPix
+		for _, c := range cat {
+			d := math.Hypot(c.x-st.X, c.y-st.Y)
+			if d < best {
+				best = d
+			}
+		}
+		if best >= tolPix {
+			ra, dec := wcsTanInverseSIP(&w, st.X, st.Y)
+			anomalies = append(anomalies, anomalyRecord{X: st.X, Y: st.Y, RA: ra, Dec: dec, Flux: st.Flux})
+		}
+	}
+	jpgPath := filepath.Join(outputDir, "stacked_mean.jpg")
+	if f, err := os.Open(jpgPath); err == nil {
+		if src, jerr := jpeg.Decode(f); jerr == nil {
+			f.Close()
+			rgba := image.NewRGBA(src.Bounds())
+			for y := rgba.Bounds().Min.Y; y < rgba.Bounds().Max.Y; y++ {
+				for x := rgba.Bounds().Min.X; x < rgba.Bounds().Max.X; x++ {
+					rgba.Set(x, y, src.At(x, y))
+				}
+			}
+			cross := func(cx, cy float64, col color.RGBA, r int) {
+				for d := -r; d <= r; d++ {
+					for _, q := range [][2]int{{d, 0}, {0, d}} {
+						x, y := int(math.Round(cx))+q[0], int(math.Round(cy))+q[1]
+						if x >= 0 && y >= 0 && x < iw && y < ih {
+							rgba.Set(x, y, col)
+						}
+					}
+				}
+			}
+			green := color.RGBA{0, 255, 0, 255}
+			red := color.RGBA{255, 0, 0, 255}
+			for _, c := range cat {
+				cross(c.x, c.y, green, 2)
+			}
+			for _, a := range anomalies {
+				cross(a.X, a.Y, red, 4)
+			}
+			outPath := filepath.Join(outputDir, "stacked_annotated.jpg")
+			if of, err := os.Create(outPath); err == nil {
+				if e := jpeg.Encode(of, rgba, &jpeg.Options{Quality: 92}); e != nil {
+					logf("Catalog annotation: overlay encode: %v", e)
+					os.Remove(outPath)
+				} else {
+					logf("Catalog annotation: wrote %s (%d catalog, %d anomalies)", outPath, len(cat), len(anomalies))
+				}
+				of.Close()
+			}
+		} else {
+			f.Close()
+			logf("Catalog annotation: jpeg decode: %v", jerr)
+		}
+	}
+	if err := writeJSON(filepath.Join(outputDir, "anomalies.json"), anomalies); err != nil {
+		logf("Catalog annotation: anomalies.json: %v", err)
+	}
 	return nil
 }
 
@@ -14770,6 +14903,7 @@ func runSelfTests() int {
 		{"pipeline grid self-flat sigma stack-only", testPipelineGridSelfFlatSigmaStackOnly},
 		{"pipeline post-only", testPipelinePostOnly},
 		{"plate solve post-only starless", testPlateSolvePostOnlyNoStars},
+		{"catalog annotation skip", testCatalogAnnotationSkip},
 		{"remove stars basic", testRemoveStarsBasic},
 		{"remove stars empty", testRemoveStarsEmpty},
 		{"remove stars edge", testRemoveStarsEdge},
@@ -16038,6 +16172,38 @@ func testPipelineStackOnly() error {
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "TIFF")); err == nil {
 		return errors.New("TIFF folder should not exist without --tiff flag")
+	}
+	return nil
+}
+
+func testCatalogAnnotationSkip() error {
+	dir, err := os.MkdirTemp("", "skystacker-annotate-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	// No plate solution at all: annotation must be a no-op, not an error.
+	if err := runCatalogAnnotation(dir, runOptions{}); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "anomalies.json")); err == nil {
+		return errors.New("unexpected anomalies.json without plate solution")
+	}
+	// With a plate solution but no cached Gaia tile it must also skip cleanly.
+	sol := plateSolution{WCS: wcsTan{CRVAL1: 1.0, CRVAL2: 2.0, CRPIX1: 100, CRPIX2: 100,
+		CD: [2][2]float64{{1e-6, 0}, {0, -1e-6}}}}
+	if err := writeJSON(filepath.Join(dir, "plate_solution.json"), &sol); err != nil {
+		return err
+	}
+	if err := runCatalogAnnotation(dir, runOptions{}); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "anomalies.json")); err == nil {
+		return errors.New("unexpected anomalies.json without cached Gaia tile")
+	}
+	opts, err := parseArgs([]string{"--annotate"})
+	if err != nil || !opts.Annotate {
+		return fmt.Errorf("--annotate parse: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -22002,6 +22168,7 @@ func main() {
 		CreateFITS:           opts.CreateFITS,
 		CreateXISF:           opts.CreateXISF,
 		HFRQuality:           opts.HFRQuality,
+		Annotate:             opts.Annotate,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

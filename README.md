@@ -427,6 +427,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--self-flat-model string` | Self-flat model: `grid` (default, Phase-3 sensor-space with IRLS) or `registered` (v1 compatibility) | `grid` |
 | `--self-flat-linear-srgb` | Experimental: apply grid self-flat in linear light via sRGB EOTF (approximation; off by default) | off |
 | `--hfr-quality` | Use median star HFR (`FWHM ≈ 1.995·HFR`) instead of blob size for advanced frame-quality weighting | `false` |
+| `--annotate` | Project cached Gaia stars through the plate solution into `stacked_annotated.jpg`; write unmatched detections to `anomalies.json` (offline) | `false` |
 
 ### Normalization
 
@@ -637,7 +638,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 192 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 193 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

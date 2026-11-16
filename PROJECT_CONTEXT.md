@@ -1629,3 +1629,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--hfr-quality` (opt-in): advanced frame-quality FWHM proxy uses median star HFR (`1.995*HFR`) instead of connected-component blob size. `testHFRQuality`; selftests 191.
 
 - Added asymmetric sigma clipping (`--sigma-clip-low`, `--sigma-clip-high`, 0 = symmetric); threaded through `reduceTilesStack`/`reduceTile` via optional params so all existing call sites keep symmetric behavior. `testSigmaClipAsymmetric`; selftests 192.
+
+- Added `--annotate`: offline catalog annotation projects cached Gaia stars through the stored plate solution (SIP applied via `wcsTanForward`), draws `stacked_annotated.jpg`, and writes unmatched detections to `anomalies.json` (8 px tolerance). `testCatalogAnnotationSkip`; selftests 193.

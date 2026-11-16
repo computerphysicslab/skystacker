@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 192. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 193. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 192 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 193 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
@@ -109,6 +109,7 @@ Flags are accepted before or after the positional input directory. Default input
 - `--test-debayer PATH` — one-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg`.
 - `--plate-solve` — run the TAN WCS plate solver after stacking, or on the existing `_work/stacked_mean.f32raw` in `--post-only` (stars re-detected from the stored stack, seeded by `--plate-center`); writes `plate_solution.json`.
 - `--plate-center RA,DEC` — seed for `--plate-solve` in decimal degrees. Falls back to the reference frame's FITS-header `RA`/`DEC` when unset; blind mode scans only the 3×3 nside=64 neighbourhood around (0,0) and will fail on a real field.
+- `--annotate` — offline catalog annotation: projects cached Gaia stars through `plate_solution.json` (SIP included) into `stacked_annotated.jpg` (green crosses) and writes `anomalies.json` for blind detections farther than 8 px from any catalog source (red crosses). Skips cleanly without plate solution or cached tile.
 - `--png` — write `stacked_mean.png` alongside the JPEGs (same gamma 0.5 LUT as the JPEGs, so the two are directly comparable; lossless).
 - `--bmp` — write `stacked_mean.bmp` alongside the JPEGs (hand-written uncompressed 24-bit BMP, BGR, bottom-up, 4-byte row padding).
 
