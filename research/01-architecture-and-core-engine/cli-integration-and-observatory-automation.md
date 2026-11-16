@@ -183,3 +183,12 @@ Operational CLI flags include calibration, `--self-flat`, `--bpm`,
 `--plate-solve`, `--comet-center`, and SER input. Observatory automation,
 return-code protocols, and live APIs in this document are design notes, not
 shipped behavior. Release binaries are static `CGO_ENABLED=0` builds.
+
+---
+
+## 2026-11-16 deep dive append (SkyStacker)
+
+See `../05-research-deep-dive-2026-11-16.md` (pillars B/C). Key items for this repo:
+- Gaia Archive v3.15 / DR4 timing and client constraints (concurrency, queue, timeouts, 50k row limit, renamed DataLink products) if any TAP/DataLink client is added or audited.
+- Observatory automation patterns (ASCOM Alpaca, REST/WebSocket telemetry) — potential future metadata ingestion before FITS header sealing (not implemented).
+- IVOA ProvenanceDM (ActivityDescription/ActivityConfiguration) — recommended for auditable runs (version, flags, catalogue/cache versions). Current run reports are text/JSON-adjacent in practice; provenance emission is a future enhancement.

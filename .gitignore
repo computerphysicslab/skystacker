@@ -20,6 +20,7 @@ coverage.html
 *.pprof
 
 # SkyStacker processing outputs and working data
+0_skystacker_results/
 skystacker_results/
 **/skystacker_results/
 _work/
@@ -39,13 +40,14 @@ patch_*.py
 /sessions/
 # Real astrophotography test dataset (do not commit; keep only locally)
 /assets/Orion-135mm/
+/assets/OrionNebula/
 # Uncomment if you keep astrophotography source frames inside this repository:
-# *.CR2
-# *.CR3
-# *.FIT
-# *.FITS
-# *.fit
-# *.fits
+*.CR2
+*.CR3
+*.FIT
+*.FITS
+*.fit
+*.fits
 
 # Environment variables, credentials and local configuration
 .env

@@ -377,3 +377,9 @@ In `main.go`: Gaia ADQL client, HEALPix nested queries, TAN WCS fit, and
 `plate_solution.json` via `--plate-solve`. Not in v0.6.0: sky-chart
 rendering, multi-catalogue annotation, and transient overlays. Those remain
 research.
+
+---
+
+## 2026-11-16 deep dive append (SkyStacker)
+
+See `../05-research-deep-dive-2026-11-16.md` (pillar B). Quad-based fast solves (Cedar-Solve/tetra3 lineage, ASTAP D50 trade-offs) are recommended evaluation points for robust lost-in-space workflows; NWAY-style Bayesian multi-catalog association is a research direction for annotation pipelines, not a current SkyStacker feature.

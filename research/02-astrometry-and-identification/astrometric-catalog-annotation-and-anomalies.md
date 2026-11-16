@@ -107,3 +107,11 @@ To integrate this specification seamlessly into `SkyStacker` or similar Go/Pytho
 `testWCSCatalogOverlay` and `testUnassociatedSourceFlagging` are specified
 here and are not registered in `runSelfTests`. Catalog annotation and
 anomaly flagging are not implemented.
+
+---
+
+## 2026-11-16 deep dive append (SkyStacker)
+
+See `../05-research-deep-dive-2026-11-16.md` (pillar B). Summary:
+- DCR is a first-order effect in wide-field chromatic astrometry (LSSTCam DP2, WFST); SkyStacker currently fits plate solutions/SIP storage in limited form per `TECHNICAL_SPEC.md` — any advanced DCR correction would require zenith/parallactic angle and atmospheric metadata plus model work (galsim.dcr/SCAMP-style ideas).
+- Catalogue annotation must anticipate Gaia Archive v3.15 constraints and DR4 transition (2026). Current plate-solving paths in the tree should be audited against TAP/DataLink naming and rate limits if used against live services.

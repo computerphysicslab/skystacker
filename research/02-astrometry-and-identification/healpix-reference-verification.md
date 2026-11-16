@@ -82,3 +82,9 @@ The diagnostic calibration run that confirmed the `theta`/`phi` convention and e
 The nested HEALPix helpers are in `main.go` and covered by `testHealpix*`.
 The fixture path is `assets/testdata/healpix_reference.json`. This document
 remains the verification log, not a pending implementation task.
+
+---
+
+## 2026-11-16 deep dive append (SkyStacker)
+
+See `../05-research-deep-dive-2026-11-16.md` (pillar B). HATS/LSDB (Apache Parquet per adaptive HEALPix pixel) and cds-healpix-rust/MOCPy/HiPS/MOC workflows are the modern path for billion-row reference handling outside central TAP; consider for offline catalogue caches if SkyStacker grows annotation features.

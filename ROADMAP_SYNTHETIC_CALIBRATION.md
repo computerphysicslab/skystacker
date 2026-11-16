@@ -185,3 +185,8 @@ the session log in `PROJECT_CONTEXT.md`. Each item is one commit. After
 each commit, update `PROJECT_CONTEXT.md`'s "Still open" list so the next
 session starts from the current state, not from this file's initial
 state.
+
+## Appendix: 2026-11-16 research deep dive
+
+- Full synthesis (English): `research/05-research-deep-dive-2026-11-16.md` (pillars A–C: calibration/detectors, astrometry/catalogues/indexing, architecture/provenance/automation). Spanish draft archived at `research/last-research.md`.
+- Backlog items flagged by research: optional RTN 1G/3G/5G dark profiling and wavelength-aware BFE (research/flagged); gamma/EOTF-aware self-flat division design; fix `detectCalibrationSubdirs`/`--calib-root` to accept lowercase `lights/darks/flats/biases` (observed with `assets/OrionNebula`); Gaia Archive v3.15/DR4 client constraints if TAP/DataLink is added; ProvenanceDM emission plan.

@@ -817,3 +817,15 @@ shows the robust fit wins decisively when outliers are present.
 Registered self-tests: **181**. No new dependencies; v1 and the Phase-1
 least-squares path are unchanged. Phase 4 (gamma-aware
 correction, real-flat validation) remains.
+
+---
+
+## 19. 2026-11-16 deep dive append (research synthesis)
+
+See `../05-research-deep-dive-2026-11-16.md` for the full English synthesis (pillars A–C). Calibration-specific highlights:
+- sCMOS RTN: multi-Gaussian (1G/3G/5G) dark modelling, CDS/pseudo-CDS temperature effects, SPAD light-leak confounds (research directions; not implemented).
+- Wavelength-dependent BFE (LSSTCam DMTN-329): motivates filter/wavelength-aware kernels conceptually; not implemented.
+- Ubercal/FGCM/HSC sky/global strategies and NoiseChisel: design references for future multiplicative/sky work; current SkyStacker self-flat is the grid model described in §17–§18.
+- Self-supervised denoising (N2V/PN2V risks, TDR/ASTERIS safeguards): do not adopt blind-spot denoisers as default without photometric validation and bounded restoration logic.
+- Cosmic rays/satellites: stacking rejection exists; learned CR masks and Radon/sat tools are future research.
+- **Local dataset note:** `assets/OrionNebula/` now has 16 lights but lowercase calibration subfolders (`darks/flats/biases/lights`) caused a calibration-root path issue in a test run — tracked in §8 of `05-research-deep-dive-2026-11-16.md`; fix `detectCalibrationSubdirs`/`--calib-root` logic if desired.
