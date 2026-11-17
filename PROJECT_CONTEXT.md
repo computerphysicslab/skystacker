@@ -1653,3 +1653,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--narrowband HOO|SHO` + `--nb-a/--nb-b/--nb-c`: combines three mono `.f32raw` channels into an RGB stack before post-processing; `testNarrowband`; selftests 199.
 
 - Added `--resume`: if `<output>/_work/stacked_mean.f32raw` exists, switches to post-only automatically instead of re-stacking; `testResumeFromStack`; selftests 200.
+
+- Added diagnostic drizzle upsampling (`--drizzle-upsample N`, `--drizzle-pixfrac F`) writing `stacked_drizzled.f32raw/.jpg`; `testDrizzleUpsample`; selftests 201.

@@ -402,6 +402,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | --- | --- | --- |
 | `--config file.json` | Load flags from a JSON object (keys without `--`); explicit CLI flags win | — |
 | `--resume` | If the output dir already has a stacked float32 image, continue with post-processing instead of re-stacking | `false` |
+| `--drizzle-upsample N` / `--drizzle-pixfrac F` | Diagnostic drizzled N× upsample (`stacked_drizzled.f32raw/.jpg`), N=1 off | off / `1.0` |
 | `--output string` | Output directory | `<input>/0_skystacker_results` |
 | `--method string` | Stacking method: `mean`, `median`, or `sigma` | `sigma` |
 | `--workers int` | Maximum number of concurrent worker goroutines | Number of CPUs |
@@ -649,7 +650,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 200 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 201 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -687,7 +688,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 ### Tier 3 — Large, multi-day (`L`)
 
 - **Astrometric catalog annotation & unassociated-source flagging (extended)**: a basic offline version is shipped via `--annotate` (cached Gaia stars, SIP projection, annotated JPEG, `anomalies.json`). Remaining work: bundled NGC/IC/PGC/Messier/HD tables, elliptical apertures/leader lines/labels, and richer anomaly classes. Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`.
-- **Drizzle & Bayer drizzle integration**: Per-input-pixel *drop* onto the output grid with the drizzle kernel (`pixfrac`, `scale`), a weight/coverage accumulator, and a final normalise. Replaces `resampleToReference` in the registered path; pairs with `--scale < 1` upsampling. Bayer drizzle recovers colour without conventional demosaicing first. Tests: `testDrizzleKernel`, `testDrizzleIdentity`.
+- **Drizzle & Bayer drizzle integration**: `drizzleUpsample` + `--drizzle-upsample/--drizzle-pixfrac` write a diagnostic drizzled upsample of the final stack (`testDrizzleUpsample`). True per-frame drizzle resampling (weight/coverage accumulator replacing `resampleToReference`) and Bayer drizzle remain.
 - **Multiscale background modelling**: `--bg-multiscale` removes a coarse, object-protected 20th-percentile background grid before the polynomial fit (a first step; wavelet-scale processing remains). Test: `testMultiscaleBackground`.
 - **PSF-based deconvolution**: `--deconvolve` provides Gaussian-PSF Richardson–Lucy (tested on a synthetic star); Wiener/regularized variants remain.
 - **Star separation (PSF-based)**: `--starless` provides a crude annulus-median baseline; a proper star mask / PSF-based separation remains.

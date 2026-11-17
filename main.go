@@ -221,6 +221,8 @@ type cliOptions struct {
 	NBChannelB         string
 	NBChannelC         string
 	Resume             bool
+	DrizzleUpsample    int
+	DrizzlePixfrac     float64
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -455,6 +457,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.NBChannelB, "nb-b", "", "second narrowband mono stack (.f32raw): OIII for HOO, Ha for SHO")
 	fs.StringVar(&o.NBChannelC, "nb-c", "", "third narrowband mono stack (.f32raw): OIII for HOO/SHO")
 	fs.BoolVar(&o.Resume, "resume", false, "if an existing stack is present in the output directory, continue with post-processing instead of re-stacking")
+	fs.IntVar(&o.DrizzleUpsample, "drizzle-upsample", 1, "write an extra drizzled upsample of the stack at N x scale (1 = off)")
+	fs.Float64Var(&o.DrizzlePixfrac, "drizzle-pixfrac", 1.0, "drizzle kernel footprint in input pixels (0..1)")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -475,7 +479,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -591,6 +595,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.LocalNormalize {
 		o.Normalize = true
+	}
+	if o.DrizzleUpsample < 1 || o.DrizzleUpsample > 4 {
+		return nil, fmt.Errorf("--drizzle-upsample must be in [1, 4], got %d", o.DrizzleUpsample)
+	}
+	if o.DrizzlePixfrac < 0 || o.DrizzlePixfrac > 1 {
+		return nil, fmt.Errorf("--drizzle-pixfrac must be in [0, 1], got %g", o.DrizzlePixfrac)
 	}
 	if o.Narrowband != "" {
 		m := strings.ToUpper(o.Narrowband)
@@ -977,6 +987,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --narrowband M     HOO or SHO mapping from --nb-a/--nb-b/--nb-c mono .f32raw stacks")
 	fmt.Fprintln(w, "  --resume           reuse an existing stack in the output dir and continue with post-processing")
+	fmt.Fprintln(w, "  --drizzle-upsample N  write a drizzled N x upsample of the stack (1 = off)")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -4167,6 +4178,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Resume {
 		add("--resume")
 	}
+	if o.DrizzleUpsample > 1 {
+		add(fmt.Sprintf("--drizzle-upsample %d --drizzle-pixfrac %g", o.DrizzleUpsample, o.DrizzlePixfrac))
+	}
 	if o.Narrowband != "" {
 		add(fmt.Sprintf("--narrowband %s --nb-a %s --nb-b %s --nb-c %s", o.Narrowband,
 			quoteReportArg(o.NBChannelA), quoteReportArg(o.NBChannelB), quoteReportArg(o.NBChannelC)))
@@ -4535,28 +4549,30 @@ type runOptions struct {
 	// into its pixel frame in memory; the output is exactly refW x refH.
 	ReferenceCrop string
 
-	CreateTIFF   bool
-	CreateFITS   bool
-	CreateXISF   bool
-	HFRQuality   bool
-	Annotate     bool
-	Starless     bool
-	JSONReport   bool
-	BGMultiscale bool
-	Deconvolve   bool
-	DeconvSigma  float64
-	DeconvIters  int
-	Narrowband   string
-	NBChannelA   string
-	NBChannelB   string
-	NBChannelC   string
-	Resume       bool
-	PostCA       bool
-	PostColor    bool
-	PostFlatten  bool
-	PostSharpen  bool
-	PostHDR      bool
-	PostStretch  bool
+	CreateTIFF      bool
+	CreateFITS      bool
+	CreateXISF      bool
+	HFRQuality      bool
+	Annotate        bool
+	Starless        bool
+	JSONReport      bool
+	BGMultiscale    bool
+	Deconvolve      bool
+	DeconvSigma     float64
+	DeconvIters     int
+	Narrowband      string
+	NBChannelA      string
+	NBChannelB      string
+	NBChannelC      string
+	Resume          bool
+	DrizzleUpsample int
+	DrizzlePixfrac  float64
+	PostCA          bool
+	PostColor       bool
+	PostFlatten     bool
+	PostSharpen     bool
+	PostHDR         bool
+	PostStretch     bool
 
 	NoCache   bool
 	CacheDir  string
@@ -10146,6 +10162,25 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			logf("Cache removed: %s (use --keep-cache to preserve)", cacheDir)
 		}
 	}
+	if opts.DrizzleUpsample > 1 {
+		dw, dh, dpix, derr := readRawFloat32RGB(filepath.Join(workDir, "stacked_mean.f32raw"))
+		if derr != nil {
+			logf("WARNING: drizzle upsample: %v", derr)
+		} else {
+			dr := drizzleUpsample(&frame{Width: dw, Height: dh, Pix: dpix}, opts.DrizzleUpsample, opts.DrizzlePixfrac)
+			logf("Writing drizzled %dx upsample (%dx%d)", opts.DrizzleUpsample, dr.Width, dr.Height)
+			if err := writeFileAtomic(filepath.Join(outputDir, "stacked_drizzled.f32raw"), func(w io.Writer) error {
+				return writeRawFloat32RGB(w, dr.Width, dr.Height, dr.Pix)
+			}); err != nil {
+				logf("WARNING: drizzle output: %v", err)
+			}
+			if err := writeFileAtomic(filepath.Join(outputDir, "stacked_drizzled.jpg"), func(w io.Writer) error {
+				return writePreviewJPEG(w, dr.Width, dr.Height, dr.Pix)
+			}); err != nil {
+				logf("WARNING: drizzle preview: %v", err)
+			}
+		}
+	}
 	if opts.Annotate {
 		if err := runCatalogAnnotation(outputDir, opts); err != nil {
 			logf("WARNING: catalog annotation: %v", err)
@@ -15240,6 +15275,7 @@ func runSelfTests() int {
 		{"config file", testConfigFile},
 		{"richardson lucy", testRichardsonLucy},
 		{"narrowband mapping", testNarrowband},
+		{"drizzle upsample", testDrizzleUpsample},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
@@ -18725,6 +18761,35 @@ func testDiskSpaceGuard() error {
 	return nil
 }
 
+func testDrizzleUpsample() error {
+	src := &frame{Width: 2, Height: 2, Pix: []float32{
+		0.1, 0.1, 0.1, 0.2, 0.2, 0.2,
+		0.3, 0.3, 0.3, 0.4, 0.4, 0.4,
+	}}
+	id := drizzleUpsample(src, 1, 1)
+	if id.Width != 2 || id.Height != 2 {
+		return fmt.Errorf("scale 1 dims %dx%d", id.Width, id.Height)
+	}
+	for i := range src.Pix {
+		if math.Abs(float64(id.Pix[i]-src.Pix[i])) > 1e-6 {
+			return fmt.Errorf("scale 1 pixel %d: %g", i, id.Pix[i])
+		}
+	}
+	up := drizzleUpsample(src, 2, 1)
+	if up.Width != 4 || up.Height != 4 {
+		return fmt.Errorf("scale 2 dims %dx%d", up.Width, up.Height)
+	}
+	v := up.Pix[(1*4+1)*3]
+	if v <= 0.05 || v >= 0.45 {
+		return fmt.Errorf("scale 2 center value %g out of expected range", v)
+	}
+	opts, err := parseArgs([]string{"--drizzle-upsample", "3", "--drizzle-pixfrac", "0.7"})
+	if err != nil || opts.DrizzleUpsample != 3 || math.Abs(opts.DrizzlePixfrac-0.7) > 1e-9 {
+		return fmt.Errorf("drizzle flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testNarrowband() error {
 	mk := func(v float32) *frame {
 		f := &frame{Width: 2, Height: 2, Pix: make([]float32, 2*2*3)}
@@ -19910,6 +19975,74 @@ type bgSample struct {
 // narrowbandCombine maps three monochrome channels into an RGB frame.
 // HOO: R=Ha, G=OIII, B=OIII. SHO: R=SII, G=Ha, B=OIII.
 // All three channels must have identical dimensions.
+// drizzleUpsample splats each input pixel onto a finer output grid using
+// the drizzle triangular kernel of half-width pixfrac*scale (in output
+// pixels). With pixfrac=1 and integer scale the result conserves total
+// flux up to overlap normalisation; it is a diagnostic upsampler, not a
+// multi-frame dither reconstruction.
+func drizzleUpsample(src *frame, scale int, pixfrac float64) *frame {
+	if src == nil || scale < 1 {
+		return src
+	}
+	if pixfrac <= 0 {
+		pixfrac = 1
+	}
+	if pixfrac > 1 {
+		pixfrac = 1
+	}
+	ow, oh := src.Width*scale, src.Height*scale
+	out := &frame{Width: ow, Height: oh, Pix: make([]float32, ow*oh*3)}
+	weights := make([]float32, ow*oh)
+	r := pixfrac * float64(scale)
+	for y := 0; y < src.Height; y++ {
+		for x := 0; x < src.Width; x++ {
+			si := (y*src.Width + x) * 3
+			if src.Pix[si] < 0 {
+				continue
+			}
+			cx := float64(x)*float64(scale) + float64(scale)/2 - 0.5
+			cy := float64(y)*float64(scale) + float64(scale)/2 - 0.5
+			x0 := int(math.Floor(cx - r))
+			x1 := int(math.Ceil(cx + r))
+			y0 := int(math.Floor(cy - r))
+			y1 := int(math.Ceil(cy + r))
+			if x0 < 0 {
+				x0 = 0
+			}
+			if y0 < 0 {
+				y0 = 0
+			}
+			if x1 >= ow {
+				x1 = ow - 1
+			}
+			if y1 >= oh {
+				y1 = oh - 1
+			}
+			for yy := y0; yy <= y1; yy++ {
+				for xx := x0; xx <= x1; xx++ {
+					wt := (1 - math.Abs(float64(xx)-cx)/r) * (1 - math.Abs(float64(yy)-cy)/r)
+					if wt <= 0 {
+						continue
+					}
+					pi := yy*ow + xx
+					weights[pi] += float32(wt)
+					for c := 0; c < 3; c++ {
+						out.Pix[pi*3+c] += src.Pix[si+c] * float32(wt)
+					}
+				}
+			}
+		}
+	}
+	for pi := range weights {
+		if weights[pi] > 1e-8 {
+			for c := 0; c < 3; c++ {
+				out.Pix[pi*3+c] /= weights[pi]
+			}
+		}
+	}
+	return out
+}
+
 func narrowbandCombine(a, b, c *frame, mapping string) (*frame, error) {
 	if a == nil || b == nil || c == nil {
 		return nil, errors.New("narrowband: missing channel frame")
@@ -23034,6 +23167,8 @@ func main() {
 		NBChannelB:           opts.NBChannelB,
 		NBChannelC:           opts.NBChannelC,
 		Resume:               opts.Resume,
+		DrizzleUpsample:      opts.DrizzleUpsample,
+		DrizzlePixfrac:       opts.DrizzlePixfrac,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,
