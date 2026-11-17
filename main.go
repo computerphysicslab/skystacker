@@ -224,6 +224,8 @@ type cliOptions struct {
 	Resume             bool
 	DrizzleUpsample    int
 	DrizzlePixfrac     float64
+	WaveSharpen        bool
+	WaveGains          string
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -461,6 +463,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Resume, "resume", false, "if an existing stack is present in the output directory, continue with post-processing instead of re-stacking")
 	fs.IntVar(&o.DrizzleUpsample, "drizzle-upsample", 1, "write an extra drizzled upsample of the stack at N x scale (1 = off)")
 	fs.Float64Var(&o.DrizzlePixfrac, "drizzle-pixfrac", 1.0, "drizzle kernel footprint in input pixels (0..1)")
+	fs.BoolVar(&o.WaveSharpen, "wavesharp", false, "multi-scale Gaussian detail enhancement (classical BXT-like baseline)")
+	fs.StringVar(&o.WaveGains, "wave-gains", "0.25,0.15,0.08", "coarse-to-fine detail gains for --wavesharp")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -481,7 +485,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -597,6 +601,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.LocalNormalize {
 		o.Normalize = true
+	}
+	if o.WaveGains != "" {
+		if _, err := parseWaveGains(o.WaveGains); err != nil {
+			return nil, err
+		}
 	}
 	if o.DrizzleUpsample < 1 || o.DrizzleUpsample > 4 {
 		return nil, fmt.Errorf("--drizzle-upsample must be in [1, 4], got %d", o.DrizzleUpsample)
@@ -991,6 +1000,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --narrowband M     HOO or SHO mapping from --nb-a/--nb-b/--nb-c mono .f32raw stacks")
 	fmt.Fprintln(w, "  --resume           reuse an existing stack in the output dir and continue with post-processing")
 	fmt.Fprintln(w, "  --drizzle-upsample N  write a drizzled N x upsample of the stack (1 = off)")
+	fmt.Fprintln(w, "  --wavesharp        multi-scale detail enhancement (--wave-gains coarser..finer)")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -4187,6 +4197,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.DrizzleUpsample > 1 {
 		add(fmt.Sprintf("--drizzle-upsample %d --drizzle-pixfrac %g", o.DrizzleUpsample, o.DrizzlePixfrac))
 	}
+	if o.WaveSharpen {
+		add("--wavesharp --wave-gains " + o.WaveGains)
+	}
 	if o.Narrowband != "" {
 		add(fmt.Sprintf("--narrowband %s --nb-a %s --nb-b %s --nb-c %s", o.Narrowband,
 			quoteReportArg(o.NBChannelA), quoteReportArg(o.NBChannelB), quoteReportArg(o.NBChannelC)))
@@ -4574,6 +4587,8 @@ type runOptions struct {
 	Resume          bool
 	DrizzleUpsample int
 	DrizzlePixfrac  float64
+	WaveSharpen     bool
+	WaveGains       string
 	PostCA          bool
 	PostColor       bool
 	PostFlatten     bool
@@ -15374,6 +15389,7 @@ func runSelfTests() int {
 		{"richardson lucy", testRichardsonLucy},
 		{"narrowband mapping", testNarrowband},
 		{"drizzle upsample", testDrizzleUpsample},
+		{"wavesharp", testWaveSharpen},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
@@ -18859,6 +18875,39 @@ func testDiskSpaceGuard() error {
 	return nil
 }
 
+func testWaveSharpen() error {
+	gains, err := parseWaveGains("0.3,0.2,0.1")
+	if err != nil || len(gains) != 3 {
+		return fmt.Errorf("gains: %v err=%v", gains, err)
+	}
+	if _, err := parseWaveGains("0.3,0.2,0.1,0.05"); err == nil {
+		return errors.New("4 gains accepted")
+	}
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx, dy := float64(x)-32, float64(y)-32
+			v := float32(0.05 + 0.9*math.Exp(-(dx*dx+dy*dy)/(2*3.0*3.0)))
+			i := (y*w + x) * 3
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = v, v, v
+		}
+	}
+	out := multiScaleSharpen(f, []float64{0.2, 0.15, 0.08})
+	center := (32*w + 32) * 3
+	if out.Pix[center] <= f.Pix[center] {
+		return fmt.Errorf("wavesharp did not raise star peak: %g -> %g", f.Pix[center], out.Pix[center])
+	}
+	if out.Pix[(10*w+10)*3] > f.Pix[(10*w+10)*3]+0.01 {
+		return errors.New("wavesharp lifted the background")
+	}
+	opts, err := parseArgs([]string{"--wavesharp", "--wave-gains", "0.3,0.2,0.1"})
+	if err != nil || !opts.WaveSharpen || opts.WaveGains != "0.3,0.2,0.1" {
+		return fmt.Errorf("wavesharp flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testDrizzleUpsample() error {
 	src := &frame{Width: 2, Height: 2, Pix: []float32{
 		0.1, 0.1, 0.1, 0.2, 0.2, 0.2,
@@ -20241,6 +20290,61 @@ func blurMono(src []float32, w, h int, sigma float64) []float32 {
 				acc += float64(tmp[yy*w+x]) * kw[k+r]
 			}
 			out[y*w+x] = float32(acc)
+		}
+	}
+	return out
+}
+
+// parseWaveGains parses 1-3 comma-separated coarse-to-fine gains.
+func parseWaveGains(s string) ([]float64, error) {
+	if strings.TrimSpace(s) == "" {
+		return []float64{0.25, 0.15, 0.08}, nil
+	}
+	parts := strings.Split(s, ",")
+	if len(parts) > 3 {
+		return nil, errors.New("--wave-gains accepts at most 3 values")
+	}
+	out := make([]float64, 0, len(parts))
+	for _, p := range parts {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil || v < 0 || v > 1 {
+			return nil, fmt.Errorf("invalid --wave-gains value %q", p)
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// multiScaleSharpen adds gain-controlled detail from several Gaussian
+// scales back into the image. This is a classical, noise-aware alternative
+// to neural deconvolution (see research §13): default gains are kept low
+// and applied from coarse to fine so bright edges do not get ringing halos.
+func multiScaleSharpen(f *frame, gains []float64) *frame {
+	if f == nil || len(gains) == 0 {
+		return f
+	}
+	sigmas := []float64{18.0, 6.0, 2.0}
+	out := &frame{Width: f.Width, Height: f.Height, Pix: append([]float32(nil), f.Pix...)}
+	n := f.Width * f.Height
+	for i, gain := range gains {
+		if gain == 0 || i >= len(sigmas) {
+			continue
+		}
+		for c := 0; c < 3; c++ {
+			base := make([]float32, n)
+			for p := 0; p < n; p++ {
+				base[p] = out.Pix[p*3+c]
+			}
+			blur := blurMono(base, f.Width, f.Height, sigmas[i])
+			for p := 0; p < n; p++ {
+				v := float64(out.Pix[p*3+c]) + gain*(float64(out.Pix[p*3+c])-float64(blur[p]))
+				if v < 0 {
+					v = 0
+				} else if v > 1 {
+					v = 1
+				}
+				out.Pix[p*3+c] = float32(v)
+			}
 		}
 	}
 	return out
@@ -21992,6 +22096,16 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		cur = richardsonLucy(cur, opts.DeconvSigma, opts.DeconvIters)
 		step1Frame = cur
 	}
+	if opts.WaveSharpen {
+		gains, perr := parseWaveGains(opts.WaveGains)
+		if perr != nil {
+			logf("WARNING: --wavesharp: %v", perr)
+		} else {
+			logf("  post: multi-scale detail enhancement (gains=%v)", gains)
+			cur = multiScaleSharpen(cur, gains)
+			step1Frame = cur
+		}
+	}
 
 	if opts.PostCA {
 		logf("  post: chromatic aberration reduction")
@@ -23289,6 +23403,8 @@ func main() {
 		Resume:               opts.Resume,
 		DrizzleUpsample:      opts.DrizzleUpsample,
 		DrizzlePixfrac:       opts.DrizzlePixfrac,
+		WaveSharpen:          opts.WaveSharpen,
+		WaveGains:            opts.WaveGains,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

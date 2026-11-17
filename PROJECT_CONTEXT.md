@@ -1659,3 +1659,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--normalize-per-channel`: global normalization with independent per-channel median/MAD (`channelNormStats`); overrides local normalization; `testNormalizePerChannel`; selftests 202.
 
 - E2E smoke (OrionNebula limit 4, `/tmp/onb_combo`): combined `--fits --xisf --json-report --drizzle-upsample 2 --normalize --normalize-mode additive --sigma-clip-low 2 --dark --bias` produced all scientific outputs including `stacked_drizzled.*`; a follow-up `--resume --deconvolve --deconv-iters 1 --starless --bg-multiscale` run correctly switched to post-only and produced starless/star layers. All outputs present; no crashes.
+
+- Added `--wavesharp`/`--wave-gains`: coarse-to-fine multi-scale Gaussian detail enhancement as a classical, stdlib-only analogue to AI deconvolution (research §13). `testWaveSharpen`; selftests 203.

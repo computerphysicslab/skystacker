@@ -269,3 +269,6 @@ SkyStacker currently fits/stores SIP order-2 in plate solving output but does **
   - Multi-scale wavelets: not implemented; a radial-frequency band split with independent gain per band is feasible in stdlib Go and complements RL deconvolution.
   - Derotation: external (WinJUPOS); SkyStacker should document the handoff rather than reimplement it.
 - **Honest boundary:** when seeing destroys contrast before capture, no post-processing can restore information. The research should not overpromise; recommend capture-side mitigations explicitly alongside any sharpening flag.
+### 13.3 Implemented classical analogue (2026-11-17)
+
+- `--wavesharp` / `--wave-gains` implement coarse-to-fine multi-scale Gaussian detail enhancement (default gains 0.25/0.15/0.08 at sigma 18/6/2 px) in post-processing. This is a deliberately conservative classical baseline next to `--deconvolve` (RL), not a neural BXT equivalent; see `testWaveSharpen`. The neural path remains out of scope (§13.2).
