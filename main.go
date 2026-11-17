@@ -211,6 +211,7 @@ type cliOptions struct {
 	Annotate           bool
 	Starless           bool
 	JSONReport         bool
+	BGMultiscale       bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -351,6 +352,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
 	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
+	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -854,6 +856,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
+	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -4035,6 +4038,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.JSONReport {
 		add("--json-report")
 	}
+	if o.BGMultiscale {
+		add("--bg-multiscale")
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4399,19 +4405,20 @@ type runOptions struct {
 	// into its pixel frame in memory; the output is exactly refW x refH.
 	ReferenceCrop string
 
-	CreateTIFF  bool
-	CreateFITS  bool
-	CreateXISF  bool
-	HFRQuality  bool
-	Annotate    bool
-	Starless    bool
-	JSONReport  bool
-	PostCA      bool
-	PostColor   bool
-	PostFlatten bool
-	PostSharpen bool
-	PostHDR     bool
-	PostStretch bool
+	CreateTIFF   bool
+	CreateFITS   bool
+	CreateXISF   bool
+	HFRQuality   bool
+	Annotate     bool
+	Starless     bool
+	JSONReport   bool
+	BGMultiscale bool
+	PostCA       bool
+	PostColor    bool
+	PostFlatten  bool
+	PostSharpen  bool
+	PostHDR      bool
+	PostStretch  bool
 
 	NoCache   bool
 	CacheDir  string
@@ -15081,6 +15088,7 @@ func runSelfTests() int {
 		{"advanced frame quality weighting", testComputeAdvancedQuality},
 		{"compute norm stats", testComputeNormStats},
 		{"normalize modes", testNormalizeModes},
+		{"multiscale background", testMultiscaleBackground},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
@@ -18532,6 +18540,43 @@ func testDiskSpaceGuard() error {
 	return nil
 }
 
+func testMultiscaleBackground() error {
+	const w, h = 128, 128
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			v := float32(0.1 + 0.3*float64(x)/float64(w))
+			i := (y*w + x) * 3
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = v, v, v
+		}
+	}
+	// Bright star must not pull the percentile background up.
+	for dy := -2; dy <= 2; dy++ {
+		for dx := -2; dx <= 2; dx++ {
+			i := ((64+dy)*w + 64 + dx) * 3
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = 1, 1, 1
+		}
+	}
+	out := multiscaleBackground(f, 64)
+	colMedian := func(x int) float64 {
+		vals := make([]float64, h)
+		for y := 0; y < h; y++ {
+			vals[y] = float64(out.Pix[(y*w+x)*3])
+		}
+		sort.Float64s(vals)
+		return vals[h/2]
+	}
+	left, right := colMedian(4), colMedian(w-5)
+	if math.Abs(left-right) > 0.08 {
+		return fmt.Errorf("gradient not flattened: left %.3f right %.3f", left, right)
+	}
+	opts, err := parseArgs([]string{"--bg-multiscale"})
+	if err != nil || !opts.BGMultiscale {
+		return fmt.Errorf("--bg-multiscale parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testNormalizeModes() error {
 	fs := normStats{Median: 0.2, MAD: 0.01}
 	ref := normStats{Median: 0.4, MAD: 0.02}
@@ -21126,6 +21171,109 @@ func writePostPreview(dir, name string, f *frame) error {
 	})
 }
 
+// multiscaleBackground removes a coarse, object-protected background
+// field before the polynomial fit. Background samples are the 20th
+// percentile of luminance in each block (bright stars/nebula are ignored),
+// interpolated bilinearly across the image. The chosen block size is at
+// least 64 px and at most a quarter of the shorter image side.
+func multiscaleBackground(f *frame, block int) *frame {
+	if f == nil || f.Width < 16 || f.Height < 16 {
+		return f
+	}
+	m := f.Width
+	if f.Height < m {
+		m = f.Height
+	}
+	if block < 64 {
+		block = 64
+	}
+	if block > m/4 {
+		block = m / 4
+	}
+	if block < 16 {
+		return f
+	}
+	nx := (f.Width + block - 1) / block
+	ny := (f.Height + block - 1) / block
+	samples := make([]float32, nx*ny)
+	for by := 0; by < ny; by++ {
+		for bx := 0; bx < nx; bx++ {
+			x0, y0 := bx*block, by*block
+			x1, y1 := x0+block, y0+block
+			if x1 > f.Width {
+				x1 = f.Width
+			}
+			if y1 > f.Height {
+				y1 = f.Height
+			}
+			const bins = 256
+			var hist [bins]int64
+			total := int64(0)
+			for y := y0; y < y1; y += 2 {
+				for x := x0; x < x1; x += 2 {
+					i := (y*f.Width + x) * 3
+					v := 0.299*f.Pix[i] + 0.587*f.Pix[i+1] + 0.114*f.Pix[i+2]
+					if v <= 0 {
+						continue
+					}
+					if v >= 1 {
+						v = 0.999999
+					}
+					hist[int(v*bins)]++
+					total++
+				}
+			}
+			acc := int64(0)
+			v := float32(0)
+			for b := 0; b < bins; b++ {
+				acc += hist[b]
+				if acc >= total/5 {
+					v = float32(b) / bins
+					break
+				}
+			}
+			samples[by*nx+bx] = v
+		}
+	}
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for y := 0; y < f.Height; y++ {
+		gy := float64(y) / float64(block)
+		y0 := int(math.Floor(gy))
+		if y0 > ny-1 {
+			y0 = ny - 1
+		}
+		y1 := y0 + 1
+		if y1 > ny-1 {
+			y1 = ny - 1
+		}
+		wy := gy - float64(y0)
+		for x := 0; x < f.Width; x++ {
+			gx := float64(x) / float64(block)
+			x0 := int(math.Floor(gx))
+			if x0 > nx-1 {
+				x0 = nx - 1
+			}
+			x1 := x0 + 1
+			if x1 > nx-1 {
+				x1 = nx - 1
+			}
+			wx := gx - float64(x0)
+			v00, v10 := samples[y0*nx+x0], samples[y0*nx+x1]
+			v01, v11 := samples[y1*nx+x0], samples[y1*nx+x1]
+			bg := float32((1-wy)*((1-wx)*float64(v00)+wx*float64(v10)) + wy*((1-wx)*float64(v01)+wx*float64(v11)))
+			i := (y*f.Width + x) * 3
+			for c := 0; c < 3; c++ {
+				v := f.Pix[i+c] - bg
+				if v < 0 {
+					v = 0
+				}
+				out.Pix[i+c] = v
+			}
+		}
+	}
+	return out
+}
+
 func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	workPath := filepath.Join(outputDir, "_work", "stacked_mean.f32raw")
 	w, h, pix, err := readRawFloat32RGB(workPath)
@@ -21138,6 +21286,10 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	cur := src
 	var step1Frame, step4Frame, step5Frame, step6Frame, step7Frame *frame
 
+	if opts.BGMultiscale {
+		logf("  post: multiscale background removal")
+		cur = multiscaleBackground(cur, 256)
+	}
 	// Step 1: background removal (ALWAYS)
 	logf("  post: background removal (degree %d)", opts.BGDegree)
 	cur = removeBackground(cur, opts.BGDegree, opts.MaskBG)
@@ -22432,6 +22584,7 @@ func main() {
 		Annotate:             opts.Annotate,
 		Starless:             opts.Starless,
 		JSONReport:           opts.JSONReport,
+		BGMultiscale:         opts.BGMultiscale,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,
