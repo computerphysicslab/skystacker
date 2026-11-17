@@ -1641,3 +1641,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--json-report`: writes the existing processing report as `report.json`; covered by `testPipelineStackOnly`.
 
 - `--fits`/`--xisf` now emit the linear mean stack as `stacked_mean.fits`/`stacked_mean.xisf` in addition to the sum; e2e verified on OrionNebula limit 4 for `--fits --xisf --bpm-auto`.
+
+- Added `--normalize-mode` (scale-offset default, additive, multiplicative) applied consistently to global and tile-local normalization; `testNormalizeModes`; selftests 195.

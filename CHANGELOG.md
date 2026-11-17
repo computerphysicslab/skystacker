@@ -20,3 +20,4 @@
 - Hardened `--bpm-auto`: refuse maps flagging >0.1% of the sensor (avoids pathological thresholds on low-noise masters).
 - Added `--json-report` (structured `report.json` alongside `report.txt`).
 - `--fits`/`--xisf` now also write `stacked_mean.fits`/`stacked_mean.xisf` (linear mean stack, WCS in FITS).
+- Added `--normalize-mode` (scale-offset/additive/multiplicative) with `testNormalizeModes`; self-tests 195.

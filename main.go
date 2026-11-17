@@ -162,6 +162,7 @@ type cliOptions struct {
 	Force                bool
 	Normalize            bool
 	LocalNormalize       bool
+	NormalizeMode        string
 	LNTileSize           int
 	SynthCalib           bool
 	SynthDark            bool
@@ -332,6 +333,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
 	fs.BoolVar(&o.Normalize, "normalize", false, "globally normalize each frame sky background to the reference frame (requires registration)")
 	fs.BoolVar(&o.LocalNormalize, "local-normalize", false, "per-tile normalization (implies --normalize; requires registration)")
+	fs.StringVar(&o.NormalizeMode, "normalize-mode", "scale-offset", "normalization mode: scale-offset (default), additive, multiplicative")
 	fs.IntVar(&o.LNTileSize, "ln-tile-size", 256, "tile side length for --local-normalize (64-2048)")
 	fs.BoolVar(&o.SynthCalib, "synthetic-calibration", false, "report which calibration components are recoverable from lights; never fabricates frames")
 	fs.BoolVar(&o.SynthDark, "synthetic-dark", false, "generate a synthetic dark frame (REFUSED by default; see --synthetic-calibration)")
@@ -485,6 +487,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.LocalNormalize {
 		o.Normalize = true
+	}
+	switch o.NormalizeMode {
+	case "", "scale-offset", "additive", "multiplicative":
+	default:
+		return nil, fmt.Errorf("invalid --normalize-mode %q", o.NormalizeMode)
 	}
 	if !healpixNsideValid(o.GaiaNside) {
 		return nil, fmt.Errorf("--gaia-nside must be a power of 2 in [2, 8192], got %d", o.GaiaNside)
@@ -818,6 +825,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --tile-size N         tile side length for median/sigma reduction (default: auto)")
 	fmt.Fprintln(w, "  --normalize       globally normalize each frame to the reference (requires registration)")
 	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
+	fmt.Fprintln(w, "  --normalize-mode M  scale-offset (default), additive, or multiplicative normalization")
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
 	fmt.Fprintln(w, `  --black-level string  black-level pedestal: "auto" reads EXIF BlackLevel / FITS BLACK_LVL and subtracts it (default: off)`)
 	fmt.Fprintln(w, "  --bpm string      bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs; coordinates are native pixels (default: off)")
@@ -3979,6 +3987,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Normalize {
 		add("--normalize")
 	}
+	if o.NormalizeMode != "" && o.NormalizeMode != "scale-offset" {
+		add("--normalize-mode " + o.NormalizeMode)
+	}
 	if o.LocalNormalize {
 		add("--local-normalize")
 		if o.LNTileSize > 0 && o.LNTileSize != 256 {
@@ -4371,6 +4382,7 @@ type runOptions struct {
 	Force                bool
 	Normalize            bool
 	LocalNormalize       bool
+	NormalizeMode        string
 	LNTileSize           int
 	SynthCalib           bool
 	BlackLevel           string
@@ -4724,19 +4736,60 @@ func applyNormTransform(f *frame, scale, offset float64) *frame {
 // globalNormalizeWithRef scales f so its background median and MAD
 // match the reference. Frames with degenerate stats are returned
 // unchanged; nothing useful can be computed from them.
-func globalNormalizeWithRef(f *frame, ref normStats) *frame {
+// firstMode returns the first normalization mode from a variadic list.
+func firstMode(modes []string) string {
+	if len(modes) > 0 {
+		return modes[0]
+	}
+	return ""
+}
+
+// normParams converts frame/reference robust background statistics into
+// the (scale, offset) correction. Modes:
+//   - "scale-offset" (default): robust scale on MAD + median match
+//   - "additive": only the median difference is removed
+//   - "multiplicative": only a clamped median ratio is applied
+func normParams(fs, ref normStats, mode string) (scale, offset float64) {
+	switch mode {
+	case "additive":
+		return 1.0, ref.Median - fs.Median
+	case "multiplicative":
+		if fs.Median < 1e-6 {
+			return 1.0, 0.0
+		}
+		s := ref.Median / fs.Median
+		if s < 0.5 {
+			s = 0.5
+		}
+		if s > 2.0 {
+			s = 2.0
+		}
+		return s, 0.0
+	default:
+		if fs.MAD < 1e-6 || ref.MAD < 1e-6 {
+			return 1.0, 0.0
+		}
+		s := ref.MAD / fs.MAD
+		if s < 0.5 {
+			s = 0.5
+		}
+		if s > 2.0 {
+			s = 2.0
+		}
+		return s, ref.Median - s*fs.Median
+	}
+}
+
+func globalNormalizeWithRef(f *frame, ref normStats, modes ...string) *frame {
+	mode := ""
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	fs := computeNormStats(f)
-	if fs.MAD < 1e-6 || ref.MAD < 1e-6 {
+	scale, offset := normParams(fs, ref, mode)
+	if scale == 1.0 && offset == 0.0 {
 		return f
 	}
-	scale := ref.MAD / fs.MAD
-	if scale < 0.5 {
-		scale = 0.5
-	}
-	if scale > 2.0 {
-		scale = 2.0
-	}
-	offset := ref.Median - scale*fs.Median
 	return applyNormTransform(f, scale, offset)
 }
 
@@ -4746,9 +4799,9 @@ func globalNormalizeWithRef(f *frame, ref normStats) *frame {
 // pre-computed once before the pass-2 loop. Degenerate tiles (MAD near
 // 0) fall back to the supplied refGlobal stats so the field stays
 // coherent instead of injecting scale=1 discontinuities.
-func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normStats, ntx, nty, ts int) *frame {
+func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normStats, ntx, nty, ts int, modes ...string) *frame {
 	if ntx <= 0 || nty <= 0 || len(refTiles) != ntx*nty {
-		return globalNormalizeWithRef(f, refGlobal)
+		return globalNormalizeWithRef(f, refGlobal, modes...)
 	}
 	if ts < 64 {
 		ts = 64
@@ -4770,18 +4823,7 @@ func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normSt
 		}
 	}
 	frameGlobal := computeNormStats(f)
-	globalScale := 1.0
-	globalOffset := 0.0
-	if frameGlobal.MAD > 1e-6 && refGlobal.MAD > 1e-6 {
-		globalScale = refGlobal.MAD / frameGlobal.MAD
-		if globalScale < 0.5 {
-			globalScale = 0.5
-		}
-		if globalScale > 2.0 {
-			globalScale = 2.0
-		}
-		globalOffset = refGlobal.Median - globalScale*frameGlobal.Median
-	}
+	globalScale, globalOffset := normParams(frameGlobal, refGlobal, firstMode(modes))
 	scales := make([]float64, ntx*nty)
 	offsets := make([]float64, ntx*nty)
 	for i := range scales {
@@ -4792,15 +4834,9 @@ func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normSt
 			offsets[i] = globalOffset
 			continue
 		}
-		s := rs.MAD / fs.MAD
-		if s < 0.5 {
-			s = 0.5
-		}
-		if s > 2.0 {
-			s = 2.0
-		}
+		s, o := normParams(fs, rs, firstMode(modes))
 		scales[i] = s
-		offsets[i] = rs.Median - s*fs.Median
+		offsets[i] = o
 	}
 	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	nPix := f.Width * f.Height
@@ -8973,9 +9009,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			// the target (identity normalization).
 			if needsNormalize && i != refIdx {
 				if opts.LocalNormalize && len(normRefTiles) > 0 {
-					resampled = localNormalizeWithRefTiles(resampled, normRefTiles, normRefGlobal, normNTX, normNTY, opts.LNTileSize)
+					resampled = localNormalizeWithRefTiles(resampled, normRefTiles, normRefGlobal, normNTX, normNTY, opts.LNTileSize, opts.NormalizeMode)
 				} else {
-					resampled = globalNormalizeWithRef(resampled, normRefGlobal)
+					resampled = globalNormalizeWithRef(resampled, normRefGlobal, opts.NormalizeMode)
 				}
 			}
 			if opts.Method == "mean" && !selfFlatActive {
@@ -15044,6 +15080,7 @@ func runSelfTests() int {
 		{"intrinsic quality zero stars", testIntrinsicQualityZeroStars},
 		{"advanced frame quality weighting", testComputeAdvancedQuality},
 		{"compute norm stats", testComputeNormStats},
+		{"normalize modes", testNormalizeModes},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
@@ -18491,6 +18528,33 @@ func testDiskSpaceGuard() error {
 	}
 	if free <= 0 {
 		return fmt.Errorf("free bytes = %d, want > 0", free)
+	}
+	return nil
+}
+
+func testNormalizeModes() error {
+	fs := normStats{Median: 0.2, MAD: 0.01}
+	ref := normStats{Median: 0.4, MAD: 0.02}
+	s, o := normParams(fs, ref, "scale-offset")
+	if math.Abs(s-2.0) > 1e-9 || math.Abs(o-(0.4-2*0.2)) > 1e-9 {
+		return fmt.Errorf("scale-offset %g %g", s, o)
+	}
+	s, o = normParams(fs, ref, "additive")
+	if math.Abs(s-1.0) > 1e-9 || math.Abs(o-0.2) > 1e-9 {
+		return fmt.Errorf("additive %g %g", s, o)
+	}
+	s, o = normParams(fs, ref, "multiplicative")
+	if math.Abs(s-2.0) > 1e-9 || o != 0 {
+		return fmt.Errorf("multiplicative %g %g", s, o)
+	}
+	s, _ = normParams(fs, normStats{Median: 1.0}, "multiplicative")
+	if s > 2.0 {
+		return fmt.Errorf("multiplicative clamp %g", s)
+	}
+	for _, bad := range []string{"foo", "SCALE-OFFSET"} {
+		if _, err := parseArgs([]string{"--normalize", "--normalize-mode", bad}); err == nil {
+			return fmt.Errorf("invalid mode %q accepted", bad)
+		}
 	}
 	return nil
 }
@@ -22348,6 +22412,7 @@ func main() {
 		Force:                opts.Force,
 		Normalize:            opts.Normalize,
 		LocalNormalize:       opts.LocalNormalize,
+		NormalizeMode:        opts.NormalizeMode,
 		LNTileSize:           opts.LNTileSize,
 		SynthCalib:           opts.SynthCalib,
 		BlackLevel:           opts.BlackLevel,
