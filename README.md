@@ -442,6 +442,21 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--deconv-sigma float` / `--deconv-iters int` | PSF sigma (px) and RL iterations | `1.5` / `3` |
 | `--narrowband M` + `--nb-a/--nb-b/--nb-c` | HOO/SHO mapping from three mono `.f32raw` stacks (`_work/stacked_narrowband.f32raw` written) | — |
 | `--wavesharp` / `--wave-gains` | Classical multi-scale Gaussian detail enhancement (coarse-to-fine gains, BXT-like baseline) | `false` / `0.25,0.15,0.08` |
+| `--external-bge CMD` | User-supplied external AI background-extraction CLI, invoked through a private 32-bit float FITS sidecar | — |
+| `--external-denoise CMD` | External AI linear denoise CLI (GraXpert `-cmd denoising`, NoiseXTerminator, …) | — |
+| `--external-deconv CMD` | External AI linear deconvolution CLI (GraXpert `-cmd deconv-obj`, BlurXTerminator, …) | — |
+| `--external-starless CMD` | External AI starless CLI (StarNet2, StarXTerminator, …); replaces built-in star removal | — |
+| `--external-allow-nonlinear` | Permit external denoise/deconv on nonlinear data (unsafe for models trained on linear stacks) | `false` |
+| `--external-timeout N` | Per-stage timeout in seconds (`0` disables) | `1800` |
+
+`CMD` is a whitespace-separated argv list (no shell interpolation) that must
+contain `{input}` and `{output}` placeholders. Example:
+`--external-denoise "/opt/GraXpert/GraXpert -cli -cmd denoising -gpu false -i {input} -o {output}"`.
+The input is a big-endian `BITPIX=-32`, `NAXIS=3` RGB FITS with the plate-solution
+WCS; the output must have the same dimensions, and its WCS is restored from the
+input if the tool drops or alters it. Results are also saved as
+`_work/external_<stage>.f32raw`. Denoise/deconv stages are blocked on nonlinear
+frames unless `--external-allow-nonlinear` is given.
 
 ### Normalization
 

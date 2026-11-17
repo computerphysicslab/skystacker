@@ -200,56 +200,62 @@ type cliOptions struct {
 	KeepCache   bool
 	TestDebayer string
 
-	GaiaTest           string
-	GaiaMirror         string
-	GaiaCacheDir       string
-	GaiaNside          int
-	GaiaMagLimit       float64
-	GaiaOffline        bool
-	GaiaCacheRefresh   bool
-	PlateSolve         bool
-	PlateTest          string
-	PlateCenter        string
-	WritePNG           bool
-	WriteBMP           bool
-	CreateFITS         bool
-	CreateXISF         bool
-	HFRQuality         bool
-	Annotate           bool
-	Starless           bool
-	JSONReport         bool
-	BGMultiscale       bool
-	ConfigPath         string
-	Deconvolve         bool
-	DeconvSigma        float64
-	DeconvIters        int
-	Narrowband         string
-	NBChannelA         string
-	NBChannelB         string
-	NBChannelC         string
-	Resume             bool
-	DrizzleUpsample    int
-	DrizzlePixfrac     float64
-	WaveSharpen        bool
-	WaveGains          string
-	Limit              int
-	CometCenter        string
-	CometRate          string
-	CometRADec         string
-	CometSkyRateArcsec string
-	CometTarget        string
-	CometEphemPath     string
-	CometEphemStrict   bool
-	CometOn            bool
-	CometRADECRad      bool
-	CometX             float64
-	CometY             float64
-	CometRatePxX       float64
-	CometRatePxY       float64
-	CometRateSkyDXRad  float64
-	CometRateSkyDYRad  float64
-	CometRA            float64
-	CometDec           float64
+	GaiaTest               string
+	GaiaMirror             string
+	GaiaCacheDir           string
+	GaiaNside              int
+	GaiaMagLimit           float64
+	GaiaOffline            bool
+	GaiaCacheRefresh       bool
+	PlateSolve             bool
+	PlateTest              string
+	PlateCenter            string
+	WritePNG               bool
+	WriteBMP               bool
+	CreateFITS             bool
+	CreateXISF             bool
+	HFRQuality             bool
+	Annotate               bool
+	Starless               bool
+	JSONReport             bool
+	BGMultiscale           bool
+	ConfigPath             string
+	Deconvolve             bool
+	DeconvSigma            float64
+	DeconvIters            int
+	Narrowband             string
+	NBChannelA             string
+	NBChannelB             string
+	NBChannelC             string
+	Resume                 bool
+	DrizzleUpsample        int
+	DrizzlePixfrac         float64
+	ExternalBGE            string
+	ExternalDenoise        string
+	ExternalDeconv         string
+	ExternalStarless       string
+	ExternalAllowNonlinear bool
+	ExternalTimeoutSec     int
+	WaveSharpen            bool
+	WaveGains              string
+	Limit                  int
+	CometCenter            string
+	CometRate              string
+	CometRADec             string
+	CometSkyRateArcsec     string
+	CometTarget            string
+	CometEphemPath         string
+	CometEphemStrict       bool
+	CometOn                bool
+	CometRADECRad          bool
+	CometX                 float64
+	CometY                 float64
+	CometRatePxX           float64
+	CometRatePxY           float64
+	CometRateSkyDXRad      float64
+	CometRateSkyDYRad      float64
+	CometRA                float64
+	CometDec               float64
 }
 
 // expandConfigArgs reads an optional --config JSON object and prepends its
@@ -472,6 +478,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.DrizzlePixfrac, "drizzle-pixfrac", 1.0, "drizzle kernel footprint in input pixels (0..1)")
 	fs.BoolVar(&o.WaveSharpen, "wavesharp", false, "multi-scale Gaussian detail enhancement (classical BXT-like baseline)")
 	fs.StringVar(&o.WaveGains, "wave-gains", "0.25,0.15,0.08", "coarse-to-fine detail gains for --wavesharp")
+	fs.StringVar(&o.ExternalBGE, "external-bge", "", "external AI background-extraction CLI: argv with {input} and {output} placeholders (no shell)")
+	fs.StringVar(&o.ExternalDenoise, "external-denoise", "", "external AI linear denoise CLI: argv with {input} and {output} placeholders (no shell)")
+	fs.StringVar(&o.ExternalDeconv, "external-deconv", "", "external AI linear deconvolution CLI: argv with {input} and {output} placeholders (no shell)")
+	fs.StringVar(&o.ExternalStarless, "external-starless", "", "external AI starless CLI: argv with {input} and {output} placeholders (no shell)")
+	fs.BoolVar(&o.ExternalAllowNonlinear, "external-allow-nonlinear", false, "allow external denoise/deconv on nonlinear data (unsafe for BXT/NXT-style models)")
+	fs.IntVar(&o.ExternalTimeoutSec, "external-timeout", 1800, "per-stage timeout in seconds for external AI CLIs (0 = no timeout)")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -492,7 +504,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -619,6 +631,22 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DrizzlePixfrac < 0 || o.DrizzlePixfrac > 1 {
 		return nil, fmt.Errorf("--drizzle-pixfrac must be in [0, 1], got %g", o.DrizzlePixfrac)
+	}
+	if o.ExternalTimeoutSec < 0 {
+		return nil, fmt.Errorf("--external-timeout must be >= 0, got %d", o.ExternalTimeoutSec)
+	}
+	for _, ext := range []struct {
+		name  string
+		value string
+	}{
+		{"--external-bge", o.ExternalBGE},
+		{"--external-denoise", o.ExternalDenoise},
+		{"--external-deconv", o.ExternalDeconv},
+		{"--external-starless", o.ExternalStarless},
+	} {
+		if ext.value != "" && (!strings.Contains(ext.value, "{input}") || !strings.Contains(ext.value, "{output}")) {
+			return nil, fmt.Errorf("%s command must contain {input} and {output} placeholders: %q", ext.name, ext.value)
+		}
 	}
 	if o.Narrowband != "" {
 		m := strings.ToUpper(o.Narrowband)
@@ -1010,6 +1038,12 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --resume           reuse an existing stack in the output dir and continue with post-processing")
 	fmt.Fprintln(w, "  --drizzle-upsample N  write a drizzled N x upsample of the stack (1 = off)")
 	fmt.Fprintln(w, "  --wavesharp        multi-scale detail enhancement (--wave-gains coarser..finer)")
+	fmt.Fprintln(w, "  --external-bge CMD / --external-denoise CMD / --external-deconv CMD / --external-starless CMD")
+	fmt.Fprintln(w, "                     run an external AI CLI via a private 32-bit float FITS sidecar; CMD is")
+	fmt.Fprintln(w, "an argv list (no shell) with {input} and {output} placeholders, e.g.")
+	fmt.Fprintln(w, "'GraXpert -cli -cmd denoising -gpu false -i {input} -o {output}'")
+	fmt.Fprintln(w, "                     denoise/deconv require linear data unless --external-allow-nonlinear is set")
+	fmt.Fprintln(w, "  --external-timeout N  seconds per external stage (default 1800, 0 = no timeout)")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -1090,9 +1124,11 @@ func discoverFiles(root string, recursive bool, exclude []string) ([]string, err
 // =========================================================================
 
 type frame struct {
-	Width  int
-	Height int
-	Pix    []float32 // interleaved RGB in [0, 1], unless a pixel was marked invalid (-1)
+	Width     int
+	Height    int
+	Pix       []float32 // interleaved RGB in [0, 1], unless a pixel was marked invalid (-1)
+	WCS       *wcsTan
+	Nonlinear bool
 }
 
 func calibrate(f *frame, dark, flat, bias *frame) {
@@ -3316,6 +3352,219 @@ func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor 
 	return nil
 }
 
+func readFloat32RGBFITS(path string) (width, height int, pix []float32, wcs *wcsTan, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	if len(data) < 2880 || string(data[:6]) != "SIMPLE" {
+		return 0, 0, nil, nil, fmt.Errorf("fits sidecar: %s is not a FITS file", path)
+	}
+	cards := make(map[string]string)
+	for off := 0; off+80 <= 2880; off += 80 {
+		card := strings.TrimRight(string(data[off:off+80]), " ")
+		if card == "" {
+			continue
+		}
+		if card == "END" {
+			break
+		}
+		eq := strings.IndexByte(card, '=')
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(card[:eq])
+		val := strings.TrimSpace(card[eq+1:])
+		if i := strings.Index(val, " /"); i >= 0 {
+			val = strings.TrimSpace(val[:i])
+		}
+		cards[key] = val
+	}
+	parseIntCard := func(key string) (int, error) {
+		v, ok := cards[key]
+		if !ok {
+			return 0, fmt.Errorf("fits sidecar: missing %s", key)
+		}
+		n, e := strconv.Atoi(strings.TrimSpace(v))
+		if e != nil {
+			return 0, fmt.Errorf("fits sidecar: bad %s=%q: %w", key, v, e)
+		}
+		return n, nil
+	}
+	bitpix, err := parseIntCard("BITPIX")
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	naxis, err := parseIntCard("NAXIS")
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	width, err = parseIntCard("NAXIS1")
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	height, err = parseIntCard("NAXIS2")
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	naxis3, err := parseIntCard("NAXIS3")
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	if bitpix != -32 || naxis != 3 || naxis3 != 3 || width <= 0 || height <= 0 {
+		return 0, 0, nil, nil, fmt.Errorf("fits sidecar: expected BITPIX=-32 NAXIS=3 NAXIS3=3, got %d/%d/%d", bitpix, naxis, naxis3)
+	}
+	n := width * height * 3
+	dataOff := 2880
+	if int64(len(data)) < int64(dataOff)+int64(n*4) {
+		return 0, 0, nil, nil, fmt.Errorf("fits sidecar: truncated data (len %d, need %d)", len(data), dataOff+n*4)
+	}
+	pix = make([]float32, n)
+	for i := range pix {
+		pix[i] = math.Float32frombits(binary.BigEndian.Uint32(data[dataOff+i*4:]))
+	}
+	if strings.Contains(cards["CTYPE1"], "RA---TAN") {
+		parseFloatCard := func(key string) (float64, bool) {
+			v, ok := cards[key]
+			if !ok {
+				return 0, false
+			}
+			f, e := strconv.ParseFloat(strings.Trim(strings.TrimSpace(v), "' "), 64)
+			return f, e == nil
+		}
+		vals := make([]float64, 10)
+		keys := []string{"CRVAL1", "CRVAL2", "CRPIX1", "CRPIX2", "CD1_1", "CD1_2", "CD2_1", "CD2_2"}
+		ok := true
+		for i, k := range keys {
+			vals[i], ok = parseFloatCard(k)
+			if !ok {
+				break
+			}
+		}
+		if ok {
+			wcs = &wcsTan{
+				CRVAL1: vals[0] * math.Pi / 180,
+				CRVAL2: vals[1] * math.Pi / 180,
+				CRPIX1: vals[2],
+				CRPIX2: vals[3],
+				CD: [2][2]float64{
+					{vals[4] * math.Pi / 180, vals[5] * math.Pi / 180},
+					{vals[6] * math.Pi / 180, vals[7] * math.Pi / 180},
+				},
+			}
+		}
+	}
+	return width, height, pix, wcs, nil
+}
+
+func wcsTanEqual(a, b *wcsTan) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if math.Abs(a.CRVAL1-b.CRVAL1) > 1e-9 || math.Abs(a.CRVAL2-b.CRVAL2) > 1e-9 ||
+		math.Abs(a.CRPIX1-b.CRPIX1) > 1e-7 || math.Abs(a.CRPIX2-b.CRPIX2) > 1e-7 {
+		return false
+	}
+	for i := range 2 {
+		for j := range 2 {
+			if math.Abs(a.CD[i][j]-b.CD[i][j]) > 1e-12 {
+				return false
+			}
+		}
+	}
+	if len(a.SIP) != len(b.SIP) {
+		return false
+	}
+	for i := range a.SIP {
+		if math.Abs(a.SIP[i]-b.SIP[i]) > 1e-9 {
+			return false
+		}
+	}
+	return true
+}
+
+func runExternalSidecar(stage, command string, f *frame, allowNonlinear bool, timeout time.Duration) (*frame, error) {
+	if command == "" {
+		return nil, fmt.Errorf("external AI %s: empty command", stage)
+	}
+	if f == nil || f.Width <= 0 || f.Height <= 0 || len(f.Pix) != f.Width*f.Height*3 {
+		return nil, fmt.Errorf("external AI %s: invalid input frame", stage)
+	}
+	if f.Nonlinear && !allowNonlinear && (stage == "denoise" || stage == "deconv") {
+		return nil, fmt.Errorf("external AI %s: linear stage required; the frame is nonlinear (use --external-allow-nonlinear only if the tool expects stretched data)", stage)
+	}
+	dir, err := os.MkdirTemp("", "skystacker-ai-"+stage+"-")
+	if err != nil {
+		return nil, fmt.Errorf("external AI %s: temp dir: %w", stage, err)
+	}
+	defer os.RemoveAll(dir)
+	inPath := filepath.Join(dir, "input.fits")
+	outPath := filepath.Join(dir, "output.fits")
+	inFile, err := os.Create(inPath)
+	if err != nil {
+		return nil, fmt.Errorf("external AI %s: create input: %w", stage, err)
+	}
+	err = writeFloat32RGBFITS(inFile, f.Width, f.Height, f.Pix, 1, f.WCS)
+	if cerr := inFile.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("external AI %s: write input FITS: %w", stage, err)
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("external AI %s: empty command", stage)
+	}
+	argv := make([]string, 0, len(fields))
+	for _, field := range fields {
+		switch field {
+		case "{input}":
+			argv = append(argv, inPath)
+		case "{output}":
+			argv = append(argv, outPath)
+		default:
+			argv = append(argv, field)
+		}
+	}
+	if _, err := exec.LookPath(argv[0]); err != nil {
+		return nil, fmt.Errorf("external AI %s: executable %q not found: %w (install the CLI and put it on PATH)", stage, argv[0], err)
+	}
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Run(); err != nil {
+		tail := output.String()
+		if len(tail) > 2000 {
+			tail = tail[len(tail)-2000:]
+		}
+		return nil, fmt.Errorf("external AI %s (%s) failed: %w; tool output: %s", stage, argv[0], err, tail)
+	}
+	w, h, pix, outWCS, err := readFloat32RGBFITS(outPath)
+	if err != nil {
+		return nil, fmt.Errorf("external AI %s: read output FITS: %w", stage, err)
+	}
+	if w != f.Width || h != f.Height {
+		return nil, fmt.Errorf("external AI %s: output %dx%d != input %dx%d", stage, w, h, f.Width, f.Height)
+	}
+	if f.WCS != nil && !wcsTanEqual(outWCS, f.WCS) {
+		if outWCS == nil {
+			logf("  external AI %s: tool dropped WCS; restoring input WCS", stage)
+		} else {
+			logf("  external AI %s: tool changed WCS; restoring input WCS", stage)
+		}
+		outWCS = f.WCS
+	}
+	logf("  external AI %s: %s -> %s (%dx%d, WCS=%v)", stage, filepath.Base(argv[0]), filepath.Base(outPath), w, h, outWCS != nil)
+	return &frame{Width: w, Height: h, Pix: pix, WCS: outWCS, Nonlinear: f.Nonlinear}, nil
+}
+
 // writeFloat32RGBXISF writes a minimal monolithic XISF 1.0 file: the
 // 16-byte XISF0100 preamble, an XML header with the mandatory Metadata
 // properties and one RGB Float32 Image, and a single attached planar data
@@ -4273,6 +4522,25 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.WaveSharpen {
 		add("--wavesharp --wave-gains " + o.WaveGains)
 	}
+	for _, ext := range []struct {
+		name  string
+		value string
+	}{
+		{"--external-bge", o.ExternalBGE},
+		{"--external-denoise", o.ExternalDenoise},
+		{"--external-deconv", o.ExternalDeconv},
+		{"--external-starless", o.ExternalStarless},
+	} {
+		if ext.value != "" {
+			add(ext.name + " " + quoteReportArg(ext.value))
+		}
+	}
+	if o.ExternalAllowNonlinear {
+		add("--external-allow-nonlinear")
+	}
+	if o.ExternalTimeoutSec != 1800 {
+		add(fmt.Sprintf("--external-timeout %d", o.ExternalTimeoutSec))
+	}
 	if o.Narrowband != "" {
 		add(fmt.Sprintf("--narrowband %s --nb-a %s --nb-b %s --nb-c %s", o.Narrowband,
 			quoteReportArg(o.NBChannelA), quoteReportArg(o.NBChannelB), quoteReportArg(o.NBChannelC)))
@@ -4643,32 +4911,38 @@ type runOptions struct {
 	// into its pixel frame in memory; the output is exactly refW x refH.
 	ReferenceCrop string
 
-	CreateTIFF      bool
-	CreateFITS      bool
-	CreateXISF      bool
-	HFRQuality      bool
-	Annotate        bool
-	Starless        bool
-	JSONReport      bool
-	BGMultiscale    bool
-	Deconvolve      bool
-	DeconvSigma     float64
-	DeconvIters     int
-	Narrowband      string
-	NBChannelA      string
-	NBChannelB      string
-	NBChannelC      string
-	Resume          bool
-	DrizzleUpsample int
-	DrizzlePixfrac  float64
-	WaveSharpen     bool
-	WaveGains       string
-	PostCA          bool
-	PostColor       bool
-	PostFlatten     bool
-	PostSharpen     bool
-	PostHDR         bool
-	PostStretch     bool
+	CreateTIFF             bool
+	CreateFITS             bool
+	CreateXISF             bool
+	HFRQuality             bool
+	Annotate               bool
+	Starless               bool
+	JSONReport             bool
+	BGMultiscale           bool
+	Deconvolve             bool
+	DeconvSigma            float64
+	DeconvIters            int
+	Narrowband             string
+	NBChannelA             string
+	NBChannelB             string
+	NBChannelC             string
+	Resume                 bool
+	DrizzleUpsample        int
+	DrizzlePixfrac         float64
+	ExternalBGE            string
+	ExternalDenoise        string
+	ExternalDeconv         string
+	ExternalStarless       string
+	ExternalAllowNonlinear bool
+	ExternalTimeoutSec     int
+	WaveSharpen            bool
+	WaveGains              string
+	PostCA                 bool
+	PostColor              bool
+	PostFlatten            bool
+	PostSharpen            bool
+	PostHDR                bool
+	PostStretch            bool
 
 	NoCache   bool
 	CacheDir  string
@@ -14458,6 +14732,75 @@ func testSinglePassSigmaClipEquivalence() error {
 	return nil
 }
 
+func testExternalAISidecar() error {
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	root, err := os.MkdirTemp("", "skystacker-ai-selftest-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(root)
+	marker := filepath.Join(root, "marker.txt")
+	command := fmt.Sprintf("%s %s {input} {output} %s", self, internalAISidecarFlag, marker)
+	wcs := &wcsTan{
+		CRVAL1: 1.234,
+		CRVAL2: -0.567,
+		CRPIX1: 17.5,
+		CRPIX2: 9.5,
+		CD:     [2][2]float64{{-1.1e-5, 2e-7}, {3e-7, 1.2e-5}},
+	}
+	f := &frame{Width: 8, Height: 6, Pix: make([]float32, 8*6*3), WCS: wcs}
+	for i := range f.Pix {
+		f.Pix[i] = float32(i) / 100
+	}
+	out, err := runExternalSidecar("denoise", command, f, false, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if out.Width != f.Width || out.Height != f.Height || len(out.Pix) != len(f.Pix) {
+		return fmt.Errorf("sidecar output dims %dx%d != %dx%d", out.Width, out.Height, f.Width, f.Height)
+	}
+	for i := range f.Pix {
+		if out.Pix[i] != f.Pix[i] {
+			return fmt.Errorf("sidecar pixel %d = %v, want %v", i, out.Pix[i], f.Pix[i])
+		}
+	}
+	if !wcsTanEqual(out.WCS, wcs) {
+		return fmt.Errorf("sidecar WCS round-trip failed: %+v != %+v", out.WCS, wcs)
+	}
+	markerData, err := os.ReadFile(marker)
+	if err != nil {
+		return fmt.Errorf("mock sidecar marker: %w", err)
+	}
+	tempDir := strings.TrimSpace(string(markerData))
+	if tempDir == "" || tempDir == root {
+		return fmt.Errorf("mock marker has unexpected temp dir %q", tempDir)
+	}
+	if _, err := os.Stat(tempDir); !os.IsNotExist(err) {
+		return fmt.Errorf("sidecar temp dir %s was not removed (stat err %v)", tempDir, err)
+	}
+	if _, err := runExternalSidecar("bge", "/no/such/ai-cli/tool {input} {output}", f, false, 30*time.Second); err == nil || !strings.Contains(err.Error(), "not found") {
+		return fmt.Errorf("missing executable diagnostic = %v", err)
+	}
+	nonlinear := &frame{Width: f.Width, Height: f.Height, Pix: append([]float32(nil), f.Pix...), WCS: wcs, Nonlinear: true}
+	if _, err := runExternalSidecar("denoise", command, nonlinear, false, 30*time.Second); err == nil || !strings.Contains(err.Error(), "linear stage required") {
+		return fmt.Errorf("linear guard = %v", err)
+	}
+	if _, err := runExternalSidecar("denoise", command, nonlinear, true, 30*time.Second); err != nil {
+		return fmt.Errorf("linear guard override: %v", err)
+	}
+	opts, err := parseArgs([]string{"--external-denoise", command, "--external-timeout", "7"})
+	if err != nil || opts.ExternalDenoise != command || opts.ExternalTimeoutSec != 7 {
+		return fmt.Errorf("external CLI flags: opts=%+v err=%v", opts, err)
+	}
+	if _, err := parseArgs([]string{"--external-bge", "tool {input}"}); err == nil {
+		return errors.New("missing {output} placeholder was accepted")
+	}
+	return nil
+}
+
 func testSigmaClipAsymmetric() error {
 	vals := []float32{9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11, 0, 100}
 	_, _, accSym, rejSym := sigmaClipReduce(vals, 2, 1)
@@ -15969,6 +16312,7 @@ func runSelfTests() int {
 		{"sigma clip asymmetric", testSigmaClipAsymmetric},
 		{"finite sample MAD", testFiniteSampleMAD},
 		{"single-pass sigma clip equivalence", testSinglePassSigmaClipEquivalence},
+		{"external AI sidecar", testExternalAISidecar},
 		{"sigma clip all same", testSigmaClipAllSame},
 		{"sigma clip reduce weighted", testSigmaClipReduceWeighted},
 		{"weighted median", testWeightedMedian},
@@ -22595,6 +22939,16 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		return nil, fmt.Errorf("post-process: read work file: %w", err)
 	}
 	src := &frame{Width: w, Height: h, Pix: pix}
+	if solData, jerr := os.ReadFile(filepath.Join(outputDir, "plate_solution.json")); jerr == nil {
+		var sol plateSolution
+		if jerr := json.Unmarshal(solData, &sol); jerr == nil && (sol.WCS.CRVAL1 != 0 || sol.WCS.CD[0][0] != 0) {
+			sol.WCS.SIP = append([]float64(nil), sol.WCS.SIP...)
+			if len(sol.WCS.SIP) == 0 {
+				sol.WCS.SIP = append([]float64(nil), sol.SIP...)
+			}
+			src.WCS = &sol.WCS
+		}
+	}
 	if opts.Narrowband != "" {
 		loadMono := func(path string) *frame {
 			mw, mh, mpix, err := readRawFloat32RGB(path)
@@ -22624,6 +22978,18 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	var outputs []string
 	cur := src
 	var step1Frame, step4Frame, step5Frame, step6Frame, step7Frame *frame
+	extTimeout := time.Duration(opts.ExternalTimeoutSec) * time.Second
+	if opts.ExternalBGE != "" {
+		processed, eerr := runExternalSidecar("bge", opts.ExternalBGE, cur, opts.ExternalAllowNonlinear, extTimeout)
+		if eerr != nil {
+			return nil, eerr
+		}
+		cur = processed
+		if err := writeFileAtomic(filepath.Join(outputDir, "_work", "external_bge.f32raw"),
+			func(out io.Writer) error { return writeRawFloat32RGB(out, cur.Width, cur.Height, cur.Pix) }); err != nil {
+			logf("  WARNING: external-bge work file: %v", err)
+		}
+	}
 
 	if opts.BGMultiscale {
 		logf("  post: multiscale background removal")
@@ -22638,6 +23004,28 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  WARNING: %v", err)
 	}
 	outputs = append(outputs, p)
+
+	for _, ext := range []struct {
+		stage   string
+		command string
+	}{
+		{"denoise", opts.ExternalDenoise},
+		{"deconv", opts.ExternalDeconv},
+	} {
+		if ext.command == "" {
+			continue
+		}
+		processed, eerr := runExternalSidecar(ext.stage, ext.command, cur, opts.ExternalAllowNonlinear, extTimeout)
+		if eerr != nil {
+			return nil, eerr
+		}
+		cur = processed
+		step1Frame = cur
+		if err := writeFileAtomic(filepath.Join(outputDir, "_work", "external_"+ext.stage+".f32raw"),
+			func(out io.Writer) error { return writeRawFloat32RGB(out, cur.Width, cur.Height, cur.Pix) }); err != nil {
+			logf("  WARNING: external-%s work file: %v", ext.stage, err)
+		}
+	}
 
 	if opts.Deconvolve {
 		logf("  post: Richardson-Lucy deconvolution (sigma=%g, iters=%d)", opts.DeconvSigma, opts.DeconvIters)
@@ -22707,9 +23095,17 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 
 	// Star removal (ALWAYS): replace detected stars with local background
 	logf("  post: star removal (sigma=%g, radius=%d)", opts.StarSigma, opts.StarRadius)
-	if opts.Starless {
+	if opts.Starless || opts.ExternalStarless != "" {
 		beforeStars := &frame{Width: cur.Width, Height: cur.Height, Pix: append([]float32(nil), cur.Pix...)}
-		cur = removeStars(cur, opts.StarSigma, opts.StarRadius)
+		if opts.ExternalStarless != "" {
+			starless, eerr := runExternalSidecar("starless", opts.ExternalStarless, cur, opts.ExternalAllowNonlinear, extTimeout)
+			if eerr != nil {
+				return nil, eerr
+			}
+			cur = starless
+		} else {
+			cur = removeStars(cur, opts.StarSigma, opts.StarRadius)
+		}
 		starLayer := &frame{Width: cur.Width, Height: cur.Height, Pix: make([]float32, len(cur.Pix))}
 		for i, v := range beforeStars.Pix {
 			d := v - cur.Pix[i]
@@ -22766,6 +23162,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  post: auto-stretch (STF: shadows=%.1f target=%.2f linked=%v)",
 			opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
 		stretched := autoStretch(cur, opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		stretched.Nonlinear = true
 		step4Frame = stretched
 		p = filepath.Join(outputDir, "post_step4_auto_stretched.jpg")
 		if err := writePostPreview(outputDir, filepath.Base(p), stretched); err != nil {
@@ -23799,7 +24196,33 @@ func printBanner() {
 		version, repoURL, resolveBuildDate())
 }
 
+const internalAISidecarFlag = "--internal-ai-sidecar-mock"
+
+func runInternalAISidecarMock(args []string) int {
+	if len(args) != 3 {
+		fmt.Fprintln(os.Stderr, "internal sidecar mock: need INPUT OUTPUT MARKER")
+		return 2
+	}
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "internal sidecar mock: read:", err)
+		return 1
+	}
+	if err := os.WriteFile(args[1], data, 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "internal sidecar mock: write:", err)
+		return 1
+	}
+	if err := os.WriteFile(args[2], []byte(filepath.Dir(args[0])), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "internal sidecar mock: marker:", err)
+		return 1
+	}
+	return 0
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == internalAISidecarFlag {
+		os.Exit(runInternalAISidecarMock(os.Args[2:]))
+	}
 	printBanner()
 	opts, err := parseArgs(os.Args[1:])
 	if err != nil {
@@ -23851,128 +24274,134 @@ func main() {
 		os.Exit(1)
 	}
 	err = runPipeline(context.Background(), runOptions{
-		Args:                 os.Args,
-		InputDir:             opts.InputDir,
-		OutputDir:            opts.OutputDir,
-		Workers:              opts.Workers,
-		Recursive:            opts.Recursive,
-		Overwrite:            opts.Overwrite,
-		Register:             opts.Register,
-		NoAffine:             opts.NoAffine,
-		DarkFile:             opts.DarkFile,
-		FlatFile:             opts.FlatFile,
-		BiasFile:             opts.BiasFile,
-		CalibRoot:            opts.CalibRoot,
-		Method:               opts.Method,
-		MaskBG:               opts.MaskBG,
-		PostProcess:          opts.PostProcess,
-		StackOnly:            opts.StackOnly,
-		PostOnly:             opts.PostOnly,
-		NoColorCalib:         opts.NoColorCalib,
-		NoSharpen:            opts.NoSharpen,
-		BGDegree:             opts.BGDegree,
-		StretchFactor:        opts.StretchFactor,
-		SharpenAmount:        opts.SharpenAmount,
-		SharpenRadius:        opts.SharpenRadius,
-		HDRAmount:            opts.HDRAmount,
-		StarRadius:           opts.StarRadius,
-		StarSigma:            opts.StarSigma,
-		BgPercentile:         opts.BgPercentile,
-		NoAutoStretch:        opts.NoAutoStretch,
-		STFShadowsClip:       opts.STFShadowsClip,
-		STFTargetBG:          opts.STFTargetBG,
-		STFLinked:            opts.STFLinked,
-		NoHDRBlend:           opts.NoHDRBlend,
-		HDRBlendFactor:       opts.HDRBlendFactor,
-		NoHDRMix:             opts.NoHDRMix,
-		NoDenoise:            opts.NoDenoise,
-		DenoiseStrength:      opts.DenoiseStrength,
-		DenoiseRadius:        opts.DenoiseRadius,
-		DenoiseChroma:        opts.DenoiseChroma,
-		NoCurves:             opts.NoCurves,
-		CurvesBlack:          opts.CurvesBlack,
-		CurvesGamma:          opts.CurvesGamma,
-		AddSpikes:            opts.AddSpikes,
-		SpikesPercent:        opts.SpikesPercent,
-		SpikesLength:         opts.SpikesLength,
-		SpikesIntensity:      opts.SpikesIntensity,
-		SpikesArms:           opts.SpikesArms,
-		SpikesSoftness:       opts.SpikesSoftness,
-		SpikesMinRatio:       opts.SpikesMinRatio,
-		SpikesLengthSoftness: opts.SpikesLengthSoftness,
-		SpikesLengthMinRatio: opts.SpikesLengthMinRatio,
-		SpikesMinCount:       opts.SpikesMinCount,
-		NoExif:               opts.NoExif,
-		Clean:                opts.Clean,
-		SigmaClipThreshold:   opts.SigmaClipThreshold,
-		SigmaClipIters:       opts.SigmaClipIters,
-		SigmaClipLow:         opts.SigmaClipLow,
-		SigmaClipHigh:        opts.SigmaClipHigh,
-		TileSize:             opts.TileSize,
-		Scale:                opts.Scale,
-		NoNativeCR2:          opts.NoNativeCR2,
-		Force:                opts.Force,
-		Normalize:            opts.Normalize,
-		LocalNormalize:       opts.LocalNormalize,
-		NormalizeMode:        opts.NormalizeMode,
-		NormalizePerChannel:  opts.NormalizePerChannel,
-		LNTileSize:           opts.LNTileSize,
-		SynthCalib:           opts.SynthCalib,
-		BlackLevel:           opts.BlackLevel,
-		BPMFile:              opts.BPMFile,
-		BPMAuto:              opts.BPMAuto,
-		BPMAutoSigma:         opts.BPMAutoSigma,
-		ExportMasters:        opts.ExportMasters,
-		SelfFlat:             opts.SelfFlat,
-		NoSelfFlat:           opts.NoSelfFlat,
-		SelfFlatModel:        opts.SelfFlatModel,
-		SelfFlatLinearSRGB:   opts.SelfFlatLinearSRGB,
-		ReferenceCrop:        opts.ReferenceCrop,
-		CreateTIFF:           opts.CreateTIFF,
-		CreateFITS:           opts.CreateFITS,
-		CreateXISF:           opts.CreateXISF,
-		HFRQuality:           opts.HFRQuality,
-		Annotate:             opts.Annotate,
-		Starless:             opts.Starless,
-		JSONReport:           opts.JSONReport,
-		BGMultiscale:         opts.BGMultiscale,
-		Deconvolve:           opts.Deconvolve,
-		DeconvSigma:          opts.DeconvSigma,
-		DeconvIters:          opts.DeconvIters,
-		Narrowband:           opts.Narrowband,
-		NBChannelA:           opts.NBChannelA,
-		NBChannelB:           opts.NBChannelB,
-		NBChannelC:           opts.NBChannelC,
-		Resume:               opts.Resume,
-		DrizzleUpsample:      opts.DrizzleUpsample,
-		DrizzlePixfrac:       opts.DrizzlePixfrac,
-		WaveSharpen:          opts.WaveSharpen,
-		WaveGains:            opts.WaveGains,
-		PostCA:               opts.PostCA,
-		PostColor:            opts.PostColor,
-		PostFlatten:          opts.PostFlatten,
-		PostSharpen:          opts.PostSharpen,
-		PostHDR:              opts.PostHDR,
-		PostStretch:          opts.PostStretch,
-		NoCache:              opts.NoCache,
-		CacheDir:             opts.CacheDir,
-		KeepCache:            opts.KeepCache,
-		PlateSolve:           opts.PlateSolve,
-		GaiaOffline:          opts.GaiaOffline,
-		PlateCenter:          opts.PlateCenter,
-		WritePNG:             opts.WritePNG,
-		WriteBMP:             opts.WriteBMP,
-		Limit:                opts.Limit,
-		CometOn:              opts.CometOn,
-		CometX:               opts.CometX,
-		CometY:               opts.CometY,
-		CometRatePxX:         opts.CometRatePxX,
-		CometRatePxY:         opts.CometRatePxY,
-		CometRADECRad:        opts.CometRADECRad,
-		CometRA:              opts.CometRA,
-		CometDec:             opts.CometDec,
-		CometRateSkyDXRad:    opts.CometRateSkyDXRad,
-		CometRateSkyDYRad:    opts.CometRateSkyDYRad,
+		Args:                   os.Args,
+		InputDir:               opts.InputDir,
+		OutputDir:              opts.OutputDir,
+		Workers:                opts.Workers,
+		Recursive:              opts.Recursive,
+		Overwrite:              opts.Overwrite,
+		Register:               opts.Register,
+		NoAffine:               opts.NoAffine,
+		DarkFile:               opts.DarkFile,
+		FlatFile:               opts.FlatFile,
+		BiasFile:               opts.BiasFile,
+		CalibRoot:              opts.CalibRoot,
+		Method:                 opts.Method,
+		MaskBG:                 opts.MaskBG,
+		PostProcess:            opts.PostProcess,
+		StackOnly:              opts.StackOnly,
+		PostOnly:               opts.PostOnly,
+		NoColorCalib:           opts.NoColorCalib,
+		NoSharpen:              opts.NoSharpen,
+		BGDegree:               opts.BGDegree,
+		StretchFactor:          opts.StretchFactor,
+		SharpenAmount:          opts.SharpenAmount,
+		SharpenRadius:          opts.SharpenRadius,
+		HDRAmount:              opts.HDRAmount,
+		StarRadius:             opts.StarRadius,
+		StarSigma:              opts.StarSigma,
+		BgPercentile:           opts.BgPercentile,
+		NoAutoStretch:          opts.NoAutoStretch,
+		STFShadowsClip:         opts.STFShadowsClip,
+		STFTargetBG:            opts.STFTargetBG,
+		STFLinked:              opts.STFLinked,
+		NoHDRBlend:             opts.NoHDRBlend,
+		HDRBlendFactor:         opts.HDRBlendFactor,
+		NoHDRMix:               opts.NoHDRMix,
+		NoDenoise:              opts.NoDenoise,
+		DenoiseStrength:        opts.DenoiseStrength,
+		DenoiseRadius:          opts.DenoiseRadius,
+		DenoiseChroma:          opts.DenoiseChroma,
+		NoCurves:               opts.NoCurves,
+		CurvesBlack:            opts.CurvesBlack,
+		CurvesGamma:            opts.CurvesGamma,
+		AddSpikes:              opts.AddSpikes,
+		SpikesPercent:          opts.SpikesPercent,
+		SpikesLength:           opts.SpikesLength,
+		SpikesIntensity:        opts.SpikesIntensity,
+		SpikesArms:             opts.SpikesArms,
+		SpikesSoftness:         opts.SpikesSoftness,
+		SpikesMinRatio:         opts.SpikesMinRatio,
+		SpikesLengthSoftness:   opts.SpikesLengthSoftness,
+		SpikesLengthMinRatio:   opts.SpikesLengthMinRatio,
+		SpikesMinCount:         opts.SpikesMinCount,
+		NoExif:                 opts.NoExif,
+		Clean:                  opts.Clean,
+		SigmaClipThreshold:     opts.SigmaClipThreshold,
+		SigmaClipIters:         opts.SigmaClipIters,
+		SigmaClipLow:           opts.SigmaClipLow,
+		SigmaClipHigh:          opts.SigmaClipHigh,
+		TileSize:               opts.TileSize,
+		Scale:                  opts.Scale,
+		NoNativeCR2:            opts.NoNativeCR2,
+		Force:                  opts.Force,
+		Normalize:              opts.Normalize,
+		LocalNormalize:         opts.LocalNormalize,
+		NormalizeMode:          opts.NormalizeMode,
+		NormalizePerChannel:    opts.NormalizePerChannel,
+		LNTileSize:             opts.LNTileSize,
+		SynthCalib:             opts.SynthCalib,
+		BlackLevel:             opts.BlackLevel,
+		BPMFile:                opts.BPMFile,
+		BPMAuto:                opts.BPMAuto,
+		BPMAutoSigma:           opts.BPMAutoSigma,
+		ExportMasters:          opts.ExportMasters,
+		SelfFlat:               opts.SelfFlat,
+		NoSelfFlat:             opts.NoSelfFlat,
+		SelfFlatModel:          opts.SelfFlatModel,
+		SelfFlatLinearSRGB:     opts.SelfFlatLinearSRGB,
+		ReferenceCrop:          opts.ReferenceCrop,
+		CreateTIFF:             opts.CreateTIFF,
+		CreateFITS:             opts.CreateFITS,
+		CreateXISF:             opts.CreateXISF,
+		HFRQuality:             opts.HFRQuality,
+		Annotate:               opts.Annotate,
+		Starless:               opts.Starless,
+		JSONReport:             opts.JSONReport,
+		BGMultiscale:           opts.BGMultiscale,
+		Deconvolve:             opts.Deconvolve,
+		DeconvSigma:            opts.DeconvSigma,
+		DeconvIters:            opts.DeconvIters,
+		Narrowband:             opts.Narrowband,
+		NBChannelA:             opts.NBChannelA,
+		NBChannelB:             opts.NBChannelB,
+		NBChannelC:             opts.NBChannelC,
+		Resume:                 opts.Resume,
+		DrizzleUpsample:        opts.DrizzleUpsample,
+		DrizzlePixfrac:         opts.DrizzlePixfrac,
+		ExternalBGE:            opts.ExternalBGE,
+		ExternalDenoise:        opts.ExternalDenoise,
+		ExternalDeconv:         opts.ExternalDeconv,
+		ExternalStarless:       opts.ExternalStarless,
+		ExternalAllowNonlinear: opts.ExternalAllowNonlinear,
+		ExternalTimeoutSec:     opts.ExternalTimeoutSec,
+		WaveSharpen:            opts.WaveSharpen,
+		WaveGains:              opts.WaveGains,
+		PostCA:                 opts.PostCA,
+		PostColor:              opts.PostColor,
+		PostFlatten:            opts.PostFlatten,
+		PostSharpen:            opts.PostSharpen,
+		PostHDR:                opts.PostHDR,
+		PostStretch:            opts.PostStretch,
+		NoCache:                opts.NoCache,
+		CacheDir:               opts.CacheDir,
+		KeepCache:              opts.KeepCache,
+		PlateSolve:             opts.PlateSolve,
+		GaiaOffline:            opts.GaiaOffline,
+		PlateCenter:            opts.PlateCenter,
+		WritePNG:               opts.WritePNG,
+		WriteBMP:               opts.WriteBMP,
+		Limit:                  opts.Limit,
+		CometOn:                opts.CometOn,
+		CometX:                 opts.CometX,
+		CometY:                 opts.CometY,
+		CometRatePxX:           opts.CometRatePxX,
+		CometRatePxY:           opts.CometRatePxY,
+		CometRADECRad:          opts.CometRADECRad,
+		CometRA:                opts.CometRA,
+		CometDec:               opts.CometDec,
+		CometRateSkyDXRad:      opts.CometRateSkyDXRad,
+		CometRateSkyDYRad:      opts.CometRateSkyDYRad,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skystacker:", err)

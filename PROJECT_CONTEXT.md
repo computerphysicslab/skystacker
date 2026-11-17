@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 210 passing.** Update this number after any test change.
+**Self-test count: 211 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 
 ## Post-processing pipeline (8 steps)
@@ -1707,3 +1707,12 @@ rejection and disk spill. `--scale N` downsamples.
 - `testSinglePassSigmaClipEquivalence` (selftest 210) compares exact float32 mean, sigma, accepted and rejected counts across N=4..40, 1–3 iterations, asymmetric thresholds, the <3-survivor branch and the zero-weight fallback, and checks tile sums pixel-by-pixel. Production vs reference microbenchmark (16 values, 2 iterations): ~763 vs ~1048 ns unweighted, ~833 vs ~1033 ns weighted.
 - Real-data equivalence: 4-frame OrionNebula sigma stack, old and new binaries produced byte-identical `_work/stacked_mean.f32raw` (SHA-256 `d138ef5cc6b50c567fa1fe33aa478d901d8d12d4b6e3d0eeb031f15fedcfcbef`).
 - Added `BenchmarkSigmaClipFused` and `BenchmarkSigmaClipTwoPassReference` to `main_test.go`; `go test -bench` does not affect the registered self-test count.
+
+### External AI CLI sidecar runner (2026-11-17)
+
+- Implemented `--external-bge`, `--external-denoise`, `--external-deconv`, `--external-starless`, `--external-allow-nonlinear` and `--external-timeout`. `CMD` is a whitespace-separated argv with `{input}`/`{output}` placeholders; `os/exec` is used directly (no shell).
+- `runExternalSidecar` writes a private big-endian `BITPIX=-32`, `NAXIS=3` FITS with the plate-solution WCS, runs the tool under a context timeout, reads back only same-size 3-plane float32 FITS, restores WCS if the tool drops/changes it, and removes the temp dir on all paths.
+- `frame` gained `WCS *wcsTan` and `Nonlinear bool`. `runPostProcessing` loads `plate_solution.json` into `src.WCS`, runs external BGE before step 1, external denoise/deconv after step 1, external starless in place of built-in star removal, and marks stretched frames nonlinear.
+- `testExternalAISidecar` uses the binary itself via hidden `--internal-ai-sidecar-mock` to verify pixel/WCS round-trip, temp cleanup, missing-binary diagnostics, the linear guard and its override, CLI parsing and placeholder validation. `testExternalAISidecar` raises selftests to 211.
+- E2E `--post-only --external-bge --external-denoise` on the OrionNebula 4-frame stack completed and wrote `_work/external_bge.f32raw` / `_work/external_denoise.f32raw`.
+- Design and limits recorded in `research/09-external-ai-sidecar-2026-11-17.md`. No ML model or runtime is embedded; the CLI tools remain user-supplied and licensed.
