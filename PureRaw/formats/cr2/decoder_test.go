@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/youruser/pureraw/raw"
+	"github.com/computerphysicslab/skystacker/PureRaw/raw"
 )
 
 func TestProbe(t *testing.T) {
@@ -66,4 +66,27 @@ func TestDecodeOracle(t *testing.T) {
 		t.Fatalf("implausible mean %.1f", mean)
 	}
 	t.Logf("decoded %dx%d @ %d bits, mean %.1f", img.Width, img.Height, img.BitDepth, mean)
+}
+
+func TestConfigOracle(t *testing.T) {
+	path := os.Getenv("PURERAW_CR2")
+	if path == "" {
+		t.Skip("set PURERAW_CR2 to a Canon CR2 file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, h, bits, err := Config(f, fi.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 3944 || h != 2622 || bits != 14 {
+		t.Fatalf("Config = %dx%d @ %d bits, want 3944x2622 @ 14", w, h, bits)
+	}
 }

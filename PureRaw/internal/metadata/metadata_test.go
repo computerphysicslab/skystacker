@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youruser/pureraw/internal/tiff"
+	"github.com/computerphysicslab/skystacker/PureRaw/internal/tiff"
 )
 
 type entry struct {

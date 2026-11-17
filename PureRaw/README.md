@@ -37,16 +37,26 @@ worth building even though LibRaw exists.
   libraries handle the rest.
 - TIFF/JPEG previews beyond what's needed for metadata extraction.
 
+## Install
+
+```bash
+go get github.com/computerphysicslab/skystacker/PureRaw@latest
+```
+
+After the first `PureRaw/vX.Y.Z` tag is published, pin a version instead of
+`@latest` for reproducible builds.
+
 ## Quick Start
 
 ```go
 import (
     "os"
 
-    "github.com/youruser/pureraw/raw"
-    _ "github.com/youruser/pureraw/formats/raf"
-    _ "github.com/youruser/pureraw/formats/arw"
-    _ "github.com/youruser/pureraw/formats/cr3"
+    "github.com/computerphysicslab/skystacker/PureRaw/raw"
+    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/raf"
+    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/arw"
+    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/cr2"
+    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/cr3"
 )
 
 f, _ := os.Open("DSCF0001.RAF")

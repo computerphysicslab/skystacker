@@ -37,13 +37,34 @@ jobs:
         shell: bash
         run: ./skystacker${{ matrix.ext }} --version
 
-      - name: Self-test (27 tests)
+      - name: Self-test (embedded suite)
         shell: bash
         run: ./skystacker${{ matrix.ext }} --selftest
 
       - name: go vet
         shell: bash
         run: go vet ./...
+
+
+  # ── PureRaw nested module ─────────────────────────────────────────────
+  pureraw:
+    name: PureRaw — build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.11'
+          cache: false
+      - name: Build PureRaw
+        working-directory: PureRaw
+        run: go build ./...
+      - name: Test PureRaw (CGO_ENABLED=0)
+        working-directory: PureRaw
+        run: CGO_ENABLED=0 go test ./...
+      - name: Race test PureRaw
+        working-directory: PureRaw
+        run: CGO_ENABLED=1 go test -race ./...
 
   # ── gofmt check runs only on Linux (line endings are deterministic) ───
   gofmt:

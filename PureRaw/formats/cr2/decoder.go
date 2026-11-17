@@ -12,10 +12,10 @@ import (
 	"io"
 	"os"
 
-	"github.com/youruser/pureraw/internal/ljpeg"
-	"github.com/youruser/pureraw/internal/metadata"
-	"github.com/youruser/pureraw/internal/tiff"
-	"github.com/youruser/pureraw/raw"
+	"github.com/computerphysicslab/skystacker/PureRaw/internal/ljpeg"
+	"github.com/computerphysicslab/skystacker/PureRaw/internal/metadata"
+	"github.com/computerphysicslab/skystacker/PureRaw/internal/tiff"
+	"github.com/computerphysicslab/skystacker/PureRaw/raw"
 )
 
 // Decoder decodes Canon CR2 files.

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/youruser/pureraw/internal/tiff"
-	"github.com/youruser/pureraw/raw"
+	"github.com/computerphysicslab/skystacker/PureRaw/internal/tiff"
+	"github.com/computerphysicslab/skystacker/PureRaw/raw"
 )
 
 // FromTIFF builds raw.Metadata from a parsed TIFF document. A nil document

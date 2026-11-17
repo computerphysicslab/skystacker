@@ -3,9 +3,9 @@ package arw
 import (
 	"io"
 
-	"github.com/youruser/pureraw/internal/metadata"
-	"github.com/youruser/pureraw/internal/tiff"
-	"github.com/youruser/pureraw/raw"
+	"github.com/computerphysicslab/skystacker/PureRaw/internal/metadata"
+	"github.com/computerphysicslab/skystacker/PureRaw/internal/tiff"
+	"github.com/computerphysicslab/skystacker/PureRaw/raw"
 )
 
 // ReadMetadata parses the standard TIFF/Exif metadata of an ARW file.

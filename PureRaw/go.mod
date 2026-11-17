@@ -1,4 +1,4 @@
-module github.com/youruser/pureraw
+module github.com/computerphysicslab/skystacker/PureRaw
 
 go 1.26
 

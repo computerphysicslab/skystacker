@@ -14,7 +14,7 @@ import (
 	"bytes"
 	"io"
 
-	"github.com/youruser/pureraw/raw"
+	"github.com/computerphysicslab/skystacker/PureRaw/raw"
 )
 
 // Decoder decodes Canon CR3 files.
