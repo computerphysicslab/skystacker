@@ -146,3 +146,7 @@ input, pixel-mode comet stacking. SIP is fit and stored, not applied.
 Catalog annotation, drizzle, XISF, and RA/Dec comet ephemeris are still
 research. Registered self-tests: 177. Persistent fixtures live in
 `assets/testdata/`.
+
+## BXT/NXT/SXT analysis pointer (2026-11-17)
+
+User-provided research on RC Astro's BlurXTerminator (AI deconvolution), NoiseXTerminator and StarXTerminator (native in StellaImage 10, separate license), including the poor-seeing limitation and planetary alternatives (lucky imaging, wavelets, derotation), is archived in `research/05-research-deep-dive-2026-11-16.md` §13 and `research/03-reference-and-literature/comprehensive-technical-glossary.md`. Conclusion: native neural inference is out of scope for SkyStacker's stdlib-only binary; the feasible equivalents are an improved classical path (`--deconvolve` RL with PSF estimate, star-masked `--starless`, multiscale denoise/wavelets) plus capture-side frame selection.

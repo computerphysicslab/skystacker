@@ -147,3 +147,25 @@
 - **MAD** — median absolute deviation used by sigma clipping and cell statistics.
 - **IRLS** — iteratively reweighted least squares. Specified for self-flat Phase 3, not implemented.
 - **`.f32raw`** — raw little-endian float32 RGB with an 8-byte width/height header.
+
+## 13. BXT / NXT / SXT (RC Astro) and the SkyStacker equivalent question (2026-11-17)
+
+### 13.1 Source notes (user-provided research)
+
+- **BXT = BlurXTerminator** — AI-powered deconvolution for astrophotography by RC Astro (Russell Croman).
+- AstroArts integrated native BXT, NXT (NoiseXTerminator) and SXT (StarXTerminator) into **StellaImage 10**; these require a separate RC Astro license.
+- **Mechanism:** unlike unsharp masking (edge contrast boost that amplifies noise and creates dark ringing), BXT uses a neural network trained on astronomical data to model the optical **PSF** and mathematically reverses blur from diffraction, guiding error and mild seeing. It restores geometry of existing signal (e.g. Saturn's Encke gap) rather than inventing texture.
+- **Poor-seeing wall:** BXT relies on field stars to measure local blur; on planetary targets (no field stars) it estimates blur from planetary edges. If seeing smears fine divisions across several pixels, contrast is already lost pre-stacking and no deconvolution can recover it.
+- **Planetary poor-seeing mitigations** (external workflows): lucky-image frame selection (AutoStakkert!, sharpest 5–15% of frames), multi-scale wavelets (waveSharp, RegiStax) targeting specific spatial frequencies, and longer integration with derotation (WinJUPOS) to raise SNR before sharpening.
+
+### 13.2 Implementation analysis for SkyStacker
+
+- **Native BXT-equivalent (neural inference) is out of scope** under the single-file, stdlib-only, `CGO_ENABLED=0` constraint (Tier 4 ∞ in `README.md`): no ML runtime, no model weights, no GPU. Calling a licensed RC Astro plugin from the Go binary is not a reproducible stdlib-only path and is license-gated; treat as an external sidecar only if a future CLI API exists.
+- **Classical equivalents already present / feasible in the current pipeline:**
+  - `--deconvolve` (Richardson–Lucy with Gaussian PSF) is the closest shipped analogue; it is global, PSF-fixed, CPU-heavy, and does not model spatially-varying blur. Upgrade path: PSF estimation from detected stars (HFR + eccentricity are now recorded), spatially-varying kernel per tile, and star-masked deconvolution to protect bright stars.
+  - SXT analogue: `--starless` currently uses annulus-median removal; a PSF-derived star mask plus reconstruction would be a closer analogue.
+  - NXT analogue: current guided filter + two-scale chroma pass is the baseline; multiscale noise estimation and spatially adaptive strength would be the next step.
+  - Lucky-imaging analogue: frame-quality weighting (`computeAdvancedQuality`, `--hfr-quality`, MAD clipping) already downweights blurred frames, but a "keep sharpest N%" policy (frame rejection by HFR percentile) would be a concrete planetary-facing feature.
+  - Multi-scale wavelets: not implemented; a radial-frequency band split with independent gain per band is feasible in stdlib Go and complements RL deconvolution.
+  - Derotation: external (WinJUPOS); SkyStacker should document the handoff rather than reimplement it.
+- **Honest boundary:** when seeing destroys contrast before capture, no post-processing can restore information. The research should not overpromise; recommend capture-side mitigations explicitly alongside any sharpening flag.
