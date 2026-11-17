@@ -236,6 +236,7 @@ type cliOptions struct {
 	ExternalStarless       string
 	ExternalAllowNonlinear bool
 	ExternalTimeoutSec     int
+	ResampleSIP            bool
 	WaveSharpen            bool
 	WaveGains              string
 	Limit                  int
@@ -484,6 +485,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.ExternalStarless, "external-starless", "", "external AI starless CLI: argv with {input} and {output} placeholders (no shell)")
 	fs.BoolVar(&o.ExternalAllowNonlinear, "external-allow-nonlinear", false, "allow external denoise/deconv on nonlinear data (unsafe for BXT/NXT-style models)")
 	fs.IntVar(&o.ExternalTimeoutSec, "external-timeout", 1800, "per-stage timeout in seconds for external AI CLIs (0 = no timeout)")
+	fs.BoolVar(&o.ResampleSIP, "resample-sip", false, "apply order-2 SIP distortion from plate_solution.json in the stacking resampler")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -1044,6 +1046,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "'GraXpert -cli -cmd denoising -gpu false -i {input} -o {output}'")
 	fmt.Fprintln(w, "                     denoise/deconv require linear data unless --external-allow-nonlinear is set")
 	fmt.Fprintln(w, "  --external-timeout N  seconds per external stage (default 1800, 0 = no timeout)")
+	fmt.Fprintln(w, "  --resample-sip     apply order-2 SIP from plate_solution.json in the stacking resampler")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -2869,6 +2872,57 @@ func resampleToReferenceFn(f *frame, sampleRef func(x, y float64) (float64, floa
 	return out
 }
 
+func sipDistortPixel(w *wcsTan, x, y float64) (float64, float64) {
+	if w == nil || len(w.SIP) < 6 {
+		return x, y
+	}
+	u, v := x-w.CRPIX1, y-w.CRPIX2
+	fu := w.SIP[0]*u*u + w.SIP[1]*u*v + w.SIP[2]*v*v
+	fv := w.SIP[3]*u*u + w.SIP[4]*u*v + w.SIP[5]*v*v
+	return w.CRPIX1 + u + fu, w.CRPIX2 + v + fv
+}
+
+func sipUndistortPixel(w *wcsTan, x, y float64) (float64, float64) {
+	if w == nil || len(w.SIP) < 6 {
+		return x, y
+	}
+	u, v := x-w.CRPIX1, y-w.CRPIX2
+	for range 30 {
+		fu := w.SIP[0]*u*u + w.SIP[1]*u*v + w.SIP[2]*v*v
+		fv := w.SIP[3]*u*u + w.SIP[4]*u*v + w.SIP[5]*v*v
+		un, vn := x-w.CRPIX1-fu, y-w.CRPIX2-fv
+		if math.Abs(un-u) < 1e-10 && math.Abs(vn-v) < 1e-10 {
+			return w.CRPIX1 + un, w.CRPIX2 + vn
+		}
+		u, v = un, vn
+	}
+	return w.CRPIX1 + u, w.CRPIX2 + v
+}
+
+func sipSampleRef(base func(x, y float64) (float64, float64), w *wcsTan) func(x, y float64) (float64, float64) {
+	return func(x, y float64) (float64, float64) {
+		ux, uy := sipUndistortPixel(w, x, y)
+		sx, sy := base(ux, uy)
+		return sipDistortPixel(w, sx, sy)
+	}
+}
+
+func resampleToReferenceShiftSIP(f *frame, sim similarity, dx, dy float64, w *wcsTan, refW, refH, workers int) *frame {
+	inv := sim.inverse()
+	return resampleToReferenceFn(f, sipSampleRef(func(x, y float64) (float64, float64) {
+		p := inv.apply(point2D{x + dx, y + dy})
+		return p.X, p.Y
+	}, w), refW, refH, workers)
+}
+
+func resampleToReferenceAffineShiftSIP(f *frame, aff affine, dx, dy float64, w *wcsTan, refW, refH, workers int) *frame {
+	inv := aff.inverse()
+	return resampleToReferenceFn(f, sipSampleRef(func(x, y float64) (float64, float64) {
+		p := inv.apply(point2D{x + dx, y + dy})
+		return p.X, p.Y
+	}, w), refW, refH, workers)
+}
+
 // findSafeCrop returns the largest axis-aligned rectangle in which every
 // pixel has validCount == requiredCount. Uses maximal-rectangle-in-histogram.
 func findSafeCrop(validCount []int32, w, h int, requiredCount int32) image.Rectangle {
@@ -4538,6 +4592,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.ExternalAllowNonlinear {
 		add("--external-allow-nonlinear")
 	}
+	if o.ResampleSIP {
+		add("--resample-sip")
+	}
 	if o.ExternalTimeoutSec != 1800 {
 		add(fmt.Sprintf("--external-timeout %d", o.ExternalTimeoutSec))
 	}
@@ -4935,6 +4992,7 @@ type runOptions struct {
 	ExternalStarless       string
 	ExternalAllowNonlinear bool
 	ExternalTimeoutSec     int
+	ResampleSIP            bool
 	WaveSharpen            bool
 	WaveGains              string
 	PostCA                 bool
@@ -8527,6 +8585,20 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if filepath.Clean(outputDir) == filepath.Clean(inputDir) {
 		return fmt.Errorf("output directory must differ from input directory")
 	}
+	var resampleSIPWCS *wcsTan
+	if opts.ResampleSIP {
+		if solData, jerr := os.ReadFile(filepath.Join(outputDir, "plate_solution.json")); jerr == nil {
+			var sol plateSolution
+			if jerr := json.Unmarshal(solData, &sol); jerr == nil && len(sol.WCS.SIP) >= 6 {
+				w := sol.WCS
+				resampleSIPWCS = &w
+				logf("--resample-sip: using order-2 SIP from %s", filepath.Join(outputDir, "plate_solution.json"))
+			}
+		}
+		if resampleSIPWCS == nil {
+			logf("WARNING: --resample-sip: no plate_solution.json with order-2 SIP in %s; using plain affine/similarity warp", outputDir)
+		}
+	}
 	if opts.Clean {
 		defer os.RemoveAll(filepath.Join(outputDir, "_work"))
 	}
@@ -9626,7 +9698,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				applySensorFlat(f, selfFlat.Frame, opts.SelfFlatLinearSRGB)
 			}
 			var resampled *frame
-			if transforms[i].aff != nil {
+			if resampleSIPWCS != nil {
+				if transforms[i].aff != nil {
+					resampled = resampleToReferenceAffineShiftSIP(f, *transforms[i].aff, 0, 0, resampleSIPWCS, refW, refH, workers)
+				} else {
+					resampled = resampleToReferenceShiftSIP(f, transforms[i].sim, 0, 0, resampleSIPWCS, refW, refH, workers)
+				}
+			} else if transforms[i].aff != nil {
 				resampled = resampleToReferenceAffine(f, *transforms[i].aff, refW, refH, workers)
 			} else {
 				resampled = resampleToReference(f, transforms[i].sim, refW, refH, workers)
@@ -9677,7 +9755,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					dx, dy = cometDelta(dt, opts.CometRatePxX, opts.CometRatePxY)
 				}
 				var cometFrame *frame
-				if transforms[i].aff != nil {
+				if resampleSIPWCS != nil {
+					if transforms[i].aff != nil {
+						cometFrame = resampleToReferenceAffineShiftSIP(f, *transforms[i].aff, dx, dy, resampleSIPWCS, refW, refH, workers)
+					} else {
+						cometFrame = resampleToReferenceShiftSIP(f, transforms[i].sim, dx, dy, resampleSIPWCS, refW, refH, workers)
+					}
+				} else if transforms[i].aff != nil {
 					cometFrame = resampleToReferenceAffineShift(f, *transforms[i].aff, dx, dy, refW, refH, workers)
 				} else {
 					cometFrame = resampleToReferenceShift(f, transforms[i].sim, dx, dy, refW, refH, workers)
@@ -14732,6 +14816,63 @@ func testSinglePassSigmaClipEquivalence() error {
 	return nil
 }
 
+func testResampleSIP() error {
+	w := &wcsTan{CRPIX1: 16, CRPIX2: 12, SIP: []float64{1e-3, 0, 5e-4, 0, -2e-4, 3e-4}}
+	for _, p := range []point2D{{20, 20}, {60, 40}, {200, 100}} {
+		dx, dy := sipDistortPixel(w, p.X, p.Y)
+		ux, uy := sipUndistortPixel(w, dx, dy)
+		if math.Abs(ux-p.X) > 1e-6 || math.Abs(uy-p.Y) > 1e-6 {
+			return fmt.Errorf("SIP distort/undistort round trip at %v: got %.9f,%.9f", p, ux, uy)
+		}
+	}
+	base := func(x, y float64) (float64, float64) { return x + 7, y - 4 }
+	mixed := sipSampleRef(base, w)
+	gx, gy := mixed(60, 40)
+	ux, uy := sipUndistortPixel(w, 60, 40)
+	bx, by := base(ux, uy)
+	wx, wy := sipDistortPixel(w, bx, by)
+	if gx != wx || gy != wy {
+		return fmt.Errorf("sipSampleRef = %.9f,%.9f, want %.9f,%.9f", gx, gy, wx, wy)
+	}
+	px, py := base(60, 40)
+	if math.Abs(gx-px) < 1e-3 && math.Abs(gy-py) < 1e-3 {
+		return errors.New("SIP had no effect on the sample mapping")
+	}
+	if dx, dy := sipDistortPixel(nil, 5, 7); dx != 5 || dy != 7 {
+		return errors.New("nil WCS SIP distortion changed coordinates")
+	}
+	const size = 100
+	f := &frame{Width: size, Height: size, Pix: make([]float32, size*size*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0
+	}
+	f.Pix[(40*size+60)*3] = 1
+	f.Pix[(40*size+60)*3+1] = 1
+	f.Pix[(40*size+60)*3+2] = 1
+	sim := similarity{SC: 1, SS: 0, Tx: -30, Ty: -10}
+	su, sv := sipUndistortPixel(w, 60, 40)
+	refU := sim.apply(point2D{X: su, Y: sv})
+	refX, refY := sipDistortPixel(w, refU.X, refU.Y)
+	if refX < 1 || refX > size-2 || refY < 1 || refY > size-2 {
+		return fmt.Errorf("SIP target %.2f,%.2f outside test frame", refX, refY)
+	}
+	sipOut := resampleToReferenceShiftSIP(f, sim, 0, 0, w, size, size, 1)
+	plainOut := resampleToReferenceShift(f, sim, 0, 0, size, size, 1)
+	sipR, _, _, sipOK := sampleBilinear(sipOut, refX, refY)
+	plainR, _, _, plainOK := sampleBilinear(plainOut, refX, refY)
+	if !sipOK || !plainOK {
+		return errors.New("SIP resampler sample out of bounds")
+	}
+	if sipR <= plainR+0.2 {
+		return fmt.Errorf("SIP resampler did not move the star to the distorted reference coordinate (sip=%g plain=%g)", sipR, plainR)
+	}
+	opts, err := parseArgs([]string{"--resample-sip"})
+	if err != nil || !opts.ResampleSIP {
+		return fmt.Errorf("--resample-sip parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testExternalAISidecar() error {
 	self, err := os.Executable()
 	if err != nil {
@@ -16313,6 +16454,7 @@ func runSelfTests() int {
 		{"finite sample MAD", testFiniteSampleMAD},
 		{"single-pass sigma clip equivalence", testSinglePassSigmaClipEquivalence},
 		{"external AI sidecar", testExternalAISidecar},
+		{"resample SIP order 2", testResampleSIP},
 		{"sigma clip all same", testSigmaClipAllSame},
 		{"sigma clip reduce weighted", testSigmaClipReduceWeighted},
 		{"weighted median", testWeightedMedian},
@@ -24375,6 +24517,7 @@ func main() {
 		ExternalStarless:       opts.ExternalStarless,
 		ExternalAllowNonlinear: opts.ExternalAllowNonlinear,
 		ExternalTimeoutSec:     opts.ExternalTimeoutSec,
+		ResampleSIP:            opts.ResampleSIP,
 		WaveSharpen:            opts.WaveSharpen,
 		WaveGains:              opts.WaveGains,
 		PostCA:                 opts.PostCA,

@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go 1.27.4 (single executable, standard library only; one first-party dependency `github.com/computerphysicslab/skystacker/PureRaw v0.1.1`, tag `PureRaw/v0.1.1`)
-**Status:** Active Development. Registered `--selftest` cases: 211. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 212. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -24,7 +24,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
-- Drizzle and Bayer drizzle not wired. SIP order-2 is supported in `wcsTanForward`/`wcsTanInverseSIP` (used by WCS/plate-solve paths); the image resampler used for stacking still applies linear TAN/affine transforms unless explicitly extended.
+- Drizzle and Bayer drizzle not wired. SIP order-2 is supported in `wcsTanForward`/`wcsTanInverseSIP` (WCS/plate-solve paths); `--resample-sip` also applies stored order-2 SIP in the stacking resampler (see §4.5), otherwise the warp is linear TAN/affine.
 - Higher-order distortion models beyond SIP order 2.
 - Whole-sky blind plate solving. TAN WCS plate solving is included and wired via `--plate-solve`; blind mode is a 3x3 nside=64 local scan around (0,0) and will fail on a real field, so a pointing seed (`--plate-center` or the reference frame's FITS `RA`/`DEC`) is required in practice.
 - GUI.
@@ -154,7 +154,7 @@ Optional steps gated by flags: `--post-ca`, `--post-color`, `--post-flatten`, `-
 
 ### 4.5 Gaia DR3 data-access layer
 
-Consumed by `--plate-solve` (seeded via `--plate-center` or the reference frame's FITS RA/DEC; blind mode scans only the 3x3 nside=64 neighbourhood around (0,0)). Still reachable standalone via `--test-gaia`. The solved TAN WCS is written to `plate_solution.json` and the SIP order-2 coefficients are stored alongside it; applying SIP to the resampler is not yet wired (see §2 Excluded).
+Consumed by `--plate-solve` (seeded via `--plate-center` or the reference frame's FITS RA/DEC; blind mode scans only the 3x3 nside=64 neighbourhood around (0,0)). Still reachable standalone via `--test-gaia`. The solved TAN WCS is written to `plate_solution.json` and the SIP order-2 coefficients are stored alongside it; `--resample-sip` applies them in the stacking resampler (see §2), otherwise the warp is linear TAN/affine.
 
 - **HEALPix nested scheme** — `healpixAng2PixNested`, `healpixPix2AngNested`, `healpixTileCorners`. `ang2pix`/`pix2ang` match healpy 1.20.1 exactly (nside 1/16/64/256, ~3,600 reference points; exact pixel-corner points are float-noise ties). `healpixTileBoundary` ports `Healpix_Base::boundaries(step)` and matches `hp.boundaries` exactly; `healpixTileCorners` returns a 16-vertex polygon following the curved pixel edge, padded 1 % outward, RA in [0, 2π). Default query nside is 64 (~0.84 deg² per tile); override with `--gaia-nside 256` (~0.052 deg²) when finer tiles are needed.
 - **TAP client** — `gaiaQueryTile` posts an ADQL `POLYGON` query to `/sync` on the configured mirror. Per-attempt `context.WithTimeout(180s)`; 5 s heartbeat via `gaiaWaitWithProgress`; 3 attempts with 2 s / 4 s backoff on 5xx / connection error. Timeouts are fatal and not retried. Custom User-Agent; `MAXREC=2000`.
@@ -184,4 +184,4 @@ Before processing:
 - Memory and disk pre-flight checks abort before Pass 1; `--force` bypasses both.
 
 ## 8. Self-tests
-`./skystacker --selftest` runs 211 embedded tests (plus a Go 1.26 `testing/synctest` rate-limiter test via `go test ./...`) covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only), plus FITS/XISF writers, config/resume, narrowband, deconvolution, annotation, native CR2 decoding and detector QA.
+`./skystacker --selftest` runs 212 embedded tests (plus a Go 1.26 `testing/synctest` rate-limiter test via `go test ./...`) covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only), plus FITS/XISF writers, config/resume, narrowband, deconvolution, annotation, native CR2 decoding and detector QA.

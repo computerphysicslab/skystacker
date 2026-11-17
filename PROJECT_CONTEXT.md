@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 211 passing.** Update this number after any test change.
+**Self-test count: 212 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 
 ## Post-processing pipeline (8 steps)
@@ -1716,3 +1716,11 @@ rejection and disk spill. `--scale N` downsamples.
 - `testExternalAISidecar` uses the binary itself via hidden `--internal-ai-sidecar-mock` to verify pixel/WCS round-trip, temp cleanup, missing-binary diagnostics, the linear guard and its override, CLI parsing and placeholder validation. `testExternalAISidecar` raises selftests to 211.
 - E2E `--post-only --external-bge --external-denoise` on the OrionNebula 4-frame stack completed and wrote `_work/external_bge.f32raw` / `_work/external_denoise.f32raw`.
 - Design and limits recorded in `research/09-external-ai-sidecar-2026-11-17.md`. No ML model or runtime is embedded; the CLI tools remain user-supplied and licensed.
+
+### SIP order-2 in the stacking resampler (2026-11-17)
+
+- Added `--resample-sip`: `runPipeline` reads order-2 SIP from `<output>/plate_solution.json` (warning + plain warp if absent); `sipDistortPixel` / `sipUndistortPixel` (iterative inverse, 30 iterations) and `sipSampleRef` wrap the existing resamplers. The reference pixel is undistorted, the similarity/affine transform is applied in undistorted space, then the source pixel is redistorted before bilinear sampling. Comet-shift variants are also covered.
+- Assumption: one shared distortion model from the stored plate solution for all lights; no per-frame astrometric reprojection. Identity transforms remain effectively identity; with zero SIP the warp is unchanged.
+- `testResampleSIP` verifies distort/undistort round-trip, the composed mapping, a synthetic star relocation versus the plain warp, no-op behavior with nil WCS, and flag parsing. Selftests 212.
+- E2E smoke: OrionNebula 4-frame sigma stack with `--resample-sip` and a seeded SIP plate solution completed (~38 s) and logged use of the stored SIP.
+- Living docs updated (README, TECHNICAL_SPEC, COMPARISON, prompt-ai); research/ received only appended status sections.

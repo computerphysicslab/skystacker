@@ -109,7 +109,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 - **Current boundaries**:
   - **CLI-only**: No GUI is included.
   - **External RAW decoding**: Native JPEG and native FITS decoding (with ImageMagick fallback) are built in; CR2 decoding is built in (pure Go, lossless JPEG/SOF3); CR3 still uses `dcraw`/`dcraw_emu` or ImageMagick at runtime.
-  - **Drizzle & SIP resampling**: Drizzle and Bayer drizzle are not wired. SIP order-2 is applied in WCS forward/inverse helpers (`wcsTanForward`, `wcsTanInverseSIP`) used by plate-solve/diagnostics; the stacking resampler (affine/similarity warp to the reference frame) still uses the linear TAN path unless redesigned.
+  - **Drizzle & SIP resampling**: Drizzle and Bayer drizzle are not wired. SIP order-2 is applied in WCS forward/inverse helpers (`wcsTanForward`, `wcsTanInverseSIP`) used by plate-solve/diagnostics, and optionally in the stacking resampler via `--resample-sip` (requires a stored `plate_solution.json` with SIP coefficients).
   - **Seeded plate solving**: Whole-sky blind plate solving is out of scope; `--plate-solve` requires a pointing seed (`--plate-center` or FITS `RA`/`DEC` headers) because blind mode scans only a 3×3 `nside=64` neighbourhood around `(0,0)`.
 
 ---
@@ -448,6 +448,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--external-starless CMD` | External AI starless CLI (StarNet2, StarXTerminator, …); replaces built-in star removal | — |
 | `--external-allow-nonlinear` | Permit external denoise/deconv on nonlinear data (unsafe for models trained on linear stacks) | `false` |
 | `--external-timeout N` | Per-stage timeout in seconds (`0` disables) | `1800` |
+| `--resample-sip` | Apply stored order-2 SIP distortion in the stacking resampler (needs `plate_solution.json` with SIP) | `false` |
 
 `CMD` is a whitespace-separated argv list (no shell interpolation) that must
 contain `{input}` and `{output}` placeholders. Example:
@@ -700,8 +701,8 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 
 ### Tier 2 — Medium, a day each (`M`)
 
-- **Distortion correction (SIP)**: `fitSIPFromMatches` already exists and is tested (`testWCSSIP`); the missing piece is *applying* it. Add `wcsTanInverseSIP` (adds the polynomial terms after the linear CD projection) and a resampler path that uses it when a plate solution exists. Gate behind `--plate-solve` + `--use-sip` so it never fires on unsolved fields. Closes a `COMPARISON.md` gap. Test: `testSIPResampleRoundTrip`.
-- **Astrometric plate solving & WCS (completion)**: The data-access layer (HEALPix nested math, TAP client, per-tile JSON cache, `--test-gaia`) and solver (`solvePlate`, `fitWCSFromMatches`, `fitSIPFromMatches`) are committed and tested, with `plate_solution.json` written on `--plate-solve`. Remaining work: applying SIP to the resampler (above). The solver is wired into `--post-only` (stars detected from the stored float32 stack). Reference: Astrometry.net / local Gaia catalogues. Test: extend `testPlateSolveHeaderSeeded` with a FITS-header seed.
+- **Distortion correction (SIP)**: `fitSIPFromMatches`, `wcsTanInverseSIP` and the `--resample-sip` resampler path are implemented and tested (`testWCSSIP`, `testResampleSIP`). Remaining gap: per-frame astrometric reprojection and drizzle; current SIP resampling assumes a shared distortion model from the stored plate solution.
+- **Astrometric plate solving & WCS (completion)**: The data-access layer (HEALPix nested math, TAP client, per-tile JSON cache, `--test-gaia`) and solver (`solvePlate`, `fitWCSFromMatches`, `fitSIPFromMatches`) are committed and tested, with `plate_solution.json` written on `--plate-solve`. The stored SIP is now applied by `--resample-sip` (above). The solver is wired into `--post-only` (stars detected from the stored float32 stack). Reference: Astrometry.net / local Gaia catalogues.
 - **PSF modelling & HFR**: flux-weighted HFR is now recorded per star (`starHFR`, `testStarHFR`); Gaussian/Moffat profile fits and elliptical Gaussian fitting for tracking errors/tilt/coma remain. Test: `testPSFFit` (synthetic Moffat, recover FWHM within tolerance).
 - **Frame quality weighting (advanced)**: `computeAdvancedQuality` applies `Q_i = w₁·SNR − w₂·FWHM − w₃·E − w₄·B`; `--hfr-quality` opts into HFR-derived FWHM. Remaining work: PSF-derived FWHM/eccentricity.
 - **Adaptive rejection & maps (extended)**: MAD sigma-clipping, per-pixel rejection/weight maps, coverage map, and `--sigma-clip-low/high` asymmetric thresholds are shipped; richer per-pixel metadata remains.
@@ -737,7 +738,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 | **Distribution & Runtime** | Single cross-platform Go binary (MIT License), CLI-only, zero external runtime dependencies (aside from optional `dcraw`/`ImageMagick` for RAW decoding) |
 | **Core Stacking & Calibration** | Dark/Flat/Bias + synthetic self-flat; Mean/Median/Quality-weighted Sigma clipping; global & local per-tile normalization; end-to-end `float32` |
 | **Built-in Post-Processing** | 8-step pipeline (polynomial background extraction, star removal, STF auto-stretch, guided + chroma denoise, curves, HDR blend, weighted mixes, diffraction spikes) |
-| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no PSF deconvolution, no GPU acceleration. Comet tracking supports pixel, RA/Dec-rate and ephemeris modes. SER/XISF/FITS output exist. SIP is applied in WCS helpers but not in the stacking resampler |
+| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no PSF deconvolution, no GPU acceleration. Comet tracking supports pixel, RA/Dec-rate and ephemeris modes. SER/XISF/FITS output exist. SIP is applied in WCS helpers and, optionally, in the stacking resampler (`--resample-sip`) |
 
 See [COMPARISON.md](COMPARISON.md) for a detailed matrix comparing SkyStacker against DeepSkyStacker, Siril, Astro Pixel Processor, PixInsight, Sequator, ASTAP, IRIS, Nebulosity, MaxIm DL, AstroImageJ, Starry Landscape Stacker, and AutoStakkert!.
 

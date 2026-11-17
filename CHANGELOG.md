@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Added `--resample-sip`: order-2 SIP distortion from `plate_solution.json` is applied in the stacking resampler (undistort reference, similarity/affine warp, redistort source), with `testResampleSIP`; self-tests 212.
 - External AI CLI sidecars: `--external-bge/-denoise/-deconv/-starless` run user CLIs via private 32-bit float FITS temp files (no shell), with WCS round-trip, linear-stage guards, `--external-timeout`, cleanup and a self-executing mock test; self-tests 211.
 - Fused sigma-clip passes: the final (weighted/unweighted) mean is accumulated in the last clipping pass, the survivor list is carried into the next iteration, and tile sums are accumulated during the gather. `testSinglePassSigmaClipEquivalence` proves bit-identical results against the old two-pass references; self-tests 210. `go test -bench` shows ~0.76–0.92 µs/op vs ~0.96–1.17 µs/op for the references (N=16, 2 iterations).
 - Upgraded toolchain to go1.27.4 (`go 1.27` + pinned toolchain in both modules; CI/release updated). Full matrix green: gofmt, vet, 209 self-tests, `go test`, PureRaw CGO=0 + race, race build and six cross-build targets. BENCHMARKS re-baselined (4-frame native-CR2 sigma stack 39.031 s).
