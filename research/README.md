@@ -60,3 +60,6 @@ The upgrade analysed in `GO_TOOLCHAIN_UPGRADE_ANALYSIS.md` was implemented with 
 ### CR2 bit-exact outcome (2026-11-17)
 
 * **[`GEMINI_CR2_BITEXACT_PROMPT-outcome.md`](GEMINI_CR2_BITEXACT_PROMPT-outcome.md)** — local source research (Gemini API was rate-limited on Free Tier). Confirms our lossless-JPEG core matches dcraw; leading hypothesis is `cr2_slice`/linearization, with revised 2–4 h estimate.
+### Modularisation analysis (2026-11-17)
+
+* **[`MODULARIZATION_ANALYSIS.md`](MODULARIZATION_ANALYSIS.md)** — monorepo+subdirectory Go modules vs separate repos for PureRaw / future FITS I/O libraries, with migration plan and caveats (`go.work`, tagged subdir versions, `go install`).
