@@ -1673,3 +1673,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Gaia TAP hardening (Gemini survey proposal 3, partial): HTTP 429 is now retryable with `Retry-After` capped at 30 s; existing 1 req/s rate limit and 2000-row MAXREC already satisfy DR4 quota guidance. `testGaiaQueryTile429Retry`; selftests 207.
 
 - SkyStacker now decodes CR2 natively (pure Go, stdlib only): locates the SOF3 stream, Huffman/entropy decodes two 14-bit planes, interleaves RGGB Bayer, applies black/white levels and bilinear demosaic. `--no-native-cr2` restores dcraw fallback. E2E: 1 CR2 stack in 6.5 s, 100 stars detected; selftests 208. Built-in implementation mirrors the PureRaw subproject decoder.
+
+- Native CR2 validation status: decoded EOS 40D CR2 (3944x2622, 14-bit, mean 1181.8) matches dcraw -D -4 mean (1181.0) and supports E2E stacking (100 stars, 6.5 s). Per-pixel/geometric agreement with dcraw is NOT yet established (downsampled cross-correlation across all 8 dihedral+crop variants < 0.1); flagged as open validation item in PureRaw ROADMAP Phase 1b. Treat native output as usable but not yet bit-exact-equivalent.
