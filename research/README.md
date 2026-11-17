@@ -51,3 +51,6 @@ For traceability, the original files in `research/` map to the reorganized struc
 ## Toolchain upgrade note (2026-11-17)
 
 * **[`GO_TOOLCHAIN_UPGRADE_ANALYSIS.md`](GO_TOOLCHAIN_UPGRADE_ANALYSIS.md)** — verified pros/cons of moving from go1.20.3 to go1.27.4 (security, Swiss maps, Green Tea GC, JSON/tooling, risks, recommendation).
+### Toolchain upgrade status (2026-11-17)
+
+The upgrade analysed in `GO_TOOLCHAIN_UPGRADE_ANALYSIS.md` was implemented with **go1.26.11** (not 1.27.4); see its "Decision implemented" and "Current-state correction" sections.

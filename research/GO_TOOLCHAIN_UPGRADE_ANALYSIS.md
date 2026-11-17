@@ -95,3 +95,6 @@ jump. Do not remain on 1.20.3: it is unsupported and unpatched.
 ## Decision implemented (2026-11-17)
 
 Adopted the conservative option: **go1.26.11** installed at `/home/jips/.local/go1.26.11`, `go 1.26` + `toolchain go1.26.11` in both modules, CI/release pinned to 1.26.11. Full matrix green (gofmt, vet, build, 208 self-tests, PureRaw CGO=0 + race). No `simd/archsimd` adoption.
+### Current-state correction (2026-11-17, post-migration)
+
+The "Current state" section above describes the pre-migration baseline (go1.20.3, `go 1.20`). The repository now uses **go1.26.11** with `go 1.26` + `toolchain go1.26.11` in both modules, CI/release pinned to 1.26.11, and all matrices green. Sections on Go 1.27 remain a forward-looking option, not the adopted toolchain.
