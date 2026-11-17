@@ -1667,3 +1667,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `testReferenceFITSSeed`: validates FITS-header RA/DEC seed parsing (degrees to radians) and rejection of non-FITS/no-keyword files. selftests 204.
 
 - Implemented proposal from Gemini outcome: `detectStarsWithDetrend` retries detection on a scratch `--bg-multiscale`-style background-removed copy when fewer than 20 stars are found (gradient-heavy wide fields / plate solving). Input buffer untouched; `testDetrendStarDetection`; selftests 205.
+
+- Implemented Gemini proposal 6 (dark-series QA): dark folders with >=3 frames get per-frame median/MAD/hot-pixel QA and >3-sigma outliers are excluded from the master (mean-absolute-deviation fallback when MAD=0). `testCalibrationQA`; selftests 206.

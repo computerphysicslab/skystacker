@@ -283,3 +283,4 @@ Reviewed `runPostProcessing` default order: background polynomial → star remov
 ### 13.5 Implemented from the Gemini survey (2026-11-17)
 
 - Pre-solve gradient detrending (survey proposal 6, `S`): `detectStarsWithDetrend` retries star detection on a scratch copy processed with the existing coarse percentile background when the first pass finds <20 stars. It does not modify the light buffer and is covered by `testDetrendStarDetection`.
+- Dark-series QA (survey proposal 6, `S`): master dark construction now rejects >3-sigma outliers by median and hot-pixel fraction when >=3 dark subframes exist, with a mean-absolute-deviation fallback for degenerate MAD. `testCalibrationQA`.

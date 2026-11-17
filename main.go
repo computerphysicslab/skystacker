@@ -4668,7 +4668,63 @@ func calibrationFrameCount(opts runOptions) (total, raw int) {
 	return total, raw
 }
 
-func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
+// calibrationFrameQA computes robust quality metrics for one calibration
+// subframe: background median/MAD and the fraction of hot pixels above
+// median + 5*sigma. Used to reject drifted or light-leaked darks before
+// building a master.
+func calibrationFrameQA(f *frame) (median, mad, hotFrac float64) {
+	st := computeNormStats(f)
+	if st.MAD < 1e-9 {
+		return st.Median, 0, 0
+	}
+	n := f.Width * f.Height
+	thr := float32(st.Median + 5*1.4826*st.MAD)
+	var hot int
+	for p := 0; p < n; p++ {
+		i := p * 3
+		if f.Pix[i] > thr || f.Pix[i+1] > thr || f.Pix[i+2] > thr {
+			hot++
+		}
+	}
+	return st.Median, st.MAD, float64(hot) / float64(n)
+}
+
+// qaRejectIndices returns indices whose metric is more than sigmaDev
+// robust deviations away from the median of all metrics. Needs >=3 values.
+func qaRejectIndices(vals []float64, sigmaDev float64) map[int]bool {
+	out := map[int]bool{}
+	if len(vals) < 3 {
+		return out
+	}
+	sorted := append([]float64(nil), vals...)
+	sort.Float64s(sorted)
+	med := sorted[len(sorted)/2]
+	var absDev []float64
+	for _, v := range vals {
+		absDev = append(absDev, math.Abs(v-med))
+	}
+	sort.Float64s(absDev)
+	mad := absDev[len(absDev)/2]
+	scale := 1.4826 * mad
+	if scale < 1e-12 {
+		var sum float64
+		for _, d := range absDev {
+			sum += d
+		}
+		scale = sum / float64(len(absDev))
+		if scale < 1e-12 {
+			return out
+		}
+	}
+	for i, v := range vals {
+		if math.Abs(v-med) > sigmaDev*scale {
+			out[i] = true
+		}
+	}
+	return out
+}
+
+func stackCalibrationFolder(path string, targetW, targetH int, enableQA ...bool) (*frame, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -4681,9 +4737,41 @@ func stackCalibrationFolder(path string, targetW, targetH int) (*frame, error) {
 		return nil, nil // No files found, skip
 	}
 	logf("  Stacking calibration frames from %s (%d files)", filepath.Base(path), len(files))
+	qa := len(enableQA) > 0 && enableQA[0]
+	accepted := make([]bool, len(files))
+	for i := range accepted {
+		accepted[i] = true
+	}
+	if qa && len(files) >= 3 {
+		medians := make([]float64, 0, len(files))
+		hotFracs := make([]float64, 0, len(files))
+		valid := make([]int, 0, len(files))
+		for i, f := range files {
+			img, err := decodeImageFile(f, targetW, targetH)
+			if err != nil {
+				continue
+			}
+			m, _, hf := calibrationFrameQA(img)
+			medians = append(medians, m)
+			hotFracs = append(hotFracs, hf)
+			valid = append(valid, i)
+		}
+		rejM := qaRejectIndices(medians, 3)
+		rejH := qaRejectIndices(hotFracs, 3)
+		for k, idx := range valid {
+			if rejM[k] || rejH[k] {
+				accepted[idx] = false
+				logf("  calibration QA: rejecting %s (median=%.5f hot=%.3f%%)",
+					filepath.Base(files[idx]), medians[k], 100*hotFracs[k])
+			}
+		}
+	}
 	var master *frame
 	count := 0
-	for _, f := range files {
+	for i, f := range files {
+		if !accepted[i] {
+			continue
+		}
 		img, err := decodeImageFile(f, targetW, targetH)
 		if err != nil {
 			continue
@@ -8620,7 +8708,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 	var darkFrame, flatFrame, biasFrame *frame
 	if opts.DarkFile != "" {
-		darkFrame, err = stackCalibrationFolder(opts.DarkFile, inW, inH)
+		darkFrame, err = stackCalibrationFolder(opts.DarkFile, inW, inH, true)
 		if err != nil {
 			return err
 		}
@@ -13071,6 +13159,36 @@ func loadGaiaPlateFixture() (wcsTan, []star, []gaiaStar, error) {
 	return w, frame, gaia, nil
 }
 
+func testCalibrationQA() error {
+	rej := qaRejectIndices([]float64{10, 10, 10, 10, 50}, 3)
+	if len(rej) != 1 || !rej[4] {
+		return fmt.Errorf("QA rejection = %v, want only index 4", rej)
+	}
+	if len(qaRejectIndices([]float64{10, 10, 10}, 3)) != 0 {
+		return errors.New("uniform series should not be rejected")
+	}
+	const w, h = 32, 32
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for i := range f.Pix {
+		f.Pix[i] = 0.05
+	}
+	med, mad, hot := calibrationFrameQA(f)
+	if math.Abs(med-0.05) > 0.01 || mad > 0.01 || hot > 0 {
+		return fmt.Errorf("clean dark stats med=%g mad=%g hot=%g", med, mad, hot)
+	}
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			i := ((16+dy)*w + 16 + dx) * 3
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = 0.9, 0.9, 0.9
+		}
+	}
+	_, _, hot = calibrationFrameQA(f)
+	if hot <= 0 {
+		return errors.New("hot pixels not detected in dark QA")
+	}
+	return nil
+}
+
 func testDetrendStarDetection() error {
 	const w, h = 128, 128
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
@@ -15532,6 +15650,7 @@ func runSelfTests() int {
 		{"plate solve header seeded", testPlateSolveHeaderSeeded},
 		{"reference FITS seed", testReferenceFITSSeed},
 		{"detrend star detection", testDetrendStarDetection},
+		{"calibration dark QA", testCalibrationQA},
 		{"plate solve blind", testPlateSolveBlind},
 		{"wcs fit rotated both parities", testWCSFitRotatedBothParities},
 		{"match stars to gaia stress", testMatchStarsToGaiaStress},

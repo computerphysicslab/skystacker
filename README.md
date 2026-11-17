@@ -136,6 +136,7 @@ Calibration frames can be supplied explicitly:
 
 You can pass individual calibration paths (`--dark`, `--flat`, `--bias`) or use `--calib-root` to let SkyStacker auto-discover `Bias/Darks/Flats/<filter>` subfolders under a common directory.
 
+- **Calibration frame QA**: when 3+ dark subframes are found, per-frame median/MAD/hot-pixel statistics reject >3-sigma drifted or light-leaked darks before master construction (automatic; `testCalibrationQA`).
 - **Exporting masters (`--export-masters`)**: Writes each loaded calibration product as `master_<kind>.f32raw` (scientific float32 format with the same header as `_work` files) plus a `master_<kind>.jpg` preview. The preview maps the 1st..99.5th luminance percentile linearly to `0..255` and is intended for inspection only.
 - **Synthetic self-flat (`--self-flat`)**: Derives a relative illumination map from at least 15 registered dithered lights.
   - **v1 (`--self-flat-model=registered`)**: Built in reference coordinates and applied after registration, so it corrects mosaic-level vignetting rather than sensor-level fixed-pattern noise; a loaded flat always wins. Because a flat built from lights can absorb extended structures common to every frame (for example a large nebula—reaching a ratio near `1.9` around M42 on Orion-135mm), inspect the crop-sized `master_self_flat.f32raw` (using the crop rectangle in `report.txt`) before trusting the correction. Only the registered stack is corrected.
@@ -654,7 +655,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 205 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 206 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
