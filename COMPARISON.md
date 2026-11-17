@@ -28,7 +28,7 @@ limited or workflow-dependent.
 
 | Tool | Dark / Flat / Bias | Bad-pixel map | Distortion corr. | Plate solving |
 |---|---|---|---|---|
-| **SkyStacker** | Yes | Yes (`--bpm`) | – | Partial (wired, seeded) |
+| **SkyStacker** | Yes | Yes (`--bpm`, `--bpm-auto`) | Partial (SIP in WCS helpers, not resampler) | Partial (wired, seeded; also in `--post-only`) |
 | **OriginStack** | Yes | – | – | Yes |
 | **DeepSkyStacker** | Yes | – | – | – |
 | **Siril** | Yes | Yes | Yes | Partial |
@@ -48,7 +48,7 @@ limited or workflow-dependent.
 
 | Tool | Mean / Med / Sigma | Weighted | Drizzle | Comet |
 |---|---|---|---|---|
-| **SkyStacker** | Yes | Yes | – | Partial (pixel rate) |
+| **SkyStacker** | Yes | Yes | Partial (diagnostic `--drizzle-upsample`) | Yes (pixel rate, RA/Dec rate, ephemeris) |
 | **OriginStack** | Yes | Yes | Yes | Yes |
 | **DeepSkyStacker** | Yes | Yes | x2 / x3 | Yes |
 | **Siril** | Yes | Yes | HST | Yes |
@@ -68,7 +68,7 @@ limited or workflow-dependent.
 
 | Tool | Built-in post | Scripting / CLI | Output formats | GPU |
 |---|---|---|---|---|
-| **SkyStacker** | Extensive | CLI only | TIFF / JPEG / PNG / BMP / raw / SER in | – |
+| **SkyStacker** | Extensive | CLI + JSON config (`--config`) | TIFF / JPEG / PNG / BMP / FITS / XISF / raw | – |
 | **OriginStack** | Extensive | CLI (Python) | FITS / JPG | Yes (CUDA) |
 | **DeepSkyStacker** | Minimal | CLI | TIFF / FITS | – |
 | **Siril** | Extensive | Scripts + CLI | FITS / TIFF / JPEG / SER | – |
@@ -94,7 +94,7 @@ automatic `--reference-crop`.
 
 | Tool | License | Platforms | Interface | Calibration | Star alignment | Crop to reference frame | Deconvolution | Mosaic | Scripting |
 |---|---|---|---|---|---|---|---|---|---|
-| **SkyStacker** | MIT | Win / Mac / Linux | CLI | Yes | Automatic star-pattern | **Yes, automatic (`--reference-crop`)** | – | – | CLI flags |
+| **SkyStacker** | MIT | Win / Mac / Linux | CLI | Yes | Automatic star-pattern | **Yes, automatic (`--reference-crop`)** | Yes (`--deconvolve` RL; `--wavesharp` classical) | Partial (`--resume`, `--json-report`) | CLI flags + `--config` |
 | **Fitswork** | Freeware | Windows | GUI | Yes | Manual 2-star + pattern | **Yes (manual 2-star)** | Yes (Richardson–Lucy, Wiener) | Yes | – |
 | **PixInsight** | Paid | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (StarAlignment / DynamicCrop) | Yes | Yes | PJSR / Python |
 | **Siril** | GPLv3 | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (registration + crop) | Yes | Partial | Scripts + CLI |
@@ -123,6 +123,8 @@ reference frame in memory. Source files are never modified.
   star removal, STF auto-stretch, guided denoise (incl. chroma), curves,
   HDR blend, four weighted mixes, diffraction spikes.
 - Transparent `report.txt` with per-frame diagnostics.
+- Scientific/metadata outputs: TIFF, FITS (`BITPIX=-32`, TAN WCS), XISF 1.0, `report.json`, structured bad-pixel maps, catalog annotation (`--annotate`) and anomaly manifests.
+- Post-processing extras: Richardson–Lucy deconvolution (`--deconvolve`), multi-scale detail enhancement (`--wavesharp`), narrowband HOO/SHO mapping, star/starless layers, and config/checkpoint-style control (`--config`, `--resume`).
 - Automatic reference-frame crop (`--reference-crop`): every light is
   star-matched to an external reference image and warped into its pixel
   frame in memory. Unlike Fitswork's manual two-star workflow, no points
@@ -132,12 +134,12 @@ reference frame in memory. Source files are never modified.
 **Gaps vs mature tools**
 
 - No GUI.
-- No mosaic, no drizzle. TAN WCS plate solving is wired (`--plate-solve`, seeded via `--plate-center` or the reference frame's FITS `RA`/`DEC`, output in `plate_solution.json`), but SIP order-2 coefficients are only *fit* and *stored* — applying them to the resampler is still open, so `Distortion corr.` remains `–` above.
-- No deconvolution or PSF modelling.
-- Comet stacking is pixel-mode only (`--comet-center`, `--comet-rate`); no RA/Dec ephemeris and no combined comet+stars frame.
-- No scripting beyond flags.
+- No mosaic. True multi-frame drizzle resampling is not wired; `--drizzle-upsample` is a diagnostic upsampler of the final stack.
+- TAN WCS plate solving is wired (`--plate-solve`, seeded via `--plate-center` or the reference frame's FITS `RA`/`DEC`, also usable in `--post-only`; output in `plate_solution.json`). SIP order-2 is applied in WCS forward/inverse helpers but **not** in the pixel-space stacking resampler, so `Distortion corr.` stays `Partial`.
+- Deconvolution is classical only (`--deconvolve` Richardson–Lucy, `--wavesharp`); no neural BXT/NXT/SXT-equivalent inference under the stdlib-only constraint (see `research/05-research-deep-dive-2026-11-16.md` §13). PSF modelling is limited to star HFR/eccentricity.
+- Comet stacking supports pixel rate (`--comet-center`/`--comet-rate`), RA/Dec rate (`--comet-radec`) and ephemeris files (`--comet-target`); no combined comet+stars frame.
+- No scripting language beyond flags plus JSON config files (`--config`).
 - No GPU acceleration.
-- SER input is supported; XISF is not.
 - No multi-session / multi-filter automation.
 - Planetary / lunar / solar lucky imaging out of scope.
 
