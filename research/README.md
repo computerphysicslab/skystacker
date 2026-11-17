@@ -48,3 +48,6 @@ For traceability, the original files in `research/` map to the reorganized struc
 
 * **[`GEMINI_DEEP_RESEARCH_PROMPT.md`](GEMINI_DEEP_RESEARCH_PROMPT.md)** — the self-contained prompt sent to Google Gemini Deep Research.
 * **[`GEMINI_DEEP_RESEARCH_PROMPT-outcome.md`](GEMINI_DEEP_RESEARCH_PROMPT-outcome.md)** — Gemini's 2024–2026 state-of-the-art survey and feasibility assessment: Go 1.24–1.26 stdlib/runtime gains, RC-Astro standalone CLIs, GraXpert/SASpro headless tools, finite-sample MAD corrections, ASTAP single-pass sigma clipping and FITS Rice, XISF Rev 2, CFA/Bayer drizzle, spatially gridded PSF, Gaia DR4 quotas, and explicit infeasibility of embedded ML and amd64-only SIMD. Treat the outcome as **external material to be verified**, not as implemented features.
+## Toolchain upgrade note (2026-11-17)
+
+* **[`GO_TOOLCHAIN_UPGRADE_ANALYSIS.md`](GO_TOOLCHAIN_UPGRADE_ANALYSIS.md)** — verified pros/cons of moving from go1.20.3 to go1.27.4 (security, Swiss maps, Green Tea GC, JSON/tooling, risks, recommendation).
