@@ -29,3 +29,4 @@
 - Added `--drizzle-upsample/--drizzle-pixfrac` diagnostic drizzled upsample; `testDrizzleUpsample`; self-tests 201.
 - Added `--normalize-per-channel` (independent RGB global normalization); `testNormalizePerChannel`; self-tests 202.
 - Added `--wavesharp` classical multi-scale detail enhancement (BXT-like baseline from research §13); `testWaveSharpen`; self-tests 203.
+- Default pipeline now logs and records reference-frame HFR (seeing proxy) in report notes; review in research §13.4.

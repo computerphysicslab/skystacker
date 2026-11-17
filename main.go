@@ -10021,6 +10021,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		"JPEG inputs are gamma-encoded (sRGB-like); samples were averaged in encoded space, not linear light.",
 		"All JPG outputs are display previews, not scientific outputs.",
 	}
+	if refHFR := medianHFR(refStars); refHFR > 0 {
+		logf("Reference-frame HFR = %.2f px (seeing proxy)", refHFR)
+		notes = append(notes, fmt.Sprintf("Reference-frame HFR=%.2f px (seeing proxy). Sharpening with --deconvolve/--wavesharp can only recover contrast still present in the stack; poor seeing or low SNR limits any deconvolution.", refHFR))
+	}
 	notes = append(notes, synthNotes...)
 	if darkFrame == nil && flatFrame == nil && biasFrame == nil && !selfFlatApplied {
 		notes = append(notes, "No calibration (dark, flat, bias) was performed.")

@@ -272,3 +272,11 @@ SkyStacker currently fits/stores SIP order-2 in plate solving output but does **
 ### 13.3 Implemented classical analogue (2026-11-17)
 
 - `--wavesharp` / `--wave-gains` implement coarse-to-fine multi-scale Gaussian detail enhancement (default gains 0.25/0.15/0.08 at sigma 18/6/2 px) in post-processing. This is a deliberately conservative classical baseline next to `--deconvolve` (RL), not a neural BXT equivalent; see `testWaveSharpen`. The neural path remains out of scope (§13.2).
+
+### 13.4 Default post-processing pipeline review (2026-11-17)
+
+Reviewed `runPostProcessing` default order: background polynomial → star removal → black-point → STF stretch → guided+chroma denoise → curves → HDR blend/mix → spikes. Findings:
+- **Sound defaults:** star removal and black-point happen in the linear-ish domain before stretch; HDR blend reintroduces linear detail from `step1Frame` (captured before star removal), so the output is not fully starless. No default change needed for correctness.
+- **New functions are deliberately opt-in:** `--bg-multiscale`, `--deconvolve`, `--wavesharp` run *before* star removal/stretch so they operate on linear data. Enabling them by default would risk noise amplification/ringing on unknown data; keep opt-in and let the user choose via `--config`.
+- **Actionable improvement implemented:** report the reference-frame HFR (seeing proxy) in the log and `report.txt`/`report.json` notes, so users can decide whether `--deconvolve`/`--wavesharp` is worthwhile. This uses the new per-star HFR primitive and makes the honest "no recovery if contrast is already lost" point visible.
+- **Ordering note:** optional sharpening runs before denoise; on noisy data the subsequent denoise partly cancels it. A future `--post-preset` could move detail enhancement after denoise for a `detail` preset, but that changes the meaning of the existing step outputs and is not done here.
