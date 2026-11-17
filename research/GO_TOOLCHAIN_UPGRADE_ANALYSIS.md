@@ -104,3 +104,10 @@ The "Current state" section above describes the pre-migration baseline (go1.20.3
 - Applied `go fix` (Go 1.26 modernizers: `newexpr`, `minmax`, `rangeint`, `mapsloop`, `slicescontains`, `slicessort`, `fmtappendf`, `omitzero`, `forvar`) to both modules; all tests remained green.
 - Added `main_test.go` using Go 1.26 `testing/synctest` to verify the 1 req/s Gaia TAP rate limiter deterministically (no wall-clock sleeps in CI).
 - No `simd/archsimd`, no `encoding/json/v2` (not available in 1.26 without an experiment).
+
+### Go 1.27.4 adopted (2026-11-17, append-only status)
+
+- The forward-looking option above was executed: go1.27.4 installed at `/home/jips/.local/go1.27.4/bin` (module-cache toolchain symlinked), `go 1.27` + `toolchain go1.27.4` in both `go.mod` files, CI/release pinned to 1.27.4, local `go.work` bumped to 1.27.4.
+- Full matrix green on go1.27.4: `gofmt -l .` clean, `go vet ./...`, build, 209 self-tests, `go test ./...`, PureRaw `CGO_ENABLED=0` + `-race`, race build + 209 self-tests, and static cross-builds for linux/darwin/windows amd64+arm64. No source changes were needed and no JSON/report drift was observed.
+- Re-baselined BENCHMARKS.md: 4-frame native-CR2 sigma stack 39.031 s (was 59.937 s on 1.26.11), `--resume --starless` 21.11 s (was 23.00 s). Not a controlled A/B; thermal variance applies.
+- `go fix` modernizers were already applied under 1.26; no additional 1.27 modernization was applied. `simd/archsimd` remains rejected.

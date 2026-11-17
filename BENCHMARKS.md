@@ -12,7 +12,7 @@ cost for each stage; **they are not a comparison of output quality**.
 | CPU | Intel Core i7-8565U (4 cores / 8 threads, 1.80 GHz base, up to 4.6 GHz turbo, 15 W ULV) |
 | Memory | 15 GiB RAM (8.3 GiB available when measured) |
 | Architecture / OS | x86_64, Ubuntu 20.04.6 LTS, Linux 5.15.0-139-generic |
-| Go toolchain | go1.26.11 linux/amd64 (upgraded 2026-11-17; earlier rows below used go1.20.3) |
+| Go toolchain | go1.27.4 linux/amd64 (upgraded 2026-11-17; earlier rows used go1.26.11 or go1.20.3) |
 | SkyStacker | v0.6.1 (`main` at time of measurement; `--version` prints 0.6.1). Later builds add native CR2 decoding, which further reduces CR2 stack time vs the dcraw path |
 | Canonical binary | `/home/jips/.local/bin/skystacker` (built with `-ldflags "-X main.buildDate=..."`) |
 | RAW decoder | external `dcraw`/`dcraw_emu` or ImageMagick (CR2/CR3 inputs) |
@@ -178,3 +178,12 @@ wall time manually to the row; `report.txt` is not rewritten by `--resume`.
 | Post-processing + starless | 1 stack | `--resume --starless` | **23.00 s** wall |
 
 The earlier 4-frame row (2m 02s) used Go 1.20.3 and the external dcraw path; it is not directly comparable because both the toolchain and the CR2 decoder changed. The 22.43 s post-processing baseline was Go 1.20.3; 23.00 s is within run-to-run variance on this thermal-throttling laptop.
+
+### Go 1.27.4 re-baseline (2026-11-17)
+
+| Run | Frames | Flags (abridged) | Duration |
+|---|---:|---|---:|
+| Native CR2 stack | 4 | `sigma`, `--stack-only --dark --bias` (built-in CR2 decode) | **39.031 s** (wall 39.25 s) |
+| Post-processing + starless | 1 stack | `--resume --starless` | **21.11 s** wall |
+
+Commands: `/home/jips/.local/bin/skystacker --output /tmp/bench_go127 --overwrite --stack-only --limit 4 --dark assets/OrionNebula/darks --bias assets/OrionNebula/biases assets/OrionNebula/lights` and the same output dir with `--resume --starless`. Same data and flags as the Go 1.26.11 rows above; the 59.937 s → 39.031 s delta includes Go 1.27 runtime improvements and normal run-to-run variance on this thermally throttled laptop, not a controlled A/B. All 209 self-tests, `go vet`, `go test`, PureRaw CGO=0/race tests, race build, and six cross-compilation targets are green on go1.27.4.

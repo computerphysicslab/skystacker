@@ -209,7 +209,7 @@ For Canon RAW files, SkyStacker prefers `dcraw` or `dcraw_emu` when available in
 
 ### System Requirements
 
-- **Go 1.26.11 or later** (to compile from source; `go.mod` pins `toolchain go1.26.11`).
+- **Go 1.27.4 or later** (to compile from source; `go.mod` pins `toolchain go1.27.4`).
 - **Runtime decoders**: ImageMagick and/or `dcraw` / `dcraw_emu` for RAW/fallback FITS ingestion.
 - **Memory & Disk**: Sufficient RAM and scratch disk space for the session's frame count and image dimensions (see [Pre-Flight Resource Checks](#pre-flight-resource-checks--error-handling)).
 
@@ -226,7 +226,7 @@ cd skystacker
 go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .
 ```
 
-Run the embedded unit & integration self-tests (authoritative count printed at runtime; `runSelfTests` in `main.go` is the source of truth). Go 1.26 also enables a deterministic `testing/synctest` check of the Gaia rate limiter via `go test ./...`:
+Run the embedded unit & integration self-tests (authoritative count printed at runtime; `runSelfTests` in `main.go` is the source of truth). Go 1.25+ also enables a deterministic `testing/synctest` check of the Gaia rate limiter via `go test ./...`:
 
 ```bash
 ./skystacker --selftest

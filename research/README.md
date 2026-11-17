@@ -63,3 +63,6 @@ The upgrade analysed in `GO_TOOLCHAIN_UPGRADE_ANALYSIS.md` was implemented with 
 ### Modularisation analysis (2026-11-17)
 
 * **[`MODULARIZATION_ANALYSIS.md`](MODULARIZATION_ANALYSIS.md)** — monorepo+subdirectory Go modules vs separate repos for PureRaw / future FITS I/O libraries, with migration plan and caveats (`go.work`, tagged subdir versions, `go install`).
+### Toolchain upgrade status update (2026-11-17, later same day)
+
+The go1.26.11 status note above is historical. The forward-looking go1.27.4 option was subsequently implemented: both modules now declare `go 1.27` + `toolchain go1.27.4`, CI/release are pinned to 1.27.4, the full matrix is green and BENCHMARKS.md was re-baselined. See the appended "Go 1.27.4 adopted" section in `GO_TOOLCHAIN_UPGRADE_ANALYSIS.md`.

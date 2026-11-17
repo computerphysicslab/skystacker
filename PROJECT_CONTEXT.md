@@ -1691,3 +1691,11 @@ rejection and disk spill. `--scale N` downsamples.
 - `robots.txt` policy blocked 8 URLs (IVOA MOC/VOTable/ConeSearch, Astrometry.net nova UI, astropy docs root, WCStools, Flickr); blocked sources need a manual/alternative route, the crawler does not bypass them.
 - Crawler is sequential and network-bound (24% of one core on 8 cores); parallel worker pool + per-domain rate limits remain a research-tool improvement, not a SkyStacker runtime change.
 - `.gitignore` now excludes the large local dataset `assets/M42-2017-11-18-Leciñena-50mm/`.
+
+### Go 1.27.4 toolchain upgrade (2026-11-17)
+
+- Toolchain installed at `/home/jips/.local/go1.27.4/bin` (symlink to the module-cache download); both `go.mod` files now declare `go 1.27` + `toolchain go1.27.4`; local `go.work` bumped to 1.27.4; CI and release workflows pinned to 1.27.4.
+- All checks green on 1.27.4: gofmt, vet, build, 209 self-tests, `go test ./...`, PureRaw CGO=0 + race, race build + selftests, six static cross-build targets. No source changes or exact-string report drift.
+- Canonical binary and `./skystacker` rebuilt with the new toolchain; `/home/jips/go/bin/skystacker` symlink points at the repo copy.
+- BENCHMARKS.md has a new Go 1.27.4 re-baseline section: 4-frame native-CR2 sigma stack 39.031 s, `--resume --starless` 21.11 s (not a controlled A/B).
+- Docs synced: README, TECHNICAL_SPEC, CHANGELOG, prompt-ai.txt, NEXT_SESSION_PROMPT; research/ updated by appending status sections only.

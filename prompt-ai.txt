@@ -17,7 +17,7 @@ Version and tests
 
 Build and install
 -----------------
-- Toolchain: Go 1.26.11 at /home/jips/.local/go1.26.11/go/bin (already installed); root go.mod pins `toolchain go1.26.11`.
+- Toolchain: Go 1.27.4 at /home/jips/.local/go1.27.4/bin (already installed); root go.mod pins `toolchain go1.27.4` (`go 1.27`), PureRaw too.
 - Local multi-module workspace: root `go.work` (gitignored) lists `.` and `./PureRaw`. SkyStacker imports `github.com/computerphysicslab/skystacker/PureRaw v0.1.1` (tag `PureRaw/v0.1.1`) for native CR2 decoding; `main.go` no longer contains the duplicated `pr*` decoder. Keep that module path stable — it is a compatibility promise.
 - Canonical executable: /home/jips/.local/bin/skystacker.
 - A repository-local ./skystacker is allowed and should be kept current.
