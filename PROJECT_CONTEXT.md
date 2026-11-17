@@ -1655,3 +1655,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--resume`: if `<output>/_work/stacked_mean.f32raw` exists, switches to post-only automatically instead of re-stacking; `testResumeFromStack`; selftests 200.
 
 - Added diagnostic drizzle upsampling (`--drizzle-upsample N`, `--drizzle-pixfrac F`) writing `stacked_drizzled.f32raw/.jpg`; `testDrizzleUpsample`; selftests 201.
+
+- Added `--normalize-per-channel`: global normalization with independent per-channel median/MAD (`channelNormStats`); overrides local normalization; `testNormalizePerChannel`; selftests 202.

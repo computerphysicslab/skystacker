@@ -27,3 +27,4 @@
 - Added `--narrowband HOO|SHO` with `--nb-a/--nb-b/--nb-c` mono stacks; `testNarrowband`; self-tests 199.
 - Added `--resume` (reuse existing stack and continue with post-processing); `testResumeFromStack`; self-tests 200.
 - Added `--drizzle-upsample/--drizzle-pixfrac` diagnostic drizzled upsample; `testDrizzleUpsample`; self-tests 201.
+- Added `--normalize-per-channel` (independent RGB global normalization); `testNormalizePerChannel`; self-tests 202.

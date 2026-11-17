@@ -163,6 +163,7 @@ type cliOptions struct {
 	Normalize            bool
 	LocalNormalize       bool
 	NormalizeMode        string
+	NormalizePerChannel  bool
 	LNTileSize           int
 	SynthCalib           bool
 	SynthDark            bool
@@ -431,6 +432,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Normalize, "normalize", false, "globally normalize each frame sky background to the reference frame (requires registration)")
 	fs.BoolVar(&o.LocalNormalize, "local-normalize", false, "per-tile normalization (implies --normalize; requires registration)")
 	fs.StringVar(&o.NormalizeMode, "normalize-mode", "scale-offset", "normalization mode: scale-offset (default), additive, multiplicative")
+	fs.BoolVar(&o.NormalizePerChannel, "normalize-per-channel", false, "apply independent per-channel normalization (global only; overrides local)")
 	fs.IntVar(&o.LNTileSize, "ln-tile-size", 256, "tile side length for --local-normalize (64-2048)")
 	fs.BoolVar(&o.SynthCalib, "synthetic-calibration", false, "report which calibration components are recoverable from lights; never fabricates frames")
 	fs.BoolVar(&o.SynthDark, "synthetic-dark", false, "generate a synthetic dark frame (REFUSED by default; see --synthetic-calibration)")
@@ -955,6 +957,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --normalize       globally normalize each frame to the reference (requires registration)")
 	fmt.Fprintln(w, "  --local-normalize per-tile normalization; implies --normalize (requires registration)")
 	fmt.Fprintln(w, "  --normalize-mode M  scale-offset (default), additive, or multiplicative normalization")
+	fmt.Fprintln(w, "  --normalize-per-channel  independent per-channel normalization (global only)")
 	fmt.Fprintln(w, "  --ln-tile-size N  tile side length for --local-normalize (default 256)")
 	fmt.Fprintln(w, `  --black-level string  black-level pedestal: "auto" reads EXIF BlackLevel / FITS BLACK_LVL and subtracts it (default: off)`)
 	fmt.Fprintln(w, "  --bpm string      bad-pixel map: FITS image (non-zero = bad) or text list of x,y pairs; coordinates are native pixels (default: off)")
@@ -4124,6 +4127,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.NormalizeMode != "" && o.NormalizeMode != "scale-offset" {
 		add("--normalize-mode " + o.NormalizeMode)
 	}
+	if o.NormalizePerChannel {
+		add("--normalize-per-channel")
+	}
 	if o.LocalNormalize {
 		add("--local-normalize")
 		if o.LNTileSize > 0 && o.LNTileSize != 256 {
@@ -4533,6 +4539,7 @@ type runOptions struct {
 	Normalize            bool
 	LocalNormalize       bool
 	NormalizeMode        string
+	NormalizePerChannel  bool
 	LNTileSize           int
 	SynthCalib           bool
 	BlackLevel           string
@@ -4864,6 +4871,92 @@ func computeRegionStats(f *frame, x0, y0, x1, y1 int) normStats {
 // computeNormStats returns the (median, MAD) pair for the whole frame.
 func computeNormStats(f *frame) normStats {
 	return computeRegionStats(f, 0, 0, f.Width, f.Height)
+}
+
+// channelNormStats returns the (median, MAD) pair for each RGB channel.
+func channelNormStats(f *frame) [3]normStats {
+	var out [3]normStats
+	if f == nil || f.Width <= 0 || f.Height <= 0 {
+		return out
+	}
+	for c := 0; c < 3; c++ {
+		const bins = 1024
+		var hist [bins]int64
+		total := int64(0)
+		for p := 0; p < f.Width*f.Height; p += 4 {
+			i := p*3 + c
+			v := f.Pix[i]
+			if v < 0 {
+				continue
+			}
+			if v >= 1 {
+				v = 0.999999
+			}
+			hist[int(v*bins)]++
+			total++
+		}
+		if total == 0 {
+			continue
+		}
+		med := histMedian(hist[:], total, bins)
+		var devs [bins]int64
+		devTotal := int64(0)
+		for p := 0; p < f.Width*f.Height; p += 4 {
+			i := p*3 + c
+			v := f.Pix[i]
+			if v < 0 {
+				continue
+			}
+			d := math.Abs(float64(v) - med)
+			if d >= 1 {
+				d = 0.999999
+			}
+			devs[int(d*bins)]++
+			devTotal++
+		}
+		out[c] = normStats{Median: med, MAD: histMedian(devs[:], devTotal, bins)}
+	}
+	return out
+}
+
+func histMedian(hist []int64, total int64, bins int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	var acc int64
+	for b := 0; b < bins; b++ {
+		acc += hist[b]
+		if acc >= total/2 {
+			return float64(b) / float64(bins)
+		}
+	}
+	return 1.0
+}
+
+// globalNormalizePerChannel applies an independent norm transform to each
+// channel using per-channel reference statistics.
+func globalNormalizePerChannel(f *frame, ref [3]normStats, mode string) *frame {
+	fs := channelNormStats(f)
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	n := f.Width * f.Height
+	for p := 0; p < n; p++ {
+		i := p * 3
+		if f.Pix[i] < 0 {
+			out.Pix[i], out.Pix[i+1], out.Pix[i+2] = -1, -1, -1
+			continue
+		}
+		for c := 0; c < 3; c++ {
+			sc, off := normParams(fs[c], ref[c], mode)
+			v := float64(f.Pix[i+c])*sc + off
+			if v < 0 {
+				v = 0
+			} else if v > 1 {
+				v = 1
+			}
+			out.Pix[i+c] = float32(v)
+		}
+	}
+	return out
 }
 
 // applyNormTransform applies value = scale*value + offset to every
@@ -8981,6 +9074,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	var needsNormalize bool
 	var normRefGlobal normStats
+	var normRefChannels [3]normStats
 	var normRefTiles []normStats
 	var normNTX, normNTY int
 	if registrationOn {
@@ -9016,6 +9110,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					applySensorFlat(refFrame, selfFlat.Frame, opts.SelfFlatLinearSRGB)
 				}
 				normRefGlobal = computeNormStats(refFrame)
+				normRefChannels = channelNormStats(refFrame)
 				if opts.LocalNormalize {
 					normNTX = (refW + ts - 1) / ts
 					normNTY = (refH + ts - 1) / ts
@@ -9178,7 +9273,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			// every frame except the reference, whose own stats define
 			// the target (identity normalization).
 			if needsNormalize && i != refIdx {
-				if opts.LocalNormalize && len(normRefTiles) > 0 {
+				if opts.NormalizePerChannel {
+					resampled = globalNormalizePerChannel(resampled, normRefChannels, opts.NormalizeMode)
+				} else if opts.LocalNormalize && len(normRefTiles) > 0 {
 					resampled = localNormalizeWithRefTiles(resampled, normRefTiles, normRefGlobal, normNTX, normNTY, opts.LNTileSize, opts.NormalizeMode)
 				} else {
 					resampled = globalNormalizeWithRef(resampled, normRefGlobal, opts.NormalizeMode)
@@ -15271,6 +15368,7 @@ func runSelfTests() int {
 		{"advanced frame quality weighting", testComputeAdvancedQuality},
 		{"compute norm stats", testComputeNormStats},
 		{"normalize modes", testNormalizeModes},
+		{"normalize per channel", testNormalizePerChannel},
 		{"multiscale background", testMultiscaleBackground},
 		{"config file", testConfigFile},
 		{"richardson lucy", testRichardsonLucy},
@@ -18920,6 +19018,27 @@ func testConfigFile() error {
 	os.WriteFile(bad, []byte("{not json"), 0o644)
 	if _, err := parseArgs([]string{"--config", bad}); err == nil {
 		return errors.New("invalid config accepted")
+	}
+	return nil
+}
+
+func testNormalizePerChannel() error {
+	const w, h = 32, 32
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for p := 0; p < w*h; p++ {
+		f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2] = 0.2, 0.4, 0.6
+	}
+	ref := [3]normStats{{Median: 0.4}, {Median: 0.4}, {Median: 0.4}}
+	out := globalNormalizePerChannel(f, ref, "additive")
+	p := (10*w + 10) * 3
+	for c := 0; c < 3; c++ {
+		if math.Abs(float64(out.Pix[p+c])-0.4) > 0.02 {
+			return fmt.Errorf("channel %d after per-channel additive: %g", c, out.Pix[p+c])
+		}
+	}
+	opts, err := parseArgs([]string{"--normalize", "--normalize-per-channel"})
+	if err != nil || !opts.NormalizePerChannel || !opts.Normalize {
+		return fmt.Errorf("per-channel flags: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -23139,6 +23258,7 @@ func main() {
 		Normalize:            opts.Normalize,
 		LocalNormalize:       opts.LocalNormalize,
 		NormalizeMode:        opts.NormalizeMode,
+		NormalizePerChannel:  opts.NormalizePerChannel,
 		LNTileSize:           opts.LNTileSize,
 		SynthCalib:           opts.SynthCalib,
 		BlackLevel:           opts.BlackLevel,

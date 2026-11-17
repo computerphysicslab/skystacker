@@ -445,6 +445,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--normalize` | Per-frame global `scale + offset` background match to reference (requires registration) | `false` |
 | `--local-normalize` | Per-tile `scale + offset` with bilinear interpolation; implies `--normalize` | `false` |
 | `--normalize-mode string` | `scale-offset` (default), `additive` (median shift), or `multiplicative` (clamped median ratio) | `scale-offset` |
+| `--normalize-per-channel` | Independent per-channel normalization (global only; overrides local) | `false` |
 | `--ln-tile-size int` | Tile size in pixels for `--local-normalize` | `256` |
 
 ### Stacking & Cache
@@ -650,7 +651,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 201 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 202 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
