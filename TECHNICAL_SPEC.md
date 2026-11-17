@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 196. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 197. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 196 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 197 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
@@ -35,7 +35,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 skystacker [flags] [input-directory]
 ```
 
-Flags are accepted before or after the positional input directory. Default input directory: `.`. Default output directory: `<input>/0_skystacker_results`.
+Flags are accepted before or after the positional input directory. `--config FILE` loads a JSON object of flag names (without `--`) with string/number/bool/array values; config flags are applied first so explicit CLI flags override them. Default input directory: `.`. Default output directory: `<input>/0_skystacker_results`.
 
 ### Core flags
 - `--method` (default `sigma`): `mean`, `median`, `sigma`.

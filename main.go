@@ -212,6 +212,7 @@ type cliOptions struct {
 	Starless           bool
 	JSONReport         bool
 	BGMultiscale       bool
+	ConfigPath         string
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -232,12 +233,97 @@ type cliOptions struct {
 	CometDec           float64
 }
 
+// expandConfigArgs reads an optional --config JSON object and prepends its
+// flags to the command line, so explicit CLI arguments (which come later)
+// override config values with the standard flag package semantics. Keys are
+// flag names without the leading "--"; values may be strings, numbers,
+// booleans, or arrays of scalars (for repeated flags).
+func expandConfigArgs(args []string) ([]string, error) {
+	var path string
+	for i, a := range args {
+		if a == "--config" && i+1 < len(args) {
+			path = args[i+1]
+			break
+		}
+		if strings.HasPrefix(a, "--config=") {
+			path = strings.TrimPrefix(a, "--config=")
+			break
+		}
+	}
+	if path == "" {
+		return args, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--config %s: %w", path, err)
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return nil, fmt.Errorf("--config %s: %w", path, err)
+	}
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var extra []string
+	for _, k := range keys {
+		name := strings.TrimPrefix(k, "--")
+		if name == "" || name == "config" {
+			continue
+		}
+		raw := obj[k]
+		var arr []json.RawMessage
+		if err := json.Unmarshal(raw, &arr); err == nil {
+			for _, item := range arr {
+				v, err := jsonScalarArg(item)
+				if err != nil {
+					return nil, fmt.Errorf("--config %s: %s: %w", path, k, err)
+				}
+				extra = append(extra, "--"+name+"="+v)
+			}
+			continue
+		}
+		v, err := jsonScalarArg(raw)
+		if err != nil {
+			return nil, fmt.Errorf("--config %s: %s: %w", path, k, err)
+		}
+		extra = append(extra, "--"+name+"="+v)
+	}
+	return append(extra, args...), nil
+}
+
+func jsonScalarArg(raw json.RawMessage) (string, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err == nil {
+		if b {
+			return "true", nil
+		}
+		return "false", nil
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err == nil {
+		return strconv.FormatFloat(f, 'g', -1, 64), nil
+	}
+	return "", fmt.Errorf("unsupported value %s", string(raw))
+}
+
 func parseArgs(args []string) (*cliOptions, error) {
+	expanded, err := expandConfigArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	args = expanded
 	fs := flag.NewFlagSet("skystacker", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	o := &cliOptions{}
 	var noRegister bool
+	fs.StringVar(&o.ConfigPath, "config", "", "JSON config file; flags inside are applied before CLI arguments (CLI wins)")
 	fs.StringVar(&o.OutputDir, "output", "", "output directory (default: <input>/0_skystacker_results)")
 	fs.IntVar(&o.Workers, "workers", runtime.NumCPU(), "maximum concurrent workers")
 	fs.BoolVar(&o.Recursive, "recursive", false, "search subdirectories")
@@ -373,7 +459,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -15089,6 +15175,7 @@ func runSelfTests() int {
 		{"compute norm stats", testComputeNormStats},
 		{"normalize modes", testNormalizeModes},
 		{"multiscale background", testMultiscaleBackground},
+		{"config file", testConfigFile},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
@@ -18573,6 +18660,40 @@ func testMultiscaleBackground() error {
 	opts, err := parseArgs([]string{"--bg-multiscale"})
 	if err != nil || !opts.BGMultiscale {
 		return fmt.Errorf("--bg-multiscale parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testConfigFile() error {
+	dir, err := os.MkdirTemp("", "skystacker-config-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	p := filepath.Join(dir, "session.json")
+	body := `{"method":"median","workers":3,"stack-only":true,"sigma-clip-high":4.5,"output":"/tmp/from-config"}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		return err
+	}
+	opts, err := parseArgs([]string{"--config", p, "./lights"})
+	if err != nil {
+		return err
+	}
+	if opts.Method != "median" || opts.Workers != 3 || !opts.StackOnly || opts.SigmaClipHigh != 4.5 || opts.OutputDir != "/tmp/from-config" {
+		return fmt.Errorf("config flags: %+v", opts)
+	}
+	if opts.InputDir != "./lights" {
+		return fmt.Errorf("positional lost: %q", opts.InputDir)
+	}
+	// Explicit CLI flags win over config.
+	opts, err = parseArgs([]string{"--config", p, "--method", "sigma", "./lights"})
+	if err != nil || opts.Method != "sigma" {
+		return fmt.Errorf("CLI override failed: %+v err=%v", opts, err)
+	}
+	bad := filepath.Join(dir, "bad.json")
+	os.WriteFile(bad, []byte("{not json"), 0o644)
+	if _, err := parseArgs([]string{"--config", bad}); err == nil {
+		return errors.New("invalid config accepted")
 	}
 	return nil
 }

@@ -22,3 +22,4 @@
 - `--fits`/`--xisf` now also write `stacked_mean.fits`/`stacked_mean.xisf` (linear mean stack, WCS in FITS).
 - Added `--normalize-mode` (scale-offset/additive/multiplicative) with `testNormalizeModes`; self-tests 195.
 - Added `--bg-multiscale` coarse percentile background before the polynomial fit; `testMultiscaleBackground`; self-tests 196.
+- Added `--config FILE` JSON flag files (CLI overrides config); `testConfigFile`; self-tests 197.

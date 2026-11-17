@@ -1645,3 +1645,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--normalize-mode` (scale-offset default, additive, multiplicative) applied consistently to global and tile-local normalization; `testNormalizeModes`; selftests 195.
 
 - Added `--bg-multiscale`: coarse 20th-percentile background grid (block >=64px, bilinear interpolation) applied before the polynomial fit; `testMultiscaleBackground`; selftests 196.
+
+- Added `--config FILE`: JSON object of flag names/values expanded into CLI args before parsing (CLI wins); supports strings, numbers, booleans and arrays. `testConfigFile`; selftests 197.
