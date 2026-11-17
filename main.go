@@ -5921,14 +5921,14 @@ func sigmaClipReduceWeighted(vals, weights []float32, threshold float64, iters i
 	for i := range active {
 		active[i] = true
 	}
+	activeVals := make([]float32, 0, n)
+	for i, a := range active {
+		if a {
+			activeVals = append(activeVals, vals[i])
+		}
+	}
 	var lastMedian float32
 	for it := 0; it < iters; it++ {
-		var activeVals []float32
-		for i, a := range active {
-			if a {
-				activeVals = append(activeVals, vals[i])
-			}
-		}
 		if len(activeVals) < 3 {
 			var s, ws float64
 			for i, a := range active {
@@ -5959,6 +5959,15 @@ func sigmaClipReduceWeighted(vals, weights []float32, threshold float64, iters i
 		}
 		sigma = sig
 		kLo, kHi := float32(lo)*sig, float32(hi)*sig
+		// The last clipping pass also accumulates the two weighted moments
+		// and the unweighted fallback sum, in the same index order as the
+		// old separate mean pass, so float32 output is bit-identical.
+		finalPass := it == iters-1
+		var nextActiveVals []float32
+		if !finalPass {
+			nextActiveVals = make([]float32, 0, len(activeVals))
+		}
+		var s, ws, unweightedSum float64
 		anyActive := false
 		for i, a := range active {
 			if !a {
@@ -5969,35 +5978,32 @@ func sigmaClipReduceWeighted(vals, weights []float32, threshold float64, iters i
 				active[i] = false
 			} else {
 				anyActive = true
+				if finalPass {
+					s += float64(vals[i]) * float64(weights[i])
+					ws += float64(weights[i])
+					unweightedSum += float64(vals[i])
+					accepted++
+				} else {
+					nextActiveVals = append(nextActiveVals, vals[i])
+				}
 			}
 		}
 		if !anyActive {
 			return lastMedian, sig, 1, n - 1
 		}
-	}
-	var s, ws float64
-	for i, a := range active {
-		if a {
-			s += float64(vals[i]) * float64(weights[i])
-			ws += float64(weights[i])
-			accepted++
-		} else {
-			rejected++
-		}
-	}
-	if ws <= 1e-12 {
-		var us float64
-		for i, a := range active {
-			if a {
-				us += float64(vals[i])
+		if finalPass {
+			rejected = n - accepted
+			if ws <= 1e-12 {
+				if accepted == 0 {
+					return lastMedian, sigma, 1, n - 1
+				}
+				return float32(unweightedSum / float64(accepted)), sigma, accepted, rejected
 			}
+			return float32(s / ws), sigma, accepted, rejected
 		}
-		if accepted == 0 {
-			return lastMedian, sigma, 1, n - 1
-		}
-		return float32(us / float64(accepted)), sigma, accepted, rejected
+		activeVals = nextActiveVals
 	}
-	return float32(s / ws), sigma, accepted, rejected
+	return lastMedian, sigma, 1, n - 1
 }
 
 // frameBoxInReference returns the axis-aligned bounding box of a frame
@@ -6172,14 +6178,14 @@ func sigmaClipReduce(vals []float32, threshold float64, iters int, asym ...float
 	for i := range active {
 		active[i] = true
 	}
+	activeVals := make([]float32, 0, n)
+	for i, a := range active {
+		if a {
+			activeVals = append(activeVals, vals[i])
+		}
+	}
 	var lastMedian float32
 	for it := 0; it < iters; it++ {
-		var activeVals []float32
-		for i, a := range active {
-			if a {
-				activeVals = append(activeVals, vals[i])
-			}
-		}
 		if len(activeVals) < 3 {
 			var s float64
 			for _, v := range activeVals {
@@ -6199,6 +6205,14 @@ func sigmaClipReduce(vals []float32, threshold float64, iters int, asym ...float
 		}
 		sigma = sig
 		kLo, kHi := float32(lo)*sig, float32(hi)*sig
+		// Fold the final mean accumulation into the last clipping pass;
+		// ascending index order keeps the float32 result bit-identical.
+		finalPass := it == iters-1
+		var nextActiveVals []float32
+		if !finalPass {
+			nextActiveVals = make([]float32, 0, len(activeVals))
+		}
+		var s float64
 		anyActive := false
 		for i, a := range active {
 			if !a {
@@ -6209,25 +6223,27 @@ func sigmaClipReduce(vals []float32, threshold float64, iters int, asym ...float
 				active[i] = false
 			} else {
 				anyActive = true
+				if finalPass {
+					s += float64(vals[i])
+					accepted++
+				} else {
+					nextActiveVals = append(nextActiveVals, vals[i])
+				}
 			}
 		}
 		if !anyActive {
 			return lastMedian, sig, 1, n - 1
 		}
-	}
-	var s float64
-	for i, a := range active {
-		if a {
-			s += float64(vals[i])
-			accepted++
-		} else {
-			rejected++
+		if finalPass {
+			rejected = n - accepted
+			if accepted == 0 {
+				return lastMedian, sigma, 1, n - 1
+			}
+			return float32(s / float64(accepted)), sigma, accepted, rejected
 		}
+		activeVals = nextActiveVals
 	}
-	if accepted == 0 {
-		return lastMedian, sigma, 1, n - 1
-	}
-	return float32(s / float64(accepted)), sigma, accepted, rejected
+	return lastMedian, sigma, 1, n - 1
 }
 
 // flatCorrection applies a crop-sized multiplicative flat in reference
@@ -6493,9 +6509,11 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 				vals := buf[off : off+nFrames]
 				validVals = validVals[:0]
 				validWeights = validWeights[:0]
+				var validSum float64
 				for fi, v := range vals {
 					if v >= 0 {
 						validVals = append(validVals, v)
+						validSum += float64(v)
 						if frameWeights != nil {
 							validWeights = append(validWeights, frameWeights[fi])
 						}
@@ -6506,11 +6524,7 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 					meanPix[outPix*3+c] = 0
 					continue
 				}
-				var s float64
-				for _, v := range validVals {
-					s += float64(v)
-				}
-				sumPix[outPix*3+c] = float32(s)
+				sumPix[outPix*3+c] = float32(validSum)
 				switch method {
 				case "median":
 					if frameWeights != nil {
@@ -14164,6 +14178,286 @@ func testFiniteSampleMAD() error {
 	return nil
 }
 
+// The two functions below are the original two-pass reducers. They are kept
+// verbatim as test references: the production code folds the final mean into
+// the last clipping pass and folds the sum accumulation into the tile gather,
+// and both must stay bit-identical to these references.
+func twoPassSigmaClipReduceReference(vals []float32, threshold float64, iters int, asym ...float64) (mean, sigma float32, accepted, rejected int) {
+	n := len(vals)
+	if n == 0 {
+		return 0, 0, 0, 0
+	}
+	if threshold <= 0 {
+		threshold = 3.0
+	}
+	lo, hi := threshold, threshold
+	if len(asym) > 0 && asym[0] > 0 {
+		lo = asym[0]
+	}
+	if len(asym) > 1 && asym[1] > 0 {
+		hi = asym[1]
+	}
+	if iters < 1 {
+		iters = 1
+	}
+	active := make([]bool, n)
+	for i := range active {
+		active[i] = true
+	}
+	var lastMedian float32
+	for it := 0; it < iters; it++ {
+		var activeVals []float32
+		for i, a := range active {
+			if a {
+				activeVals = append(activeVals, vals[i])
+			}
+		}
+		if len(activeVals) < 3 {
+			var s float64
+			for _, v := range activeVals {
+				s += float64(v)
+			}
+			if len(activeVals) == 0 {
+				return 0, 0, 0, n
+			}
+			return float32(s / float64(len(activeVals))), 0, len(activeVals), n - len(activeVals)
+		}
+		med := medianInPlace(activeVals)
+		lastMedian = med
+		mad := madOf(activeVals, med)
+		sig := float32(finiteMADScale(len(activeVals))) * mad
+		if sig < 1e-9 {
+			sig = 1e-9
+		}
+		sigma = sig
+		kLo, kHi := float32(lo)*sig, float32(hi)*sig
+		anyActive := false
+		for i, a := range active {
+			if !a {
+				continue
+			}
+			d := vals[i] - med
+			if (d > 0 && d > kHi) || (d < 0 && -d > kLo) {
+				active[i] = false
+			} else {
+				anyActive = true
+			}
+		}
+		if !anyActive {
+			return lastMedian, sig, 1, n - 1
+		}
+	}
+	var s float64
+	for i, a := range active {
+		if a {
+			s += float64(vals[i])
+			accepted++
+		} else {
+			rejected++
+		}
+	}
+	if accepted == 0 {
+		return lastMedian, sigma, 1, n - 1
+	}
+	return float32(s / float64(accepted)), sigma, accepted, rejected
+}
+
+func twoPassSigmaClipReduceWeightedReference(vals, weights []float32, threshold float64, iters int, asym ...float64) (mean, sigma float32, accepted, rejected int) {
+	n := len(vals)
+	if n != len(weights) || n == 0 {
+		return 0, 0, 0, 0
+	}
+	if threshold <= 0 {
+		threshold = 3.0
+	}
+	lo, hi := threshold, threshold
+	if len(asym) > 0 && asym[0] > 0 {
+		lo = asym[0]
+	}
+	if len(asym) > 1 && asym[1] > 0 {
+		hi = asym[1]
+	}
+	if iters < 1 {
+		iters = 1
+	}
+	active := make([]bool, n)
+	for i := range active {
+		active[i] = true
+	}
+	var lastMedian float32
+	for it := 0; it < iters; it++ {
+		var activeVals []float32
+		for i, a := range active {
+			if a {
+				activeVals = append(activeVals, vals[i])
+			}
+		}
+		if len(activeVals) < 3 {
+			var s, ws float64
+			for i, a := range active {
+				if a {
+					s += float64(vals[i]) * float64(weights[i])
+					ws += float64(weights[i])
+				}
+			}
+			if ws <= 1e-12 {
+				for i, a := range active {
+					if a {
+						s += float64(vals[i])
+						ws += 1.0
+					}
+				}
+			}
+			if ws <= 1e-12 {
+				return 0, 0, 0, n
+			}
+			return float32(s / ws), 0, len(activeVals), n - len(activeVals)
+		}
+		med := medianInPlace(activeVals)
+		lastMedian = med
+		mad := madOf(activeVals, med)
+		sig := float32(finiteMADScale(len(activeVals))) * mad
+		if sig < 1e-9 {
+			sig = 1e-9
+		}
+		sigma = sig
+		kLo, kHi := float32(lo)*sig, float32(hi)*sig
+		anyActive := false
+		for i, a := range active {
+			if !a {
+				continue
+			}
+			d := vals[i] - med
+			if (d > 0 && d > kHi) || (d < 0 && -d > kLo) {
+				active[i] = false
+			} else {
+				anyActive = true
+			}
+		}
+		if !anyActive {
+			return lastMedian, sig, 1, n - 1
+		}
+	}
+	var s, ws float64
+	for i, a := range active {
+		if a {
+			s += float64(vals[i]) * float64(weights[i])
+			ws += float64(weights[i])
+			accepted++
+		} else {
+			rejected++
+		}
+	}
+	if ws <= 1e-12 {
+		var us float64
+		for i, a := range active {
+			if a {
+				us += float64(vals[i])
+			}
+		}
+		if accepted == 0 {
+			return lastMedian, sigma, 1, n - 1
+		}
+		return float32(us / float64(accepted)), sigma, accepted, rejected
+	}
+	return float32(s / ws), sigma, accepted, rejected
+}
+
+func testSinglePassSigmaClipEquivalence() error {
+	same := func(label string, gm, rm, gs, rs float32, ga, ra, gr, rr int) error {
+		if gm != rm || gs != rs || ga != ra || gr != rr {
+			return fmt.Errorf("%s: got mean=%v sigma=%v acc=%d rej=%d, reference mean=%v sigma=%v acc=%d rej=%d",
+				label, gm, gs, ga, gr, rm, rs, ra, rr)
+		}
+		return nil
+	}
+	rng := rand.New(rand.NewSource(20261117))
+	for _, tc := range []struct {
+		n     int
+		iters int
+		thr   float64
+		asym  []float64
+	}{
+		{4, 1, 3, nil}, {5, 2, 2.5, nil}, {8, 3, 3, nil},
+		{16, 2, 2, nil}, {30, 1, 3, nil}, {40, 3, 2.5, nil},
+		{7, 1, 3, []float64{1, 100}}, {24, 2, 2.5, []float64{1.2, 4}},
+	} {
+		vals := make([]float32, tc.n)
+		weights := make([]float32, tc.n)
+		for i := range vals {
+			vals[i] = float32(100 + rng.NormFloat64()*3)
+			weights[i] = float32(0.1 + rng.Float64()*2)
+		}
+		vals[0] = 1000
+		vals[tc.n-1] = 80
+		label := fmt.Sprintf("n=%d iters=%d", tc.n, tc.iters)
+		gotM, gotS, ga, gr := sigmaClipReduce(vals, tc.thr, tc.iters, tc.asym...)
+		refM, refS, ra, rr := twoPassSigmaClipReduceReference(vals, tc.thr, tc.iters, tc.asym...)
+		if err := same(label+" unweighted", gotM, refM, gotS, refS, ga, ra, gr, rr); err != nil {
+			return err
+		}
+		gotM, gotS, ga, gr = sigmaClipReduceWeighted(vals, weights, tc.thr, tc.iters, tc.asym...)
+		refM, refS, ra, rr = twoPassSigmaClipReduceWeightedReference(vals, weights, tc.thr, tc.iters, tc.asym...)
+		if err := same(label+" weighted", gotM, refM, gotS, refS, ga, ra, gr, rr); err != nil {
+			return err
+		}
+	}
+	few := []float32{1, 100, 100, 100}
+	gotM, gotS, ga, gr := sigmaClipReduce(few, 3, 2)
+	refM, refS, ra, rr := twoPassSigmaClipReduceReference(few, 3, 2)
+	if err := same("few survivors", gotM, refM, gotS, refS, ga, ra, gr, rr); err != nil {
+		return err
+	}
+	zeroWeights := []float32{0, 0, 0, 0, 0, 0, 0, 0}
+	gotM, gotS, ga, gr = sigmaClipReduceWeighted(few, zeroWeights, 3, 2)
+	refM, refS, ra, rr = twoPassSigmaClipReduceWeightedReference(few, zeroWeights, 3, 2)
+	if err := same("zero-weight fallback", gotM, refM, gotS, refS, ga, ra, gr, rr); err != nil {
+		return err
+	}
+
+	dir, err := os.MkdirTemp("", "skystacker-singlepass-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 16, 16
+	var paths []string
+	frameVals := make([][]float32, 5)
+	for i := range frameVals {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		frameVals[i] = f.Pix
+		for j := range f.Pix {
+			f.Pix[j] = float32(rng.Intn(1000)) / 10
+		}
+		f.Pix[0] = -1
+		path := filepath.Join(dir, fmt.Sprintf("frame_%d.f32raw", i))
+		if err := writeSpillFrame(path, f); err != nil {
+			return err
+		}
+		paths = append(paths, path)
+	}
+	sumPix, _, _, _, err := reduceTilesStack(paths, w, h, image.Rect(0, 0, w, h),
+		"median", 3.0, 1, 16, 1, nil, nil, nil)
+	if err != nil {
+		return err
+	}
+	for p := range w * h {
+		for c := range 3 {
+			var want float64
+			for fi := range frameVals {
+				v := frameVals[fi][p*3+c]
+				if v >= 0 {
+					want += float64(v)
+				}
+			}
+			if sumPix[p*3+c] != float32(want) {
+				return fmt.Errorf("tile sum at pixel %d channel %d = %v, want %v", p, c, sumPix[p*3+c], float32(want))
+			}
+		}
+	}
+	return nil
+}
+
 func testSigmaClipAsymmetric() error {
 	vals := []float32{9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11, 0, 100}
 	_, _, accSym, rejSym := sigmaClipReduce(vals, 2, 1)
@@ -15674,6 +15968,7 @@ func runSelfTests() int {
 		{"sigma clip reduce", testSigmaClipReduce},
 		{"sigma clip asymmetric", testSigmaClipAsymmetric},
 		{"finite sample MAD", testFiniteSampleMAD},
+		{"single-pass sigma clip equivalence", testSinglePassSigmaClipEquivalence},
 		{"sigma clip all same", testSigmaClipAllSame},
 		{"sigma clip reduce weighted", testSigmaClipReduceWeighted},
 		{"weighted median", testWeightedMedian},

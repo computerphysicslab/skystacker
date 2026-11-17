@@ -186,4 +186,19 @@ The earlier 4-frame row (2m 02s) used Go 1.20.3 and the external dcraw path; it 
 | Native CR2 stack | 4 | `sigma`, `--stack-only --dark --bias` (built-in CR2 decode) | **39.031 s** (wall 39.25 s) |
 | Post-processing + starless | 1 stack | `--resume --starless` | **21.11 s** wall |
 
-Commands: `/home/jips/.local/bin/skystacker --output /tmp/bench_go127 --overwrite --stack-only --limit 4 --dark assets/OrionNebula/darks --bias assets/OrionNebula/biases assets/OrionNebula/lights` and the same output dir with `--resume --starless`. Same data and flags as the Go 1.26.11 rows above; the 59.937 s → 39.031 s delta includes Go 1.27 runtime improvements and normal run-to-run variance on this thermally throttled laptop, not a controlled A/B. All 209 self-tests, `go vet`, `go test`, PureRaw CGO=0/race tests, race build, and six cross-compilation targets are green on go1.27.4.
+Commands: `/home/jips/.local/bin/skystacker --output /tmp/bench_go127 --overwrite --stack-only --limit 4 --dark assets/OrionNebula/darks --bias assets/OrionNebula/biases assets/OrionNebula/lights` and the same output dir with `--resume --starless`. Same data and flags as the Go 1.26.11 rows above; the 59.937 s → 39.031 s delta includes Go 1.27 runtime improvements and normal run-to-run variance on this thermally throttled laptop, not a controlled A/B.
+
+All 210 self-tests, `go vet`, `go test`, PureRaw CGO=0/race tests, race build, and six cross-compilation targets are green on go1.27.4.
+
+### Sigma-clip kernel microbenchmark (fused vs two-pass, 2026-11-17)
+
+`go test -run '^$' -bench BenchmarkSigmaClip -benchtime=2s -count=3` on the i7-8565U, 16 frames, 2 iterations, one injected outlier (median of three runs):
+
+| Variant | Fused (ns/op) | Two-pass reference (ns/op) |
+|---|---:|---:|
+| Unweighted | ~763 | ~1048 |
+| Weighted | ~833 | ~1033 |
+
+The end-to-end 4-frame sigma stack remains ~39–45 s under variable machine load; the kernel gain is partly masked by CR2 decoding, registration and disk spill I/O. The fused output is bit-identical to the two-pass reference (same SHA-256 of `stacked_mean.f32raw` for the same OrionNebula 4-frame run).
+
+

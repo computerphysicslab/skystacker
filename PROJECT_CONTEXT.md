@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 209 passing.** Update this number after any test change.
+**Self-test count: 210 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 
 ## Post-processing pipeline (8 steps)
@@ -1699,3 +1699,11 @@ rejection and disk spill. `--scale N` downsamples.
 - Canonical binary and `./skystacker` rebuilt with the new toolchain; `/home/jips/go/bin/skystacker` symlink points at the repo copy.
 - BENCHMARKS.md has a new Go 1.27.4 re-baseline section: 4-frame native-CR2 sigma stack 39.031 s, `--resume --starless` 21.11 s (not a controlled A/B).
 - Docs synced: README, TECHNICAL_SPEC, CHANGELOG, prompt-ai.txt, NEXT_SESSION_PROMPT; research/ updated by appending status sections only.
+
+### Single-pass sigma-clip accumulation (2026-11-17)
+
+- Implemented the safe half of the ASTAP proposal in `sigmaClipReduce` and `sigmaClipReduceWeighted`: the final mean (weighted/unweighted, plus zero-weight fallback sum) is accumulated inside the last clipping pass; the surviving values are carried into the next iteration instead of being re-gathered from the boolean mask; `reduceTile` accumulates `sumPix` while gathering valid values instead of in a separate pass.
+- Kept median/MAD rejection unchanged: replacing it with mean/variance would change scientific semantics and the bit-exact output guarantee. The two original reducers are preserved verbatim as `twoPassSigmaClipReduceReference`/`twoPassSigmaClipReduceWeightedReference` for tests only.
+- `testSinglePassSigmaClipEquivalence` (selftest 210) compares exact float32 mean, sigma, accepted and rejected counts across N=4..40, 1–3 iterations, asymmetric thresholds, the <3-survivor branch and the zero-weight fallback, and checks tile sums pixel-by-pixel. Production vs reference microbenchmark (16 values, 2 iterations): ~763 vs ~1048 ns unweighted, ~833 vs ~1033 ns weighted.
+- Real-data equivalence: 4-frame OrionNebula sigma stack, old and new binaries produced byte-identical `_work/stacked_mean.f32raw` (SHA-256 `d138ef5cc6b50c567fa1fe33aa478d901d8d12d4b6e3d0eeb031f15fedcfcbef`).
+- Added `BenchmarkSigmaClipFused` and `BenchmarkSigmaClipTwoPassReference` to `main_test.go`; `go test -bench` does not affect the registered self-test count.
