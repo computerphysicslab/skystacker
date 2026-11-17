@@ -220,6 +220,7 @@ type cliOptions struct {
 	NBChannelA         string
 	NBChannelB         string
 	NBChannelC         string
+	Resume             bool
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -453,6 +454,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.NBChannelA, "nb-a", "", "first narrowband mono stack (.f32raw): Ha for HOO, SII for SHO")
 	fs.StringVar(&o.NBChannelB, "nb-b", "", "second narrowband mono stack (.f32raw): OIII for HOO, Ha for SHO")
 	fs.StringVar(&o.NBChannelC, "nb-c", "", "third narrowband mono stack (.f32raw): OIII for HOO/SHO")
+	fs.BoolVar(&o.Resume, "resume", false, "if an existing stack is present in the output directory, continue with post-processing instead of re-stacking")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -974,6 +976,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --narrowband M     HOO or SHO mapping from --nb-a/--nb-b/--nb-c mono .f32raw stacks")
+	fmt.Fprintln(w, "  --resume           reuse an existing stack in the output dir and continue with post-processing")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -4161,6 +4164,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Deconvolve {
 		add(fmt.Sprintf("--deconvolve --deconv-sigma %g --deconv-iters %d", o.DeconvSigma, o.DeconvIters))
 	}
+	if o.Resume {
+		add("--resume")
+	}
 	if o.Narrowband != "" {
 		add(fmt.Sprintf("--narrowband %s --nb-a %s --nb-b %s --nb-c %s", o.Narrowband,
 			quoteReportArg(o.NBChannelA), quoteReportArg(o.NBChannelB), quoteReportArg(o.NBChannelC)))
@@ -4544,6 +4550,7 @@ type runOptions struct {
 	NBChannelA   string
 	NBChannelB   string
 	NBChannelC   string
+	Resume       bool
 	PostCA       bool
 	PostColor    bool
 	PostFlatten  bool
@@ -7990,6 +7997,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	if opts.Clean {
 		defer os.RemoveAll(filepath.Join(outputDir, "_work"))
+	}
+	if opts.Resume && !opts.PostOnly {
+		stackProbe := filepath.Join(outputDir, "_work", "stacked_mean.f32raw")
+		if _, err := os.Stat(stackProbe); err == nil {
+			logf("Resume: existing stack found at %s, continuing with post-processing", stackProbe)
+			opts.PostOnly = true
+		} else {
+			logf("Resume: no existing stack at %s, doing a full run", stackProbe)
+		}
 	}
 	if opts.PostOnly {
 		if _, err := os.Stat(outputDir); err != nil {
@@ -15159,6 +15175,7 @@ func runSelfTests() int {
 		{"pipeline grid self-flat median stack-only", testPipelineGridSelfFlatMedianStackOnly},
 		{"pipeline grid self-flat sigma stack-only", testPipelineGridSelfFlatSigmaStackOnly},
 		{"pipeline post-only", testPipelinePostOnly},
+		{"resume from stack", testResumeFromStack},
 		{"plate solve post-only starless", testPlateSolvePostOnlyNoStars},
 		{"catalog annotation skip", testCatalogAnnotationSkip},
 		{"pipeline starless", testPipelineStarless},
@@ -16571,6 +16588,40 @@ func testPlateSolvePostOnlyNoStars() error {
 
 // testPipelinePostOnly: --post-only must consume an existing stacked_mean.tiff
 // and produce the four step files. This path is completely untested today.
+func testResumeFromStack() error {
+	dir, err := os.MkdirTemp("", "skystacker-resume-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	outDir := filepath.Join(dir, "0_skystacker_results")
+	os.MkdirAll(filepath.Join(outDir, "_work"), 0o755)
+	const w, h = 64, 64
+	pix := make([]float32, w*h*3)
+	for i := range pix {
+		pix[i] = 0.1
+	}
+	if err := writeFileAtomic(filepath.Join(outDir, "_work", "stacked_mean.f32raw"),
+		func(out io.Writer) error { return writeRawFloat32RGB(out, w, h, pix) }); err != nil {
+		return err
+	}
+	if err := runPipeline(context.Background(), runOptions{
+		InputDir: dir, Resume: true, Workers: 2,
+		BGDegree: 2, StretchFactor: 10, SharpenAmount: 0.8, SharpenRadius: 1.5,
+		BgPercentile: 10, HDRBlendFactor: 1.0, DenoiseStrength: 1.0, DenoiseRadius: 3,
+	}); err != nil {
+		return fmt.Errorf("resume: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "post_step8_1.jpg")); err != nil {
+		return fmt.Errorf("resume did not run post-processing: %w", err)
+	}
+	opts, err := parseArgs([]string{"--resume"})
+	if err != nil || !opts.Resume {
+		return fmt.Errorf("--resume parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testPipelinePostOnly() error {
 	dir, err := os.MkdirTemp("", "skystacker-postonly-")
 	if err != nil {
@@ -22982,6 +23033,7 @@ func main() {
 		NBChannelA:           opts.NBChannelA,
 		NBChannelB:           opts.NBChannelB,
 		NBChannelC:           opts.NBChannelC,
+		Resume:               opts.Resume,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

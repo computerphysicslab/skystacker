@@ -401,6 +401,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--config file.json` | Load flags from a JSON object (keys without `--`); explicit CLI flags win | — |
+| `--resume` | If the output dir already has a stacked float32 image, continue with post-processing instead of re-stacking | `false` |
 | `--output string` | Output directory | `<input>/0_skystacker_results` |
 | `--method string` | Stacking method: `mean`, `median`, or `sigma` | `sigma` |
 | `--workers int` | Maximum number of concurrent worker goroutines | Number of CPUs |
@@ -648,7 +649,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 199 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 200 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
