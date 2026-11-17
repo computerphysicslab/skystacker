@@ -1679,3 +1679,7 @@ rejection and disk spill. `--scale N` downsamples.
 - Finite-sample MAD correction: sigma-clip now uses calibrated small-N factors (Monte Carlo, 40k trials/N, seed 20261117) instead of asymptotic 1.4826 for N<30; unweighted and weighted reducers updated; `testFiniteSampleMAD`; selftests 209.
 - Roadmap reordered by ascending effort in NEXT_SESSION_PROMPT.md; first item (finite-sample MAD) completed.
 - myTools/AI folder names standardised to `AI-Detect`, `Gemini-Deep-Research`, `Gemini-Transcribe`, `Voice-Typing`; invocation paths recorded in prompt-ai.txt.
+
+- Modularisation step 1–2 done: PureRaw module path is now `github.com/computerphysicslab/skystacker/PureRaw` (all imports updated, README includes `go get`); root `go.work` links both modules and is gitignored. SkyStacker still embeds its own `pr*` CR2 copy; importing the library and adding subdir tag remain.
+
+- Modularisation steps 3–4 done: `PureRaw/v0.1.1` tagged (fix: CR2 Probe signature at offset 8), root `go.mod` requires PureRaw v0.1.1, SkyStacker imports `raw` + `formats/cr2` and the duplicated `pr*` decoder was deleted from main.go. E2E 1-light CR2 stack 7.5 s; `GOWORK=off` build/test green; selftests 209.

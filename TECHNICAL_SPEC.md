@@ -1,7 +1,7 @@
 # SkyStacker — Technical Specification
 
 **Current version:** 0.6.1
-**Implementation language:** Go 1.26.11 (single-file, standard library only; `go.mod` pins the toolchain)
+**Implementation language:** Go 1.26.11 (single executable, standard library only; one first-party dependency `github.com/computerphysicslab/skystacker/PureRaw v0.1.1`, tag `PureRaw/v0.1.1`)
 **Status:** Active Development. Registered `--selftest` cases: 208. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose

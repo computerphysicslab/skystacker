@@ -34,6 +34,8 @@
 - Gemini outcome archived in `research/`; implemented scratch gradient-detrend retry for star detection (`testDetrendStarDetection`); self-tests 205.
 - Implemented dark-frame series QA (reject >3-sigma median/hot-pixel outliers before master dark); `testCalibrationQA`; self-tests 206.
 - Gaia TAP client retries HTTP 429 (queue full) with capped `Retry-After` instead of failing; `testGaiaQueryTile429Retry`; self-tests 207.
+- Modularisation steps 3–4: tagged `PureRaw/v0.1.1` (v0.1.0 had a CR2 Probe offset bug), SkyStacker now imports the library and its duplicated `pr*` decoder was removed; E2E 1-light stack 7.5 s, selftests 209.
+- Started modularisation: PureRaw module path changed to `github.com/computerphysicslab/skystacker/PureRaw`, root `go.work` added (gitignored); both modules green.
 - Added finite-sample MAD scale correction for small stacks (N=3..30) with `testFiniteSampleMAD`; self-tests 209.
 - Applied `go fix` modernizers (Go 1.26) to SkyStacker and PureRaw; added `testing/synctest` Gaia rate-limiter test (`go test ./...`); self-tests remain 208.
 - Upgraded toolchain to go1.26.11 (go.mod `go 1.26`, pinned toolchain; CI/release workflows updated); SkyStacker and PureRaw test matrices green, baselines re-measured in BENCHMARKS.md.

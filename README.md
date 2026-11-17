@@ -104,7 +104,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 
 ## Scope & Architecture
 
-- **Single-file, zero-dependency Go binary**: Implemented in `main.go` using the Go standard library only, compiling to a standalone cross-platform CLI executable (`skystacker`).
+- **Single-binary, stdlib-only Go CLI**: the executable is built from `main.go` plus one first-party module (`PureRaw/`, pure-Go CR2 decoding). No third-party dependencies; `CGO_ENABLED=0` static cross-platform builds.
 - **Linear float32 pipeline**: Accumulates and processes image data in IEEE 754 `float32` precision end-to-end.
 - **Current boundaries**:
   - **CLI-only**: No GUI is included.

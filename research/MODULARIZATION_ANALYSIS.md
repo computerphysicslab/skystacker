@@ -98,3 +98,11 @@ contributor base or needs a different release cadence/license.
 - Go modules reference, module paths and subdirectory modules: <https://go.dev/ref/mod>.
 - Go workspaces: <https://go.dev/doc/workspaces>.
 - `go install pkg@version` and replace-directive behaviour: <https://go.dev/ref/mod#go-install>.
+
+### Progress (2026-11-17)
+
+Steps 1 and 2 executed: `PureRaw/go.mod` now declares `github.com/computerphysicslab/skystacker/PureRaw` (all imports updated), and a root `go.work` (gitignored) lists `.` and `./PureRaw`. Both modules build/test cleanly. Step 3 (tag `PureRaw/v0.1.0` + CI job) and step 4 (SkyStacker imports the library, removing duplicated `pr*` code) remain.
+
+### Progress update (2026-11-17, steps 3–4)
+
+Tagged `PureRaw/v0.1.0`, found and fixed a CR2 `Probe` offset bug (signature is at bytes 8..9, not 4..5), published `PureRaw/v0.1.1`. SkyStacker now declares `require ...PureRaw v0.1.1`, imports `raw` + `formats/cr2`, and the duplicated `pr*` CR2 decoder was deleted from `main.go`. `GOWORK=off` build/test and E2E (1-light CR2 stack, 7.5 s) are green; 209 self-tests. The binary is no longer "single source file" but remains a single stdlib-only executable plus one first-party module.

@@ -56,6 +56,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/computerphysicslab/skystacker/PureRaw/formats/cr2"
+	"github.com/computerphysicslab/skystacker/PureRaw/raw"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -1331,15 +1333,14 @@ func findCR2Tool() string {
 
 func decodeCR2Config(path string) (image.Config, error) {
 	if strings.EqualFold(filepath.Ext(path), ".cr2") && !nativeCR2Disabled {
-		if stream, err := prFindLosslessJPEG(path); err == nil {
-			if i := bytes.Index(stream, []byte{0xFF, 0xC3}); i >= 0 && i+10 < len(stream) {
-				p := stream[i+4 : i+10] // precision, height(2), width(2), ncomp
-				w := int(p[3])<<8 | int(p[4])
-				h := int(p[1])<<8 | int(p[2])
-				if w > 0 && h > 0 {
-					return image.Config{Width: w * 2, Height: h}, nil
+		if f, err := os.Open(path); err == nil {
+			if st, serr := f.Stat(); serr == nil {
+				if w, h, _, cerr := cr2.Config(f, st.Size()); cerr == nil && w > 0 && h > 0 {
+					f.Close()
+					return image.Config{Width: w, Height: h}, nil
 				}
 			}
+			f.Close()
 		}
 	}
 	tool := findCR2Tool()
@@ -1386,264 +1387,10 @@ func decodeCR2Config(path string) (image.Config, error) {
 	return image.Config{Width: w, Height: h}, nil
 }
 
-// ---- Pure-Go CR2 support (mirrors PureRaw/internal/ljpeg + formats/cr2) ----
-
-type prImage struct {
-	w, h, prec, comps int
-	planes            [][]uint16
-}
-
-type prHuff struct {
-	lookup map[uint16]byte
-}
-
-func prNewHuff(counts [17]int, syms []byte) (*prHuff, error) {
-	total := 0
-	for _, c := range counts[:16] {
-		total += c
-	}
-	if total == 0 || total != len(syms) {
-		return nil, errors.New("cr2: bad Huffman table")
-	}
-	t := &prHuff{lookup: make(map[uint16]byte)}
-	code, k := 0, 0
-	for length := 1; length <= 16; length++ {
-		for i := 0; i < counts[length]; i++ {
-			t.lookup[uint16(length)<<8|uint16(code)] = syms[k]
-			k++
-			code++
-		}
-		code <<= 1
-	}
-	return t, nil
-}
-
-type prBits struct {
-	data   []byte
-	pos, n int
-	bits   uint32
-}
-
-func (b *prBits) bit() (int, error) {
-	for b.n == 0 {
-		if b.pos >= len(b.data) {
-			return 0, errors.New("cr2: unexpected EOF")
-		}
-		v := b.data[b.pos]
-		b.pos++
-		if v == 0xFF {
-			if b.pos >= len(b.data) {
-				return 0, errors.New("cr2: bad stuffing")
-			}
-			n := b.data[b.pos]
-			if n != 0 {
-				return 0, fmt.Errorf("cr2: marker FF%02X in entropy stream", n)
-			}
-			b.pos++
-		}
-		b.bits, b.n = uint32(v), 8
-	}
-	b.n--
-	return int((b.bits >> b.n) & 1), nil
-}
-
-func (b *prBits) readN(n int) (int, error) {
-	v := 0
-	for range n {
-		x, err := b.bit()
-		if err != nil {
-			return 0, err
-		}
-		v = v<<1 | x
-	}
-	return v, nil
-}
-
-func (b *prBits) huff(t *prHuff) (byte, error) {
-	code := 0
-	for length := 1; length <= 16; length++ {
-		x, err := b.bit()
-		if err != nil {
-			return 0, err
-		}
-		code = code<<1 | x
-		if sym, ok := t.lookup[uint16(length)<<8|uint16(code)]; ok {
-			return sym, nil
-		}
-	}
-	return 0, errors.New("cr2: invalid Huffman code")
-}
-
-func prDecodeLJPEG(data []byte) (*prImage, error) {
-	if len(data) < 8 || data[0] != 0xFF || data[1] != 0xD8 {
-		return nil, errors.New("cr2: not a JPEG stream")
-	}
-	tables := map[byte]*prHuff{}
-	var w, h, prec, ncomp, pred int
-	var tablesForComp []byte
-	pos := 2
-	var entropy []byte
-	for pos < len(data) {
-		for pos < len(data) && data[pos] != 0xFF {
-			pos++
-		}
-		for pos < len(data) && data[pos] == 0xFF {
-			pos++
-		}
-		if pos >= len(data) {
-			break
-		}
-		m := data[pos]
-		pos++
-		if m == 0xD9 {
-			break
-		}
-		if m == 0x01 || (m >= 0xD0 && m <= 0xD7) {
-			continue
-		}
-		if pos+2 > len(data) {
-			return nil, errors.New("cr2: truncated marker")
-		}
-		ln := int(data[pos])<<8 | int(data[pos+1])
-		if ln < 2 || pos+ln > len(data) {
-			return nil, errors.New("cr2: bad marker length")
-		}
-		pl := data[pos+2 : pos+ln]
-		switch m {
-		case 0xC4:
-			for k := 0; k < len(pl); {
-				info := pl[k]
-				k++
-				var counts [17]int
-				total := 0
-				for i := 1; i <= 16; i++ {
-					if k >= len(pl) {
-						return nil, errors.New("cr2: bad DHT")
-					}
-					counts[i] = int(pl[k])
-					total += counts[i]
-					k++
-				}
-				if k+total > len(pl) {
-					return nil, errors.New("cr2: bad DHT")
-				}
-				t, err := prNewHuff(counts, pl[k:k+total])
-				if err != nil {
-					return nil, err
-				}
-				tables[info] = t
-				k += total
-			}
-		case 0xC3:
-			if len(pl) < 6 {
-				return nil, errors.New("cr2: bad SOF3")
-			}
-			prec = int(pl[0])
-			h = int(pl[1])<<8 | int(pl[2])
-			w = int(pl[3])<<8 | int(pl[4])
-			ncomp = int(pl[5])
-			if len(pl) < 6+3*ncomp {
-				return nil, errors.New("cr2: bad SOF3 components")
-			}
-			tablesForComp = nil
-			for i := 0; i < ncomp; i++ {
-				tablesForComp = append(tablesForComp, pl[8+3*i]>>4)
-			}
-		case 0xDA:
-			if len(pl) < 1+2*ncomp+3 {
-				return nil, errors.New("cr2: bad SOS")
-			}
-			for i := 0; i < ncomp; i++ {
-				tablesForComp[i] = pl[1+2*i+1] >> 4
-			}
-			pred = int(pl[1+2*ncomp+2] & 0x0F)
-			if pred < 1 || pred > 7 {
-				pred = 1
-			}
-			entropy = append([]byte(nil), data[pos+ln:]...)
-			pos = len(data)
-		}
-		pos += ln
-	}
-	if w <= 0 || h <= 0 || ncomp == 0 || len(entropy) == 0 {
-		return nil, errors.New("cr2: incomplete lossless JPEG")
-	}
-	img := &prImage{w: w, h: h, prec: prec, comps: ncomp, planes: make([][]uint16, ncomp)}
-	for c := range img.planes {
-		img.planes[c] = make([]uint16, w*h)
-	}
-	initPred := uint16(1 << (prec - 1))
-	prev := make([]uint16, ncomp)
-	for i := range prev {
-		prev[i] = initPred
-	}
-	br := &prBits{data: entropy}
-	mask := uint16(1<<prec - 1)
-	for p := 0; p < w*h; p++ {
-		left := p % w
-		for c := 0; c < ncomp; c++ {
-			t := tables[tablesForComp[c]]
-			if t == nil {
-				return nil, errors.New("cr2: missing Huffman table")
-			}
-			sym, err := br.huff(t)
-			if err != nil {
-				return nil, err
-			}
-			diff := 0
-			if sym > 0 {
-				if sym > 16 {
-					return nil, errors.New("cr2: bad difference symbol")
-				}
-				v, err := br.readN(int(sym))
-				if err != nil {
-					return nil, err
-				}
-				diff = v
-				if v < (1 << (sym - 1)) {
-					diff = v - (1 << sym) + 1
-				}
-			}
-			lf, up, ul := int(prev[c]), 0, 0
-			if p >= w {
-				up = int(img.planes[c][p-w])
-			}
-			if p >= w && left > 0 {
-				ul = int(img.planes[c][p-w-1])
-			}
-			var prv int
-			switch pred {
-			case 1:
-				if left == 0 {
-					prv = up
-					if p < w {
-						prv = int(initPred)
-					}
-				} else {
-					prv = lf
-				}
-			case 2:
-				prv = up
-			case 3:
-				prv = ul
-			case 4:
-				prv = lf + up - ul
-			case 5:
-				prv = lf + ((up - ul) >> 1)
-			case 6:
-				prv = up + ((lf - ul) >> 1)
-			default:
-				prv = (lf + up) / 2
-			}
-			v := uint16(int(uint16(prv))+diff) & mask
-			img.planes[c][p] = v
-			prev[c] = v
-		}
-	}
-	return img, nil
-}
-
-func prFindLosslessJPEG(path string) ([]byte, error) {
+// decodeCR2Native uses the PureRaw library (nested Go module) to decode the
+// sensor data; demosaicing stays in SkyStacker because it is a downstream
+// colour-processing step, not a RAW decoder responsibility.
+func decodeCR2Native(path string) (*frame, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -1653,49 +1400,34 @@ func prFindLosslessJPEG(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := io.ReadAll(f)
-	if err != nil || int64(len(b)) != st.Size() {
-		if err == nil {
-			err = errors.New("short read")
-		}
+	img, err := raw.Decode(f, st.Size())
+	if err != nil {
 		return nil, err
 	}
-	for i := 0; i+2 < len(b); i++ {
-		if b[i] == 0xFF && b[i+1] == 0xC3 {
-			start := -1
-			for j := i; j >= 0 && j >= i-8192; j-- {
-				if b[j] == 0xFF && j+1 < len(b) && b[j+1] == 0xD8 {
-					start = j
-					break
-				}
-			}
-			if start >= 0 {
-				return b[start:], nil
-			}
-		}
+	if img.Width <= 0 || img.Height <= 0 || len(img.SensorData) != img.Width*img.Height {
+		return nil, errors.New("native CR2: invalid sensor geometry")
 	}
-	return nil, errors.New("cr2: lossless JPEG stream not found")
+	black, white := img.BlackLevel[0], img.WhiteLevel
+	if white <= black {
+		black, white = 0, float64(uint64(1)<<img.BitDepth)
+	}
+	return demosaicBayerToFrame(img.SensorData, img.Width, img.Height, black, white), nil
 }
 
-func prDemosaicBayer(planes [][]uint16, w, h, prec int, black, white float64) *frame {
-	if len(planes) != 2 || h <= 0 || len(planes[0]) != w/2*h {
-		return nil
-	}
-	// Interleave the two sample planes as even/odd columns (RGGB).
-	bayer := make([][]float32, h)
-	for y := range h {
-		bayer[y] = make([]float32, w)
-		for x := range w {
-			p := y*(w/2) + x/2
-			v := planes[x%2][p]
-			bayer[y][x] = float32((float64(v) - black) / (white - black))
-			if bayer[y][x] < 0 {
-				bayer[y][x] = 0
-			}
-			if bayer[y][x] > 1 {
-				bayer[y][x] = 1
-			}
+// demosaicBayerToFrame performs a simple bilinear RGGB demosaic of a
+// full-width interleaved Bayer buffer into the linear RGB frame used by the
+// stacking pipeline.
+func demosaicBayerToFrame(bayer []uint16, w, h int, black, white float64) *frame {
+	norm := make([]float32, w*h)
+	for p, v := range bayer {
+		x := float32((float64(v) - black) / (white - black))
+		if x < 0 {
+			x = 0
 		}
+		if x > 1 {
+			x = 1
+		}
+		norm[p] = x
 	}
 	out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	at := func(x, y int) float32 {
@@ -1711,13 +1443,12 @@ func prDemosaicBayer(planes [][]uint16, w, h, prec int, black, white float64) *f
 		if y >= h {
 			y = h - 1
 		}
-		return bayer[y][x]
+		return norm[y*w+x]
 	}
 	for y := range h {
 		for x := range w {
-			// RGGB: row even -> R at even x, G at odd x; row odd -> G at even x, B at odd x.
-			r, g, b := float32(0), float32(0), float32(0)
 			center := at(x, y)
+			var r, g, b float32
 			if y%2 == 0 {
 				if x%2 == 0 {
 					r = center
@@ -1728,16 +1459,14 @@ func prDemosaicBayer(planes [][]uint16, w, h, prec int, black, white float64) *f
 					r = (at(x-1, y) + at(x+1, y)) / 2
 					b = (at(x, y-1) + at(x, y+1)) / 2
 				}
+			} else if x%2 == 0 {
+				g = center
+				r = (at(x, y-1) + at(x, y+1)) / 2
+				b = (at(x-1, y) + at(x+1, y)) / 2
 			} else {
-				if x%2 == 0 {
-					g = center
-					r = (at(x, y-1) + at(x, y+1)) / 2
-					b = (at(x-1, y) + at(x+1, y)) / 2
-				} else {
-					b = center
-					g = (at(x-1, y) + at(x+1, y) + at(x, y-1) + at(x, y+1)) / 4
-					r = (at(x-1, y-1) + at(x+1, y-1) + at(x-1, y+1) + at(x+1, y+1)) / 4
-				}
+				b = center
+				g = (at(x-1, y) + at(x+1, y) + at(x, y-1) + at(x, y+1)) / 4
+				r = (at(x-1, y-1) + at(x+1, y-1) + at(x-1, y+1) + at(x+1, y+1)) / 4
 			}
 			i := (y*w + x) * 3
 			out.Pix[i], out.Pix[i+1], out.Pix[i+2] = r, g, b
@@ -1746,28 +1475,9 @@ func prDemosaicBayer(planes [][]uint16, w, h, prec int, black, white float64) *f
 	return out
 }
 
-func prDecodeCR2Native(path string) (*frame, error) {
-	stream, err := prFindLosslessJPEG(path)
-	if err != nil {
-		return nil, err
-	}
-	img, err := prDecodeLJPEG(stream)
-	if err != nil {
-		return nil, err
-	}
-	if img.comps != 2 {
-		return nil, fmt.Errorf("native CR2: %d components not supported", img.comps)
-	}
-	frm := prDemosaicBayer(img.planes, img.w*2, img.h, img.prec, 1018, 16224)
-	if frm == nil {
-		return nil, errors.New("native CR2: demosaic failed")
-	}
-	return frm, nil
-}
-
 func decodeCR2File(path string, targetW, targetH int) (*frame, error) {
 	if strings.EqualFold(filepath.Ext(path), ".cr2") && !nativeCR2Disabled {
-		frm, err := prDecodeCR2Native(path)
+		frm, err := decodeCR2Native(path)
 		if err == nil {
 			if targetW > 0 && targetH > 0 && (frm.Width != targetW || frm.Height != targetH) {
 				return resizeFrame(frm, targetW, targetH), nil
@@ -15534,7 +15244,7 @@ func testNativeCR2Decode() error {
 	if _, err := os.Stat(path); err != nil {
 		return nil // asset not present in this checkout
 	}
-	frm, err := prDecodeCR2Native(path)
+	frm, err := decodeCR2Native(path)
 	if err != nil {
 		return fmt.Errorf("native CR2: %w", err)
 	}
