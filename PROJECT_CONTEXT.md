@@ -1657,3 +1657,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added diagnostic drizzle upsampling (`--drizzle-upsample N`, `--drizzle-pixfrac F`) writing `stacked_drizzled.f32raw/.jpg`; `testDrizzleUpsample`; selftests 201.
 
 - Added `--normalize-per-channel`: global normalization with independent per-channel median/MAD (`channelNormStats`); overrides local normalization; `testNormalizePerChannel`; selftests 202.
+
+- E2E smoke (OrionNebula limit 4, `/tmp/onb_combo`): combined `--fits --xisf --json-report --drizzle-upsample 2 --normalize --normalize-mode additive --sigma-clip-low 2 --dark --bias` produced all scientific outputs including `stacked_drizzled.*`; a follow-up `--resume --deconvolve --deconv-iters 1 --starless --bg-multiscale` run correctly switched to post-only and produced starless/star layers. All outputs present; no crashes.
