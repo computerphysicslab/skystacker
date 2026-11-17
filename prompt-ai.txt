@@ -23,7 +23,7 @@ Build and install
 - Also refresh /home/jips/go/bin/skystacker if that path exists, so an old
   PATH entry cannot win. /usr/local/bin needs sudo.
 - After every code change:
-      cd /home/jips/datos/datos-juan/proyectos/SkyStacker
+      cd /home/jips/datos/datos-juan/proyectos/astronomia/SkyStacker
       gofmt -w main.go
       go vet ./...
       go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
