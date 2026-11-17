@@ -1,0 +1,61 @@
+# Roadmap
+
+The project is structured in phases. Each phase produces something
+usable and testable, even if the overall decoder is incomplete.
+
+## Phase 0 — Foundation *(current)*
+
+- [x] Define `raw.Decoder` interface and `raw.Image` type
+- [x] Implement global decoder registry + format detection
+- [x] Implement MSB-first bit reader
+- [x] Stub decoders for RAF / ARW / CR3 with `Probe` implementations
+- [x] `examples/dump-metadata` exercising detection
+- [x] CI: build with `CGO_ENABLED=0`, `go vet`, `go test -race` (`.github/workflows/ci.yml`)
+- [x] Synthetic unit tests for the MSB-first bit reader, registry and all three `Probe` implementations
+- [ ] Collect a small, licensed test corpus (see `testdata/README.md`)
+- [ ] Optional `golangci-lint` job once the linter config is agreed
+
+## Phase 1 — Metadata & Containers *(1–3 months)*
+
+- [ ] Integrate a pure-Go EXIF/XMP parser (evaluate
+      `rwcarlsen/goexif`, `dsoprea/go-exif`)
+- [ ] TIFF IFD reader for ARW and the TIFF portion of RAF
+- [ ] Populate `raw.Metadata` for all three formats
+- [ ] Identify and extract maker-note blocks needed for decoding
+      (black level, white balance, CFA pattern)
+- [ ] Round-trip tests: metadata matches `exiftool` output
+
+## Phase 2 — Fujifilm RAF decoder *(4–6 months)*
+
+- [ ] Implement uncompressed RAF path end-to-end
+- [ ] Implement lossless compressed RAF (adaptive Rice coding)
+- [ ] Implement lossy compressed RAF
+- [ ] Validate sensor data bit-for-bit against `rawpy` / `dcraw`
+- [ ] Benchmarks and per-stripe parallelism
+
+**Why RAF first:** compression algorithm is the most thoroughly
+documented (see `docs/formats/raf.md`). Container is custom but
+simple; TIFF IFD reuses Phase 1 work.
+
+## Phase 3 — Second format: ARW *or* CR3 *(7–9 months)*
+
+- [ ] **ARW**: parse ARW6/LLVC track, implement `green_lo`,
+      `green_hi`, `chroma_r`, `chroma_b` decompression, wavelet
+      reconstruction
+- [ ] **CR3**: parse ISOBMFF boxes, locate CRX Bayer track, implement
+      CRX decompressor
+- [ ] Same bit-exact validation methodology as RAF
+
+## Phase 4 — Third format *(10–12 months)*
+
+- [ ] The remaining of ARW / CR3
+- [ ] Cross-format conformance suite
+
+## Backlog / Ideas
+
+- `golangci-lint` configuration and CI job
+- LSB-first bit reader variant for ARW
+- SIMD-friendly inner loops (via pure-Go array batching, not cgo)
+- Streaming decode API for very large files
+- Pluggable `raw.Image` post-processing hooks
+- Optional `wasm` target for browser use

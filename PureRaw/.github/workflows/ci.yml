@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "Not gofmt-compliant:"
+            echo "$out"
+            exit 1
+          fi
+      - name: build (CGO_ENABLED=0)
+        run: CGO_ENABLED=0 go build ./...
+      - name: vet
+        run: CGO_ENABLED=0 go vet ./...
+      - name: unit tests (CGO_ENABLED=0)
+        run: CGO_ENABLED=0 go test ./...
+      - name: race tests (needs cgo)
+        run: CGO_ENABLED=1 go test -race ./...
