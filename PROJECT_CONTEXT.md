@@ -1671,3 +1671,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Implemented Gemini proposal 6 (dark-series QA): dark folders with >=3 frames get per-frame median/MAD/hot-pixel QA and >3-sigma outliers are excluded from the master (mean-absolute-deviation fallback when MAD=0). `testCalibrationQA`; selftests 206.
 
 - Gaia TAP hardening (Gemini survey proposal 3, partial): HTTP 429 is now retryable with `Retry-After` capped at 30 s; existing 1 req/s rate limit and 2000-row MAXREC already satisfy DR4 quota guidance. `testGaiaQueryTile429Retry`; selftests 207.
+
+- SkyStacker now decodes CR2 natively (pure Go, stdlib only): locates the SOF3 stream, Huffman/entropy decodes two 14-bit planes, interleaves RGGB Bayer, applies black/white levels and bilinear demosaic. `--no-native-cr2` restores dcraw fallback. E2E: 1 CR2 stack in 6.5 s, 100 stars detected; selftests 208. Built-in implementation mirrors the PureRaw subproject decoder.

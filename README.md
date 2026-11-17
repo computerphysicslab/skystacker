@@ -108,7 +108,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 - **Linear float32 pipeline**: Accumulates and processes image data in IEEE 754 `float32` precision end-to-end.
 - **Current boundaries**:
   - **CLI-only**: No GUI is included.
-  - **External RAW decoding**: Native JPEG and native FITS decoding (with ImageMagick fallback) are built in; CR2/CR3 RAW decoding is delegated to `dcraw`/`dcraw_emu` or ImageMagick at runtime.
+  - **External RAW decoding**: Native JPEG and native FITS decoding (with ImageMagick fallback) are built in; CR2 decoding is built in (pure Go, lossless JPEG/SOF3); CR3 still uses `dcraw`/`dcraw_emu` or ImageMagick at runtime.
   - **Drizzle & SIP resampling**: Drizzle and Bayer drizzle are not wired. SIP order-2 is applied in WCS forward/inverse helpers (`wcsTanForward`, `wcsTanInverseSIP`) used by plate-solve/diagnostics; the stacking resampler (affine/similarity warp to the reference frame) still uses the linear TAN path unless redesigned.
   - **Seeded plate solving**: Whole-sky blind plate solving is out of scope; `--plate-solve` requires a pointing seed (`--plate-center` or FITS `RA`/`DEC` headers) because blind mode scans only a 3×3 `nside=64` neighbourhood around `(0,0)`.
 
@@ -655,7 +655,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 207 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 208 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

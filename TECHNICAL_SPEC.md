@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go (single-file, standard library only)
-**Status:** Active Development. Registered `--selftest` cases: 207. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 208. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -11,7 +11,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 
 ### Included
 - CLI executable `skystacker`, single Go file, standard library only.
-- Input formats: JPG/JPEG/PNG (native), FITS (native, with ImageMagick fallback), SER (8/16-bit mono, Bayer-as-gray, RGB/BGR), CR2/CR3 (dcraw + ImageMagick at runtime).
+- Input formats: JPG/JPEG/PNG (native), FITS (native, with ImageMagick fallback), SER (8/16-bit mono, Bayer-as-gray, RGB/BGR), CR2 native pure-Go lossless JPEG; CR3 via dcraw/ImageMagick at runtime.
 - Star detection, triangle matching, RANSAC similarity transforms, optional 6-DOF affine refinement.
 - Calibration frames (dark, flat, bias; individual files or auto-discovered folder trees via `--calib-root`).
 - Stacking methods: mean (streaming), median (tiled), sigma-clipping (tiled, MAD-based, weighted).
@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 207 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 208 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native RAW decoding (delegated to ImageMagick / dcraw at runtime). FITS decoding is native with ImageMagick fallback.
