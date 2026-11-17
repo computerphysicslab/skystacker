@@ -158,3 +158,15 @@ use desktop parts or higher-power laptop parts:
 Record: CPU/RAM, OS, Go version, SkyStacker version/commit, exact flags, frame
 count and resolution, method (`mean`/`median`/`sigma`), workers, and the
 duration from `report.txt`.
+
+`scripts/bench-row.sh` extracts those fields from a `report.txt` and prints a
+Markdown row (CPU/RAM and thread count are read from the current machine):
+
+```bash
+./scripts/bench-row.sh /tmp/bench_run/0_skystacker_results/report.txt
+# append to this file instead:
+./scripts/bench-row.sh /tmp/bench_run/0_skystacker_results/report.txt --append BENCHMARKS.md
+```
+
+For post-processing-only rows, time the run externally (see §4) and add the
+wall time manually to the row; `report.txt` is not rewritten by `--resume`.
