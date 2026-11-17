@@ -13,7 +13,7 @@ cost for each stage; **they are not a comparison of output quality**.
 | Memory | 15 GiB RAM (8.3 GiB available when measured) |
 | Architecture / OS | x86_64, Ubuntu 20.04.6 LTS, Linux 5.15.0-139-generic |
 | Go toolchain | go1.20.3 linux/amd64 |
-| SkyStacker | v0.6.1 (`main` at time of measurement; `--version` prints 0.6.1) |
+| SkyStacker | v0.6.1 (`main` at time of measurement; `--version` prints 0.6.1). Later builds add native CR2 decoding, which further reduces CR2 stack time vs the dcraw path |
 | Canonical binary | `/home/jips/.local/bin/skystacker` (built with `-ldflags "-X main.buildDate=..."`) |
 | RAW decoder | external `dcraw`/`dcraw_emu` or ImageMagick (CR2/CR3 inputs) |
 | Storage | local SSD/HDD, output under `/tmp` or `assets/.../0_skystacker_results` |

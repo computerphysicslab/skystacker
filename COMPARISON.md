@@ -68,7 +68,7 @@ limited or workflow-dependent.
 
 | Tool | Built-in post | Scripting / CLI | Output formats | GPU |
 |---|---|---|---|---|
-| **SkyStacker** | Extensive | CLI + JSON config (`--config`) | TIFF / JPEG / PNG / BMP / FITS / XISF / raw | – |
+| **SkyStacker** | Extensive | CLI + JSON config (`--config`) | TIFF / JPEG / PNG / BMP / FITS / XISF / raw; native pure-Go CR2 input (CR3 via dcraw) | – |
 | **OriginStack** | Extensive | CLI (Python) | FITS / JPG | Yes (CUDA) |
 | **DeepSkyStacker** | Minimal | CLI | TIFF / FITS | – |
 | **Siril** | Extensive | Scripts + CLI | FITS / TIFF / JPEG / SER | – |

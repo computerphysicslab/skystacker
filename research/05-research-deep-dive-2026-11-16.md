@@ -285,3 +285,6 @@ Reviewed `runPostProcessing` default order: background polynomial → star remov
 - Pre-solve gradient detrending (survey proposal 6, `S`): `detectStarsWithDetrend` retries star detection on a scratch copy processed with the existing coarse percentile background when the first pass finds <20 stars. It does not modify the light buffer and is covered by `testDetrendStarDetection`.
 - Dark-series QA (survey proposal 6, `S`): master dark construction now rejects >3-sigma outliers by median and hot-pixel fraction when >=3 dark subframes exist, with a mean-absolute-deviation fallback for degenerate MAD. `testCalibrationQA`.
 - Gaia TAP 429 handling (survey proposal 3, `S`): HTTP 429 (queue full) is retried with capped `Retry-After`; the existing 1 req/s client pacing and MAXREC=2000 already fit Archive v3.15 quota limits. `testGaiaQueryTile429Retry`.
+### Correction note (2026-11-17)
+
+The "currently 0.6.0 / 181 self-tests" phrasing in §1 and §5.3 describes the snapshot at the time of writing. The repository has since advanced to **v0.6.1 with 208 registered self-tests**, native pure-Go CR2 decoding, `--config`, `--resume`, deconvolution/annotation/narrowband and the PureRaw subproject. Section §13 and §13.4–13.5 reflect the newer state; older "0.6.0 baseline" plans remain historical.
