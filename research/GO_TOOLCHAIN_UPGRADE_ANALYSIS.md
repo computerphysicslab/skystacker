@@ -91,3 +91,7 @@ jump. Do not remain on 1.20.3: it is unsupported and unpatched.
 - <https://go.dev/blog/go1.26> — Go 1.26 Green Tea GC, cgo, `go fix`.
 - <https://www.openwall.com/lists/oss-security/2026/11/10/28> — 12 security fixes
   in go1.27.4 / go1.26.11.
+
+## Decision implemented (2026-11-17)
+
+Adopted the conservative option: **go1.26.11** installed at `/home/jips/.local/go1.26.11`, `go 1.26` + `toolchain go1.26.11` in both modules, CI/release pinned to 1.26.11. Full matrix green (gofmt, vet, build, 208 self-tests, PureRaw CGO=0 + race). No `simd/archsimd` adoption.

@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: '1.26.11'
           cache: false   # no dependencies => no go.sum; silences cache warning
 
       - name: Build
@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: '1.26.11'
           cache: false
       - name: gofmt
         run: |
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: '1.26.11'
           cache: false
       - name: go install .
         run: go install .
@@ -86,7 +86,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: '1.26.11'
           cache: false
       - name: Build with race detector
         run: go build -race -o skystacker-race main.go

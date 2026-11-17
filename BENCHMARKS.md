@@ -12,7 +12,7 @@ cost for each stage; **they are not a comparison of output quality**.
 | CPU | Intel Core i7-8565U (4 cores / 8 threads, 1.80 GHz base, up to 4.6 GHz turbo, 15 W ULV) |
 | Memory | 15 GiB RAM (8.3 GiB available when measured) |
 | Architecture / OS | x86_64, Ubuntu 20.04.6 LTS, Linux 5.15.0-139-generic |
-| Go toolchain | go1.20.3 linux/amd64 |
+| Go toolchain | go1.26.11 linux/amd64 (upgraded 2026-11-17; earlier rows below used go1.20.3) |
 | SkyStacker | v0.6.1 (`main` at time of measurement; `--version` prints 0.6.1). Later builds add native CR2 decoding, which further reduces CR2 stack time vs the dcraw path |
 | Canonical binary | `/home/jips/.local/bin/skystacker` (built with `-ldflags "-X main.buildDate=..."`) |
 | RAW decoder | external `dcraw`/`dcraw_emu` or ImageMagick (CR2/CR3 inputs) |
@@ -170,3 +170,11 @@ Markdown row (CPU/RAM and thread count are read from the current machine):
 
 For post-processing-only rows, time the run externally (see §4) and add the
 wall time manually to the row; `report.txt` is not rewritten by `--resume`.
+### Post-upgrade measurements (Go 1.26.11, native CR2 decoder)
+
+| Run | Frames | Flags (abridged) | Duration |
+|---|---:|---|---:|
+| Native CR2 stack | 4 | `sigma`, `--stack-only --dark --bias` (built-in CR2 decode) | **59.937 s** (wall 60.15 s) |
+| Post-processing + starless | 1 stack | `--resume --starless` | **23.00 s** wall |
+
+The earlier 4-frame row (2m 02s) used Go 1.20.3 and the external dcraw path; it is not directly comparable because both the toolchain and the CR2 decoder changed. The 22.43 s post-processing baseline was Go 1.20.3; 23.00 s is within run-to-run variance on this thermal-throttling laptop.

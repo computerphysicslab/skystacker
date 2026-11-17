@@ -1,3 +1,5 @@
 module github.com/computerphysicslab/skystacker
 
-go 1.20
+go 1.26
+
+toolchain go1.26.11

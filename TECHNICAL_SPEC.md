@@ -1,7 +1,7 @@
 # SkyStacker — Technical Specification
 
 **Current version:** 0.6.1
-**Implementation language:** Go (single-file, standard library only)
+**Implementation language:** Go 1.26.11 (single-file, standard library only; `go.mod` pins the toolchain)
 **Status:** Active Development. Registered `--selftest` cases: 208. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose

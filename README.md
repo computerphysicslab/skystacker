@@ -209,7 +209,7 @@ For Canon RAW files, SkyStacker prefers `dcraw` or `dcraw_emu` when available in
 
 ### System Requirements
 
-- **Go 1.20 or later** (to compile from source).
+- **Go 1.26.11 or later** (to compile from source; `go.mod` pins `toolchain go1.26.11`).
 - **Runtime decoders**: ImageMagick and/or `dcraw` / `dcraw_emu` for RAW/fallback FITS ingestion.
 - **Memory & Disk**: Sufficient RAM and scratch disk space for the session's frame count and image dimensions (see [Pre-Flight Resource Checks](#pre-flight-resource-checks--error-handling)).
 

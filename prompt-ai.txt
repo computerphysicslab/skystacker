@@ -17,6 +17,7 @@ Version and tests
 
 Build and install
 -----------------
+- Toolchain: Go 1.26.11 at /home/jips/.local/go1.26.11/go/bin (already installed); root go.mod pins `toolchain go1.26.11`.
 - Canonical executable: /home/jips/.local/bin/skystacker.
 - A repository-local ./skystacker is allowed and should be kept current.
   It is gitignored (`/skystacker`). Do not commit it.
