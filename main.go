@@ -12163,8 +12163,8 @@ func gaiaWaitWithProgress(ctx context.Context, start time.Time) {
 
 // gaiaQueryTile posts the ADQL query to mirror and parses the response.
 // Retries up to 3 times (4 attempts total) with 1s/2s/4s backoff on
-// 5xx / timeout / connection error. Does NOT retry on 4xx or malformed
-// JSON.
+// 5xx / 429 (queue full) / timeout / connection error. Other 4xx and
+// malformed JSON remain fatal.
 func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar, error) {
 	adql := gaiaBuildADQL(nside, ipix, magLimit)
 	backoff := []time.Duration{0, 2 * time.Second, 4 * time.Second}
@@ -12226,6 +12226,25 @@ func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar
 			logf("  gaia: body preview: %q", string(body))
 		} else if len(body) >= 200 {
 			logf("  gaia: body preview: %q...", string(body[:200]))
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			// ESA Archive v3.15 enforces a 5-job/50-queue limit. Treat 429
+			// as retryable, honouring Retry-After up to a sane cap.
+			wait := time.Duration(0)
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, e := strconv.Atoi(strings.TrimSpace(ra)); e == nil && secs > 0 {
+					wait = time.Duration(secs) * time.Second
+				}
+			}
+			if wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
+			lastErr = fmt.Errorf("attempt %d: HTTP 429 (queue full), retry-after %v", attempt+1, wait)
+			logf("  gaia: %v", lastErr)
+			if wait > 0 {
+				time.Sleep(wait)
+			}
+			continue
 		}
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("attempt %d: HTTP %d", attempt+1, resp.StatusCode)
@@ -12438,6 +12457,36 @@ func testGaiaQueryTileRetry() error {
 // server that sends headers immediately but stalls the body. If the fix
 // regresses, the error message will be 'context canceled' and the elapsed
 // time will include the retry backoff, failing both assertions.
+func testGaiaQueryTile429Retry() error {
+	gaiaRateMu.Lock()
+	gaiaLastQuery = time.Time{}
+	gaiaRateMu.Unlock()
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("queue full"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"metadata":[],"data":[]}`))
+	}))
+	defer srv.Close()
+	stars, err := gaiaQueryTile(srv.URL, 64, 1, 14)
+	if err != nil {
+		return fmt.Errorf("429 retry failed: %w", err)
+	}
+	if attempts != 2 {
+		return fmt.Errorf("attempts=%d, want 2", attempts)
+	}
+	if len(stars) != 0 {
+		return fmt.Errorf("empty tile returned %d stars", len(stars))
+	}
+	return nil
+}
+
 func testGaiaQueryTileContextCancel() error {
 	// Reset the rate limiter so a preceding test cannot sleep us 1s.
 	gaiaRateMu.Lock()
@@ -15641,6 +15690,7 @@ func runSelfTests() int {
 		{"gaia cache", testGaiaCache},
 		{"gaia adql", testGaiaADQL},
 		{"gaia query retry", testGaiaQueryTileRetry},
+		{"gaia TAP 429 retry", testGaiaQueryTile429Retry},
 		{"gaia query timeout", testGaiaQueryTileContextCancel},
 		{"gaia cli parsing", testGaiaCLIParsing},
 		{"wcs tan forward inverse", testWCSTANForwardInverse},

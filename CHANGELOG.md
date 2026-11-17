@@ -33,3 +33,4 @@
 - Added `testReferenceFITSSeed` (FITS RA/DEC plate-solve seed) and README links to BENCHMARKS/research; self-tests 204.
 - Gemini outcome archived in `research/`; implemented scratch gradient-detrend retry for star detection (`testDetrendStarDetection`); self-tests 205.
 - Implemented dark-frame series QA (reject >3-sigma median/hot-pixel outliers before master dark); `testCalibrationQA`; self-tests 206.
+- Gaia TAP client retries HTTP 429 (queue full) with capped `Retry-After` instead of failing; `testGaiaQueryTile429Retry`; self-tests 207.
