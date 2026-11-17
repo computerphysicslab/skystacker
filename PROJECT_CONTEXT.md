@@ -1647,3 +1647,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--bg-multiscale`: coarse 20th-percentile background grid (block >=64px, bilinear interpolation) applied before the polynomial fit; `testMultiscaleBackground`; selftests 196.
 
 - Added `--config FILE`: JSON object of flag names/values expanded into CLI args before parsing (CLI wins); supports strings, numbers, booleans and arrays. `testConfigFile`; selftests 197.
+
+- Added `--deconvolve` (Gaussian-PSF Richardson-Lucy, `--deconv-sigma` default 1.5, `--deconv-iters` default 3) in post-processing; `testRichardsonLucy`; selftests 198.

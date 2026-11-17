@@ -432,6 +432,8 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 | `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
+| `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
+| `--deconv-sigma float` / `--deconv-iters int` | PSF sigma (px) and RL iterations | `1.5` / `3` |
 
 ### Normalization
 
@@ -645,7 +647,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 197 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 198 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -685,7 +687,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 - **Astrometric catalog annotation & unassociated-source flagging (extended)**: a basic offline version is shipped via `--annotate` (cached Gaia stars, SIP projection, annotated JPEG, `anomalies.json`). Remaining work: bundled NGC/IC/PGC/Messier/HD tables, elliptical apertures/leader lines/labels, and richer anomaly classes. Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`.
 - **Drizzle & Bayer drizzle integration**: Per-input-pixel *drop* onto the output grid with the drizzle kernel (`pixfrac`, `scale`), a weight/coverage accumulator, and a final normalise. Replaces `resampleToReference` in the registered path; pairs with `--scale < 1` upsampling. Bayer drizzle recovers colour without conventional demosaicing first. Tests: `testDrizzleKernel`, `testDrizzleIdentity`.
 - **Multiscale background modelling**: `--bg-multiscale` removes a coarse, object-protected 20th-percentile background grid before the polynomial fit (a first step; wavelet-scale processing remains). Test: `testMultiscaleBackground`.
-- **PSF-based deconvolution**: Richardson–Lucy, Wiener filtering, and regularized deconvolution to recover fine detail lost to atmospheric seeing. Depends on PSF modelling (Tier 2).
+- **PSF-based deconvolution**: `--deconvolve` provides Gaussian-PSF Richardson–Lucy (tested on a synthetic star); Wiener/regularized variants remain.
 - **Star separation (PSF-based)**: `--starless` provides a crude annulus-median baseline; a proper star mask / PSF-based separation remains.
 - **Advanced noise reduction**: Multiscale noise estimation and spatially adaptive denoising (the current guided filter + two-scale chroma pass is the baseline).
 - **Advanced photometric & colour calibration (PCC / SPCC)**: Use stellar spectral information from Gaia DR3 plus camera sensor response and filter transmission to derive true colour. Depends on plate solving (Tier 2) and the Gaia layer.

@@ -213,6 +213,9 @@ type cliOptions struct {
 	JSONReport         bool
 	BGMultiscale       bool
 	ConfigPath         string
+	Deconvolve         bool
+	DeconvSigma        float64
+	DeconvIters        int
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -439,6 +442,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
 	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
 	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
+	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
+	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
+	fs.IntVar(&o.DeconvIters, "deconv-iters", 3, "Richardson-Lucy iterations for --deconvolve")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -459,7 +465,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -575,6 +581,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.LocalNormalize {
 		o.Normalize = true
+	}
+	if o.DeconvSigma < 0.3 || o.DeconvSigma > 10 {
+		return nil, fmt.Errorf("--deconv-sigma must be in [0.3, 10], got %g", o.DeconvSigma)
+	}
+	if o.DeconvIters < 1 || o.DeconvIters > 20 {
+		return nil, fmt.Errorf("--deconv-iters must be in [1, 20], got %d", o.DeconvIters)
 	}
 	switch o.NormalizeMode {
 	case "", "scale-offset", "additive", "multiplicative":
@@ -943,6 +955,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
+	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -4127,6 +4140,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.BGMultiscale {
 		add("--bg-multiscale")
 	}
+	if o.Deconvolve {
+		add(fmt.Sprintf("--deconvolve --deconv-sigma %g --deconv-iters %d", o.DeconvSigma, o.DeconvIters))
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4499,6 +4515,9 @@ type runOptions struct {
 	Starless     bool
 	JSONReport   bool
 	BGMultiscale bool
+	Deconvolve   bool
+	DeconvSigma  float64
+	DeconvIters  int
 	PostCA       bool
 	PostColor    bool
 	PostFlatten  bool
@@ -15176,6 +15195,7 @@ func runSelfTests() int {
 		{"normalize modes", testNormalizeModes},
 		{"multiscale background", testMultiscaleBackground},
 		{"config file", testConfigFile},
+		{"richardson lucy", testRichardsonLucy},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
@@ -18627,6 +18647,34 @@ func testDiskSpaceGuard() error {
 	return nil
 }
 
+func testRichardsonLucy() error {
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	sigma := 3.0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx, dy := float64(x)-32, float64(y)-32
+			v := float32(0.05 + 0.9*math.Exp(-(dx*dx+dy*dy)/(2*sigma*sigma)))
+			i := (y*w + x) * 3
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = v, v, v
+		}
+	}
+	before := medianHFR(detectStars(f, 5))
+	out := richardsonLucy(f, sigma, 5)
+	after := medianHFR(detectStars(out, 5))
+	if before <= 0 || after <= 0 {
+		return fmt.Errorf("no stars detected: before=%g after=%g", before, after)
+	}
+	if after >= before*0.95 {
+		return fmt.Errorf("deconvolution did not sharpen: HFR %.3f -> %.3f", before, after)
+	}
+	opts, err := parseArgs([]string{"--deconvolve", "--deconv-sigma", "2", "--deconv-iters", "4"})
+	if err != nil || !opts.Deconvolve || opts.DeconvSigma != 2 || opts.DeconvIters != 4 {
+		return fmt.Errorf("deconv flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testMultiscaleBackground() error {
 	const w, h = 128, 128
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
@@ -19743,6 +19791,105 @@ func percentile(sorted []float32, pct float64) float32 {
 type bgSample struct {
 	x, y float64    // normalised [-1, 1]
 	v    [3]float64 // per-channel background estimate
+}
+
+// blurMono applies a separable Gaussian blur to a monochrome float buffer.
+func blurMono(src []float32, w, h int, sigma float64) []float32 {
+	if sigma <= 0 || len(src) != w*h {
+		return append([]float32(nil), src...)
+	}
+	r := int(math.Ceil(3 * sigma))
+	if r < 1 {
+		r = 1
+	}
+	if r > 32 {
+		r = 32
+	}
+	kw := make([]float64, 2*r+1)
+	var sum float64
+	for i := -r; i <= r; i++ {
+		v := math.Exp(-float64(i*i) / (2 * sigma * sigma))
+		kw[i+r] = v
+		sum += v
+	}
+	for i := range kw {
+		kw[i] /= sum
+	}
+	tmp := make([]float32, len(src))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var acc float64
+			for k := -r; k <= r; k++ {
+				xx := x + k
+				if xx < 0 {
+					xx = 0
+				}
+				if xx >= w {
+					xx = w - 1
+				}
+				acc += float64(src[y*w+xx]) * kw[k+r]
+			}
+			tmp[y*w+x] = float32(acc)
+		}
+	}
+	out := make([]float32, len(src))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var acc float64
+			for k := -r; k <= r; k++ {
+				yy := y + k
+				if yy < 0 {
+					yy = 0
+				}
+				if yy >= h {
+					yy = h - 1
+				}
+				acc += float64(tmp[yy*w+x]) * kw[k+r]
+			}
+			out[y*w+x] = float32(acc)
+		}
+	}
+	return out
+}
+
+// richardsonLucy deconvolves each channel of f with a Gaussian PSF using
+// the classic multiplicative Richardson-Lucy iteration. The operation is
+// CPU-heavy (O(iters * pixels * kernel)); intended for small ROIs or
+// modest images, not full-frame 100 MP stacks.
+func richardsonLucy(f *frame, sigma float64, iters int) *frame {
+	if f == nil || sigma <= 0 || iters < 1 {
+		return f
+	}
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	n := f.Width * f.Height
+	for c := 0; c < 3; c++ {
+		obs := make([]float32, n)
+		for p := 0; p < n; p++ {
+			obs[p] = f.Pix[p*3+c]
+		}
+		est := append([]float32(nil), obs...)
+		for it := 0; it < iters; it++ {
+			conv := blurMono(est, f.Width, f.Height, sigma)
+			corr := make([]float32, n)
+			for p := 0; p < n; p++ {
+				if conv[p] > 1e-8 {
+					corr[p] = obs[p] / conv[p]
+				}
+			}
+			back := blurMono(corr, f.Width, f.Height, sigma)
+			for p := 0; p < n; p++ {
+				v := est[p] * back[p]
+				if v < 0 {
+					v = 0
+				}
+				est[p] = v
+			}
+		}
+		for p := 0; p < n; p++ {
+			out.Pix[p*3+c] = est[p]
+		}
+	}
+	return out
 }
 
 func removeBackground(f *frame, degree int, useMask bool) *frame {
@@ -21421,6 +21568,12 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	}
 	outputs = append(outputs, p)
 
+	if opts.Deconvolve {
+		logf("  post: Richardson-Lucy deconvolution (sigma=%g, iters=%d)", opts.DeconvSigma, opts.DeconvIters)
+		cur = richardsonLucy(cur, opts.DeconvSigma, opts.DeconvIters)
+		step1Frame = cur
+	}
+
 	if opts.PostCA {
 		logf("  post: chromatic aberration reduction")
 		cur = suppressChromaticAberration(cur)
@@ -22706,6 +22859,9 @@ func main() {
 		Starless:             opts.Starless,
 		JSONReport:           opts.JSONReport,
 		BGMultiscale:         opts.BGMultiscale,
+		Deconvolve:           opts.Deconvolve,
+		DeconvSigma:          opts.DeconvSigma,
+		DeconvIters:          opts.DeconvIters,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,
