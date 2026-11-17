@@ -10,6 +10,7 @@ attempting the full LibRaw compatibility matrix out of the gate:
 |--------------|-----------|----------------|
 | Fujifilm RAF | Fujifilm  | 🚧 In progress |
 | Sony ARW     | Sony      | 📋 Planned     |
+| Canon CR2    | Canon     | 🚧 In progress (SOF3 lossless) |
 | Canon CR3    | Canon     | 📋 Planned     |
 
 See [ROADMAP.md](ROADMAP.md) for the phased plan and
@@ -63,9 +64,10 @@ fmt.Printf("%s %s — %dx%d @ %d bits\n",
 
 ## Status
 
-Pre-alpha. The public interfaces in `raw/` are the contract. The
-format packages currently implement `Probe` only; `Decode` is stubbed
-and returns `raw.ErrUnsupportedVariant`.
+Pre-alpha. The public interfaces in `raw/` are the contract. RAF/ARW/CR3
+currently implement `Probe` only. CR2 implements `Probe`, `ReadMetadata`
+and a pure-Go lossless-JPEG (SOF3) sensor decoder; the geometric mapping
+against dcraw is still being validated (see `docs/formats/cr2.md`).
 
 ## License
 

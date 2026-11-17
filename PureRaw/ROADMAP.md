@@ -15,6 +15,15 @@ usable and testable, even if the overall decoder is incomplete.
 - [ ] Collect a small, licensed test corpus (see `testdata/README.md`)
 - [ ] Optional `golangci-lint` job once the linter config is agreed
 
+## Phase 1b — Canon CR2 (new, in progress)
+
+- [x] CR2 `Probe` and CR2 format constant
+- [x] Pure-Go lossless JPEG decoder (`internal/ljpeg`, SOF3, Huffman, predictors 1–7)
+- [x] CR2 sensor decode: locate SOF3 stream, reconstruct two sample planes into a Bayer mosaic
+- [x] Oracle smoke test with `PURERAW_CR2` (dimensions, bit depth, plausible mean)
+- [ ] Bit-exact oracle comparison against `dcraw -D -4` including orientation/crop
+- [ ] Extract black/white level and CFA from Canon maker notes instead of EOS 40D defaults
+
 ## Phase 1 — Metadata & Containers *(1–3 months)*
 
 - [ ] Integrate a pure-Go EXIF/XMP parser (evaluate

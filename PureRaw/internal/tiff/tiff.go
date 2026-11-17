@@ -34,11 +34,14 @@ type IFD struct {
 // ByteOrder records the byte order of the source file.
 type ByteOrder binary.ByteOrder
 
-// Document is a parsed TIFF header plus IFD0 and (if present) the Exif IFD.
+// Document is a parsed TIFF header plus IFD0, the optional Exif IFD and
+// any SubIFDs referenced from IFD0 (CR2 stores raw sensor data there).
 type Document struct {
-	Order binary.ByteOrder
-	IFD0  *IFD
-	Exif  *IFD
+	Order   binary.ByteOrder
+	IFD0    *IFD
+	IFD1    *IFD
+	Exif    *IFD
+	SubIFDs []*IFD
 }
 
 func typeSize(t uint16) (int, error) {
@@ -86,10 +89,28 @@ func ReadAt(r io.ReaderAt, offset int64) (*Document, error) {
 		return nil, err
 	}
 	doc := &Document{Order: order, IFD0: ifd0}
+	if ifd0.Next != 0 {
+		if next, nerr := readIFD(r, order, offset+int64(ifd0.Next)); nerr == nil {
+			doc.IFD1 = next
+		}
+	}
 	if e, ok := ifd0.Entries[0x8769]; ok {
 		p, err := e.Uint32(order, 0)
 		if err == nil && p != 0 {
 			doc.Exif, _ = readIFD(r, order, offset+int64(p))
+		}
+	}
+	// SubIFDs: CR2 keeps the raw sensor strip metadata in IFD0's SubIFD.
+	if e, ok := ifd0.Entries[0x014A]; ok {
+		for i := 0; i < int(e.Count); i++ {
+			p, err := e.Uint32(order, i)
+			if err != nil || p == 0 {
+				continue
+			}
+			sub, serr := readIFD(r, order, offset+int64(p))
+			if serr == nil {
+				doc.SubIFDs = append(doc.SubIFDs, sub)
+			}
 		}
 	}
 	return doc, nil

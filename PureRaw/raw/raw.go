@@ -12,6 +12,7 @@ const (
 	FormatRAF            // Fujifilm RAF
 	FormatARW            // Sony ARW
 	FormatCR3            // Canon CR3
+	FormatCR2            // Canon CR2
 )
 
 func (f Format) String() string {
@@ -22,6 +23,8 @@ func (f Format) String() string {
 		return "ARW"
 	case FormatCR3:
 		return "CR3"
+	case FormatCR2:
+		return "CR2"
 	default:
 		return "unknown"
 	}
