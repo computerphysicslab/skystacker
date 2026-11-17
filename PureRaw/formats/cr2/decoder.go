@@ -23,15 +23,15 @@ type Decoder struct{}
 
 func (Decoder) Format() raw.Format { return raw.FormatCR2 }
 
-// Probe implements raw.Decoder. A CR2 starts with "II*\0", then "CR" and a
-// version byte at offsets 4..7.
+// Probe implements raw.Decoder. A CR2 starts with "II*\0", the IFD0 offset
+// at bytes 4..7, then "CR" and a version byte at offsets 8..11.
 func (Decoder) Probe(r io.ReaderAt) bool {
-	h := make([]byte, 8)
+	h := make([]byte, 10)
 	if _, err := r.ReadAt(h, 0); err != nil {
 		return false
 	}
 	return bytes.Equal(h[:4], []byte{'I', 'I', 0x2A, 0x00}) &&
-		h[4] == 'C' && h[5] == 'R'
+		h[8] == 'C' && h[9] == 'R'
 }
 
 // ReadMetadata parses standard TIFF/Exif metadata from the CR2 header.
