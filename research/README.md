@@ -44,3 +44,7 @@ For traceability, the original files in `research/` map to the reorganized struc
 | `astrometric-catalog-annotation.md` | `02-astrometry-and-identification/astrometric-catalog-annotation-and-anomalies.md` |
 | `healpix-methodology.md` | `02-astrometry-and-identification/healpix-reference-verification.md` |
 | `skystacker_compendium.md` & `skystacker_technical_compendium_english.md` | `03-reference-and-literature/source-catalog-and-microarchitecture.md` (consolidated superset of all 50 sources, microarchitecture notes, and categorized keywords) |
+## 2026-11-17 external deep-research outcome
+
+* **[`GEMINI_DEEP_RESEARCH_PROMPT.md`](GEMINI_DEEP_RESEARCH_PROMPT.md)** — the self-contained prompt sent to Google Gemini Deep Research.
+* **[`GEMINI_DEEP_RESEARCH_PROMPT-outcome.md`](GEMINI_DEEP_RESEARCH_PROMPT-outcome.md)** — Gemini's 2024–2026 state-of-the-art survey and feasibility assessment: Go 1.24–1.26 stdlib/runtime gains, RC-Astro standalone CLIs, GraXpert/SASpro headless tools, finite-sample MAD corrections, ASTAP single-pass sigma clipping and FITS Rice, XISF Rev 2, CFA/Bayer drizzle, spatially gridded PSF, Gaia DR4 quotas, and explicit infeasibility of embedded ML and amd64-only SIMD. Treat the outcome as **external material to be verified**, not as implemented features.
