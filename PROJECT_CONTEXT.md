@@ -1,7 +1,7 @@
-# SkyStacker — project context (last updated 2026-11-15)
+# SkyStacker — project context (last updated 2026-11-17)
 
 ## Version
-v0.6.0 (single-file Go program, `main.go`)
+v0.6.1 (single-file Go program, `main.go`)
 
 ## Build, test, install
 ```
@@ -9,7 +9,8 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 175 passing.** Update this number after any test change.
+**Self-test count: 209 passing.** Update this number after any test change.
+Earlier counts in the history sections below are historical and must not be edited.
 
 ## Post-processing pipeline (8 steps)
 
@@ -1683,3 +1684,10 @@ rejection and disk spill. `--scale N` downsamples.
 - Modularisation step 1–2 done: PureRaw module path is now `github.com/computerphysicslab/skystacker/PureRaw` (all imports updated, README includes `go get`); root `go.work` links both modules and is gitignored. SkyStacker still embeds its own `pr*` CR2 copy; importing the library and adding subdir tag remain.
 
 - Modularisation steps 3–4 done: `PureRaw/v0.1.1` tagged (fix: CR2 Probe signature at offset 8), root `go.mod` requires PureRaw v0.1.1, SkyStacker imports `raw` + `formats/cr2` and the duplicated `pr*` decoder was deleted from main.go. E2E 1-light CR2 stack 7.5 s; `GOWORK=off` build/test green; selftests 209.
+
+### Crawler-based source discovery (2026-11-17)
+
+- `research/06-crawler-based-source-discovery-2026-11-17.md` records a `goCrawler` run over 21 seeds extracted from existing research references: 18 curated English documents kept, focused on registration, stacking/calibration and drizzle (Siril, CFA PixInsight, APP, STScI).
+- `robots.txt` policy blocked 8 URLs (IVOA MOC/VOTable/ConeSearch, Astrometry.net nova UI, astropy docs root, WCStools, Flickr); blocked sources need a manual/alternative route, the crawler does not bypass them.
+- Crawler is sequential and network-bound (24% of one core on 8 cores); parallel worker pool + per-domain rate limits remain a research-tool improvement, not a SkyStacker runtime change.
+- `.gitignore` now excludes the large local dataset `assets/M42-2017-11-18-Leciñena-50mm/`.
