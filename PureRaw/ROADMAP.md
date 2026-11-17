@@ -19,11 +19,13 @@ usable and testable, even if the overall decoder is incomplete.
 
 - [ ] Integrate a pure-Go EXIF/XMP parser (evaluate
       `rwcarlsen/goexif`, `dsoprea/go-exif`)
-- [ ] TIFF IFD reader for ARW and the TIFF portion of RAF
-- [ ] Populate `raw.Metadata` for all three formats
+- [x] Minimal pure-Go TIFF IFD reader (`internal/tiff`, IFD0 + ExifIFD, LE/BE)
+- [x] `internal/metadata` maps standard Exif tags to `raw.Metadata`; `arw.ReadMetadata` wired
+- [ ] Populate `raw.Metadata` for RAF (needs TIFF block offset from the RAF header) and CR3 (ISOBMFF boxes)
 - [ ] Identify and extract maker-note blocks needed for decoding
       (black level, white balance, CFA pattern)
-- [ ] Round-trip tests: metadata matches `exiftool` output
+- [x] Synthetic TIFF/Exif round-trip unit tests (no external corpus)
+- [ ] Oracle tests: metadata matches `exiftool` output on a licensed corpus
 
 ## Phase 2 — Fujifilm RAF decoder *(4–6 months)*
 
