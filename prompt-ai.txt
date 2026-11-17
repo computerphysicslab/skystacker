@@ -10,9 +10,9 @@ touching code. Documentation in English. Final user reports in Spanish.
 Version and tests
 -----------------
 - Source version is v0.6.1 (`var version` in main.go).
-- Registered self-tests: 208. Count entries in `runSelfTests`, not every
+- Registered self-tests: 209. Count entries in `runSelfTests`, not every
   function whose name starts with `test`. Expect:
-      all 208 self-tests passed
+      all 209 self-tests passed
   Update this number only when a case is added or removed.
 
 Build and install
@@ -59,3 +59,15 @@ Current product state (do not re-implement)
 - `--fits` writes `stacked_sum.fits` (big-endian BITPIX=-32, NAXIS=3); `--xisf` writes `stacked_sum.xisf` (monolithic XISF 1.0, planar Float32); writer round-trip selftests cover both.
 - `--bpm-auto` derives a bad-pixel map from master dark/bias (median + N*sigma*MAD, `--bpm-auto-sigma`, default 5); `testBPMAuto` verifies detection and masking.
 - Self-flat Phase 4 done: grid model is the default (v1 `registered` kept for compatibility). Validated on Orion limit 20 with mean/median/sigma and `--no-register`; extrapolation+min<0.45 guard added; gamma-aware correction documented as out of scope for sRGB. Real flat validation deferred.
+Local AI tools (myTools)
+-------------------------
+Root: /home/jips/datos/datos-juan/proyectos/myTools/AI
+Folder names are exact (PascalCase with hyphens); do not rewrite them:
+- `AI-Detect/` — object detection project.
+- `Gemini-Deep-Research/` — Interactions API deep research client.
+    python3 "/home/jips/datos/datos-juan/proyectos/myTools/AI/Gemini-Deep-Research/deep_research.py" prompt.txt salida.md [--max] [--resume ID]
+  Needs paid Gemini tier: Free Tier returns HTTP 429 (limit 0) for deep-research agents.
+- `Gemini-Transcribe/` — audio transcription (gemini-3.5-transcribe).
+    python3 "/home/jips/datos/datos-juan/proyectos/myTools/AI/Gemini-Transcribe/transcribir-gemini.py" audio.opus salida.txt [--smart]
+- `Voice-Typing/` — dictation helper (`voice-typing.sh`, `vocabulario.txt`).
+All Gemini tools share ~/.config/gemini/api_key (or GEMINI_API_KEY). Never log the key.

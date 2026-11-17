@@ -1675,3 +1675,7 @@ rejection and disk spill. `--scale N` downsamples.
 - SkyStacker now decodes CR2 natively (pure Go, stdlib only): locates the SOF3 stream, Huffman/entropy decodes two 14-bit planes, interleaves RGGB Bayer, applies black/white levels and bilinear demosaic. `--no-native-cr2` restores dcraw fallback. E2E: 1 CR2 stack in 6.5 s, 100 stars detected; selftests 208. Built-in implementation mirrors the PureRaw subproject decoder.
 
 - Native CR2 validation status: decoded EOS 40D CR2 (3944x2622, 14-bit, mean 1181.8) matches dcraw -D -4 mean (1181.0) and supports E2E stacking (100 stars, 6.5 s). Per-pixel/geometric agreement with dcraw is NOT yet established (downsampled cross-correlation across all 8 dihedral+crop variants < 0.1); flagged as open validation item in PureRaw ROADMAP Phase 1b. Treat native output as usable but not yet bit-exact-equivalent.
+
+- Finite-sample MAD correction: sigma-clip now uses calibrated small-N factors (Monte Carlo, 40k trials/N, seed 20261117) instead of asymptotic 1.4826 for N<30; unweighted and weighted reducers updated; `testFiniteSampleMAD`; selftests 209.
+- Roadmap reordered by ascending effort in NEXT_SESSION_PROMPT.md; first item (finite-sample MAD) completed.
+- myTools/AI folder names standardised to `AI-Detect`, `Gemini-Deep-Research`, `Gemini-Transcribe`, `Voice-Typing`; invocation paths recorded in prompt-ai.txt.

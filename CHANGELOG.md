@@ -34,6 +34,7 @@
 - Gemini outcome archived in `research/`; implemented scratch gradient-detrend retry for star detection (`testDetrendStarDetection`); self-tests 205.
 - Implemented dark-frame series QA (reject >3-sigma median/hot-pixel outliers before master dark); `testCalibrationQA`; self-tests 206.
 - Gaia TAP client retries HTTP 429 (queue full) with capped `Retry-After` instead of failing; `testGaiaQueryTile429Retry`; self-tests 207.
+- Added finite-sample MAD scale correction for small stacks (N=3..30) with `testFiniteSampleMAD`; self-tests 209.
 - Applied `go fix` modernizers (Go 1.26) to SkyStacker and PureRaw; added `testing/synctest` Gaia rate-limiter test (`go test ./...`); self-tests remain 208.
 - Upgraded toolchain to go1.26.11 (go.mod `go 1.26`, pinned toolchain; CI/release workflows updated); SkyStacker and PureRaw test matrices green, baselines re-measured in BENCHMARKS.md.
 - Built-in pure-Go CR2 decoder (lossless JPEG/SOF3 + bilinear Bayer demosaic); `--no-native-cr2` opts out; `testNativeCR2Decode`; self-tests 208.
