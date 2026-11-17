@@ -41,7 +41,7 @@ func (br *Reader) ReadBits(n uint8) (uint32, error) {
 		panic("bitreader: ReadBits n > 32")
 	}
 	var v uint32
-	for i := uint8(0); i < n; i++ {
+	for range n {
 		b, err := br.ReadBit()
 		if err != nil {
 			return 0, err

@@ -91,7 +91,7 @@ func (br *bitReader) bit() (int, error) {
 
 func (br *bitReader) readBits(n int) (int, error) {
 	v := 0
-	for i := 0; i < n; i++ {
+	for range n {
 		b, err := br.bit()
 		if err != nil {
 			return 0, err

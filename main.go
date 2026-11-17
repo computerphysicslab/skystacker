@@ -73,6 +73,7 @@ import (
 	"regexp"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -261,8 +262,8 @@ func expandConfigArgs(args []string) ([]string, error) {
 			path = args[i+1]
 			break
 		}
-		if strings.HasPrefix(a, "--config=") {
-			path = strings.TrimPrefix(a, "--config=")
+		if after, ok := strings.CutPrefix(a, "--config="); ok {
+			path = after
 			break
 		}
 	}
@@ -1448,7 +1449,7 @@ func (b *prBits) bit() (int, error) {
 
 func (b *prBits) readN(n int) (int, error) {
 	v := 0
-	for i := 0; i < n; i++ {
+	for range n {
 		x, err := b.bit()
 		if err != nil {
 			return 0, err
@@ -1682,9 +1683,9 @@ func prDemosaicBayer(planes [][]uint16, w, h, prec int, black, white float64) *f
 	}
 	// Interleave the two sample planes as even/odd columns (RGGB).
 	bayer := make([][]float32, h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		bayer[y] = make([]float32, w)
-		for x := 0; x < w; x++ {
+		for x := range w {
 			p := y*(w/2) + x/2
 			v := planes[x%2][p]
 			bayer[y][x] = float32((float64(v) - black) / (white - black))
@@ -1712,8 +1713,8 @@ func prDemosaicBayer(planes [][]uint16, w, h, prec int, black, white float64) *f
 		}
 		return bayer[y][x]
 	}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			// RGGB: row even -> R at even x, G at odd x; row odd -> G at even x, B at odd x.
 			r, g, b := float32(0), float32(0), float32(0)
 			center := at(x, y)
@@ -2091,8 +2092,8 @@ func resizeFrame(f *frame, w, h int) *frame {
 	out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	scaleX := float64(f.Width) / float64(w)
 	scaleY := float64(f.Height) / float64(h)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			srcX := float64(x) * scaleX
 			srcY := float64(y) * scaleY
 			x0, y0 := int(srcX), int(srcY)
@@ -2104,7 +2105,7 @@ func resizeFrame(f *frame, w, h int) *frame {
 				y1 = f.Height - 1
 			}
 			fx, fy := float32(srcX-float64(x0)), float32(srcY-float64(y0))
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				p00 := f.Pix[(y0*f.Width+x0)*3+c]
 				p10 := f.Pix[(y0*f.Width+x1)*3+c]
 				p01 := f.Pix[(y1*f.Width+x0)*3+c]
@@ -2126,8 +2127,8 @@ func frameFromImage(img image.Image) (*frame, error) {
 	switch src := img.(type) {
 	case *image.YCbCr:
 		const inv = 1.0 / 255.0
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				yi := src.YOffset(b.Min.X+x, b.Min.Y+y)
 				ci := src.COffset(b.Min.X+x, b.Min.Y+y)
 				r, g, bl := color.YCbCrToRGB(src.Y[yi], src.Cb[ci], src.Cr[ci])
@@ -2139,8 +2140,8 @@ func frameFromImage(img image.Image) (*frame, error) {
 		}
 	default:
 		const inv = 1.0 / 65535.0
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				r, g, bl, _ := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
 				i := (y*w + x) * 3
 				f.Pix[i+0] = float32(r) * inv
@@ -2156,7 +2157,7 @@ func frameFromImage(img image.Image) (*frame, error) {
 func grayscale(f *frame) []float32 {
 	n := f.Width * f.Height
 	g := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		g[i] = 0.299*f.Pix[i*3] + 0.587*f.Pix[i*3+1] + 0.114*f.Pix[i*3+2]
 	}
 	return g
@@ -2291,40 +2292,28 @@ func boxBlurLuminance(gray []float32, w, h, radius int) []float32 {
 	}
 	tmp := make([]float32, len(gray))
 	prefixX := make([]float64, w+1)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		rowOff := y * w
 		prefixX[0] = 0
-		for x := 0; x < w; x++ {
+		for x := range w {
 			prefixX[x+1] = prefixX[x] + float64(gray[rowOff+x])
 		}
-		for x := 0; x < w; x++ {
-			x0 := x - radius
-			if x0 < 0 {
-				x0 = 0
-			}
-			x1 := x + radius + 1
-			if x1 > w {
-				x1 = w
-			}
+		for x := range w {
+			x0 := max(x-radius, 0)
+			x1 := min(x+radius+1, w)
 			tmp[rowOff+x] = float32((prefixX[x1] - prefixX[x0]) / float64(x1-x0))
 		}
 	}
 	out := make([]float32, len(gray))
 	prefixY := make([]float64, h+1)
-	for x := 0; x < w; x++ {
+	for x := range w {
 		prefixY[0] = 0
-		for y := 0; y < h; y++ {
+		for y := range h {
 			prefixY[y+1] = prefixY[y] + float64(tmp[y*w+x])
 		}
-		for y := 0; y < h; y++ {
-			y0 := y - radius
-			if y0 < 0 {
-				y0 = 0
-			}
-			y1 := y + radius + 1
-			if y1 > h {
-				y1 = h
-			}
+		for y := range h {
+			y0 := max(y-radius, 0)
+			y1 := min(y+radius+1, h)
 			out[y*w+x] = float32((prefixY[y1] - prefixY[y0]) / float64(y1-y0))
 		}
 	}
@@ -2348,7 +2337,7 @@ func estimateResidualNoise(residual []float32) float64 {
 	if len(sample) == 0 {
 		return 1e-6
 	}
-	sort.Slice(sample, func(i, j int) bool { return sample[i] < sample[j] })
+	slices.Sort(sample)
 	mad := float64(sample[len(sample)/2])
 	sigma := 1.4826 * mad
 	if sigma < 1e-6 {
@@ -2365,14 +2354,8 @@ func estimateResidualNoise(residual []float32) float64 {
 // the typical star size across image scales, so the same threshold works
 // from a 500 px test image up to a 6000 px full-frame stack.
 func estimateHighPassRadius(w, h int) int {
-	m := w
-	if h < m {
-		m = h
-	}
-	r := m / 200
-	if r < 8 {
-		r = 8
-	}
+	m := min(h, w)
+	r := max(m/200, 8)
 	if r > 24 {
 		r = 24
 	}
@@ -2411,8 +2394,8 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 	var comps []comp
 
 	// Iterative flood fill for 8-connectivity
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			i := y*w + x
 			if visited[i] || residual[i] <= threshold {
 				continue
@@ -2587,7 +2570,7 @@ func estimateSimilarity(src, dst []point2D) similarity {
 		return identitySimilarity
 	}
 	var scX, scY, dcX, dcY float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		scX += src[i].X
 		scY += src[i].Y
 		dcX += dst[i].X
@@ -2598,7 +2581,7 @@ func estimateSimilarity(src, dst []point2D) similarity {
 	dcX /= float64(n)
 	dcY /= float64(n)
 	var num1, num2, den float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sx := src[i].X - scX
 		sy := src[i].Y - scY
 		dx := dst[i].X - dcX
@@ -2718,14 +2701,14 @@ func estimateAffine(src, dst []point2D) (affine, bool) {
 		return affine{}, false
 	}
 	var scx, scy float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		scx += src[i].X
 		scy += src[i].Y
 	}
 	scx /= float64(n)
 	scy /= float64(n)
 	var srms float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		dx := src[i].X - scx
 		dy := src[i].Y - scy
 		srms += dx*dx + dy*dy
@@ -2736,7 +2719,7 @@ func estimateAffine(src, dst []point2D) (affine, bool) {
 	}
 	var M [3][3]float64
 	var bx, by [3]float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		xn := (src[i].X - scx) / srms
 		yn := (src[i].Y - scy) / srms
 		M[0][0] += 1
@@ -2773,8 +2756,8 @@ func estimateAffine(src, dst []point2D) (affine, bool) {
 	inv[2][1] = -(M[0][0]*M[2][1] - M[0][1]*M[2][0]) * invDet
 	inv[2][2] = (M[0][0]*M[1][1] - M[0][1]*M[1][0]) * invDet
 	var cx, cy [3]float64
-	for j := 0; j < 3; j++ {
-		for k := 0; k < 3; k++ {
+	for j := range 3 {
+		for k := range 3 {
 			cx[j] += inv[j][k] * bx[k]
 			cy[j] += inv[j][k] * by[k]
 		}
@@ -2806,10 +2789,7 @@ func dist2(a, b star) float64 {
 
 // buildTriangles forms canonical triangles from the top-N brightest stars.
 func buildTriangles(stars []star) []triangle {
-	n := len(stars)
-	if n > 40 {
-		n = 40
-	}
+	n := min(len(stars), 40)
 	if n < 3 {
 		return nil
 	}
@@ -2999,10 +2979,7 @@ func matchStarsToReference(refStars, tgtStars []star) (similarity, int, bool) {
 			bestSim = sim
 		}
 	}
-	minCount := len(tgtStars)
-	if len(refStars) < minCount {
-		minCount = len(refStars)
-	}
+	minCount := min(len(refStars), len(tgtStars))
 	if minCount == 0 {
 		return identitySimilarity, bestInliers, false
 	}
@@ -3107,7 +3084,7 @@ func resampleToReferenceFn(f *frame, sampleRef func(x, y float64) (float64, floa
 		for y := y0; y < y1; y++ {
 			fy := float64(y)
 			rowBase := y * refW * 3
-			for x := 0; x < refW; x++ {
+			for x := range refW {
 				fx := float64(x)
 				sx, sy := sampleRef(fx, fy)
 				i := rowBase + x*3
@@ -3130,15 +3107,12 @@ func resampleToReferenceFn(f *frame, sampleRef func(x, y float64) (float64, floa
 	}
 	var wg sync.WaitGroup
 	rowsPerWorker := (refH + workers - 1) / workers
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		y0 := w * rowsPerWorker
 		if y0 >= refH {
 			break
 		}
-		y1 := y0 + rowsPerWorker
-		if y1 > refH {
-			y1 = refH
-		}
+		y1 := min(y0+rowsPerWorker, refH)
 		wg.Add(1)
 		go func(y0, y1 int) {
 			defer wg.Done()
@@ -3155,9 +3129,9 @@ func findSafeCrop(validCount []int32, w, h int, requiredCount int32) image.Recta
 	heights := make([]int, w)
 	bestArea := 0
 	best := image.Rect(0, 0, 0, 0)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		rowBase := y * w
-		for x := 0; x < w; x++ {
+		for x := range w {
 			if validCount[rowBase+x] == requiredCount {
 				heights[x]++
 			} else {
@@ -3222,15 +3196,12 @@ func (a *accumulator) addFrame(f *frame, workers int) error {
 	} else {
 		var wg sync.WaitGroup
 		rowsPerWorker := (a.Height + workers - 1) / workers
-		for w := 0; w < workers; w++ {
+		for w := range workers {
 			y0 := w * rowsPerWorker
 			if y0 >= a.Height {
 				break
 			}
-			y1 := y0 + rowsPerWorker
-			if y1 > a.Height {
-				y1 = a.Height
-			}
+			y1 := min(y0+rowsPerWorker, a.Height)
 			wg.Add(1)
 			go func(y0, y1 int) {
 				defer wg.Done()
@@ -3267,15 +3238,12 @@ func (a *accumulator) addFrameMasked(f *frame, workers int, validCount []int32) 
 	} else {
 		var wg sync.WaitGroup
 		rowsPerWorker := (a.Height + workers - 1) / workers
-		for w := 0; w < workers; w++ {
+		for w := range workers {
 			y0 := w * rowsPerWorker
 			if y0 >= a.Height {
 				break
 			}
-			y1 := y0 + rowsPerWorker
-			if y1 > a.Height {
-				y1 = a.Height
-			}
+			y1 := min(y0+rowsPerWorker, a.Height)
 			wg.Add(1)
 			go func(y0, y1 int) {
 				defer wg.Done()
@@ -3322,7 +3290,7 @@ func (a *accumulator) maxValue() float32 {
 func cropAccumulator(a *accumulator, r image.Rectangle) *accumulator {
 	w, h := r.Dx(), r.Dy()
 	out := newAccumulator(w, h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		srcOff := ((r.Min.Y+y)*a.Width + r.Min.X) * 3
 		dstOff := y * w * 3
 		copy(out.Pix[dstOff:dstOff+w*3], a.Pix[srcOff:srcOff+w*3])
@@ -3333,7 +3301,7 @@ func cropAccumulator(a *accumulator, r image.Rectangle) *accumulator {
 func cropCounts(c []int32, w int, r image.Rectangle) []int32 {
 	cw, ch := r.Dx(), r.Dy()
 	out := make([]int32, cw*ch)
-	for y := 0; y < ch; y++ {
+	for y := range ch {
 		srcOff := (r.Min.Y+y)*w + r.Min.X
 		dstOff := y * cw
 		copy(out[dstOff:dstOff+cw], c[srcOff:srcOff+cw])
@@ -3392,10 +3360,7 @@ func writeRawFloat32RGB(w io.Writer, width, height int, pix []float32) error {
 	const chunk = 4096
 	buf := make([]byte, chunk*4)
 	for i := 0; i < n; {
-		count := n - i
-		if count > chunk {
-			count = chunk
-		}
+		count := min(n-i, chunk)
 		for j := 0; j < count; j++ {
 			binary.LittleEndian.PutUint32(buf[j*4:], math.Float32bits(pix[i+j]))
 		}
@@ -3424,10 +3389,7 @@ func readRawFloat32RGB(path string) (int, int, []float32, error) {
 	const chunk = 4096
 	buf := make([]byte, chunk*4)
 	for i := 0; i < n; {
-		count := n - i
-		if count > chunk {
-			count = chunk
-		}
+		count := min(n-i, chunk)
 		if _, err := io.ReadFull(f, buf[:count*4]); err != nil {
 			return 0, 0, nil, fmt.Errorf("raw data: %w", err)
 		}
@@ -3528,7 +3490,7 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 	binary.LittleEndian.PutUint16(aux[bo:], 32)
 	binary.LittleEndian.PutUint16(aux[bo+2:], 32)
 	binary.LittleEndian.PutUint16(aux[bo+4:], 32)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		binary.LittleEndian.PutUint16(aux[sfo+i*2:], sampleFormatFloat)
 	}
 	binary.LittleEndian.PutUint32(aux[xro:], 1)
@@ -3548,10 +3510,7 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 	scratch := make([]byte, bufFloats*4)
 	inv := float32(1.0) / divisor
 	for i := 0; i < n; {
-		count := n - i
-		if count > bufFloats {
-			count = bufFloats
-		}
+		count := min(n-i, bufFloats)
 		for j := 0; j < count; j++ {
 			binary.LittleEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[i+j]*inv))
 		}
@@ -3624,13 +3583,10 @@ func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor 
 	scratch := make([]byte, bufFloats*4)
 	inv := float32(1.0) / divisor
 	written := 0
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		base := plane * width * height
 		for i := 0; i < width*height; {
-			count := width*height - i
-			if count > bufFloats {
-				count = bufFloats
-			}
+			count := min(width*height-i, bufFloats)
 			for j := 0; j < count; j++ {
 				binary.BigEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[base+i+j]*inv))
 			}
@@ -3707,13 +3663,10 @@ func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor 
 	const bufFloats = 4096
 	scratch := make([]byte, bufFloats*4)
 	inv := float32(1.0) / divisor
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		base := plane * width * height
 		for i := 0; i < width*height; {
-			count := width*height - i
-			if count > bufFloats {
-				count = bufFloats
-			}
+			count := min(width*height-i, bufFloats)
 			for j := 0; j < count; j++ {
 				binary.LittleEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[base+i+j]*inv))
 			}
@@ -3765,7 +3718,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 		stripOff []uint32
 		stripLen []uint32
 	)
-	for i := 0; i < nEntries; i++ {
+	for i := range nEntries {
 		off := ifdOff + 2 + i*12
 		tag := binary.LittleEndian.Uint16(data[off:])
 		typ := binary.LittleEndian.Uint16(data[off+2:])
@@ -3777,7 +3730,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 			}
 			out := make([]uint16, count)
 			if count*2 <= 4 {
-				for k := 0; k < count; k++ {
+				for k := range count {
 					out[k] = binary.LittleEndian.Uint16(data[valField+k*2:])
 				}
 			} else {
@@ -3785,7 +3738,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 				if o+count*2 > len(data) {
 					return nil, errors.New("tiff: offset out of range")
 				}
-				for k := 0; k < count; k++ {
+				for k := range count {
 					out[k] = binary.LittleEndian.Uint16(data[o+k*2:])
 				}
 			}
@@ -3803,7 +3756,7 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 				if o+count*4 > len(data) {
 					return nil, errors.New("tiff: offset out of range")
 				}
-				for k := 0; k < count; k++ {
+				for k := range count {
 					out[k] = binary.LittleEndian.Uint32(data[o+k*4:])
 				}
 			}
@@ -3901,9 +3854,9 @@ func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
 func writePNGPreview(w io.Writer, width, height int, pix []float32) error {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	inv := float32(1.0)
-	for y := 0; y < height; y++ {
+	for y := range height {
 		rowOff := y * img.Stride
-		for x := 0; x < width; x++ {
+		for x := range width {
 			i := (y*width + x) * 3
 			o := rowOff + x*4
 			img.Pix[o+0] = previewLUT[stretchIndex(pix[i+0]*inv)]
@@ -3944,7 +3897,7 @@ func writeBMP24(w io.Writer, width, height int, pix []float32) error {
 	row := make([]byte, rowBytes)
 	for y := height - 1; y >= 0; y-- { // BMP rows are bottom-up
 		off := y * width * 3
-		for x := 0; x < width; x++ {
+		for x := range width {
 			row[x*3+0] = floatToByte(pix[off+x*3+2]) // B
 			row[x*3+1] = floatToByte(pix[off+x*3+1]) // G
 			row[x*3+2] = floatToByte(pix[off+x*3+0]) // R
@@ -3994,9 +3947,9 @@ func writePreviewJPEGScaled(w io.Writer, width, height int, pix []float32, divis
 	}
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	inv := float32(1.0) / divisor
-	for y := 0; y < height; y++ {
+	for y := range height {
 		rowOff := y * img.Stride
-		for x := 0; x < width; x++ {
+		for x := range width {
 			i := (y*width + x) * 3
 			o := rowOff + x*4
 			img.Pix[o+0] = previewLUT[stretchIndex(pix[i+0]*inv)]
@@ -4042,7 +3995,7 @@ func writeMinMaxStretchedPreviewJPEG(w io.Writer, width, height int, pix []float
 	minC := [3]float32{pix[0], pix[1], pix[2]}
 	maxC := [3]float32{pix[0], pix[1], pix[2]}
 	for i := 3; i+2 < len(pix); i += 3 {
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			v := pix[i+c]
 			if v < minC[c] {
 				minC[c] = v
@@ -4053,19 +4006,19 @@ func writeMinMaxStretchedPreviewJPEG(w io.Writer, width, height int, pix []float
 		}
 	}
 	var invRange [3]float32
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		r := maxC[c] - minC[c]
 		if r > 0 {
 			invRange[c] = 1.0 / r
 		}
 	}
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
+	for y := range height {
 		rowOff := y * img.Stride
-		for x := 0; x < width; x++ {
+		for x := range width {
 			i := (y*width + x) * 3
 			o := rowOff + x*4
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				img.Pix[o+c] = floatToByte((pix[i+c] - minC[c]) * invRange[c])
 			}
 			img.Pix[o+3] = 255
@@ -4173,7 +4126,7 @@ func readExifBlackLevel(data []byte, typ uint16, count, valOff int, be bool) (fl
 		return 0, false
 	}
 	var sum float64
-	for i := 0; i < count; i++ {
+	for i := range count {
 		off := start + i*elemBytes
 		switch typ {
 		case 3:
@@ -4296,7 +4249,7 @@ func parseExifTIFF(data []byte, e *exifData) {
 		return float64(num) / float64(den)
 	}
 	exifIfd := -1
-	for i := 0; i < n; i++ {
+	for i := range n {
 		off := ifdOff + 2 + i*12
 		tag := u16(off)
 		typ := u16(off + 2)
@@ -4318,7 +4271,7 @@ func parseExifTIFF(data []byte, e *exifData) {
 	if exifIfd > 0 && exifIfd+2 <= len(data) {
 		n2 := int(u16(exifIfd))
 		if exifIfd+2+n2*12 <= len(data) {
-			for i := 0; i < n2; i++ {
+			for i := range n2 {
 				off := exifIfd + 2 + i*12
 				tag := u16(off)
 				typ := u16(off + 2)
@@ -5091,7 +5044,7 @@ func calibrationFrameQA(f *frame) (median, mad, hotFrac float64) {
 	n := f.Width * f.Height
 	thr := float32(st.Median + 5*1.4826*st.MAD)
 	var hot int
-	for p := 0; p < n; p++ {
+	for p := range n {
 		i := p * 3
 		if f.Pix[i] > thr || f.Pix[i+1] > thr || f.Pix[i+2] > thr {
 			hot++
@@ -5208,8 +5161,8 @@ func getAvailableMemoryMB() int {
 	if err != nil {
 		return 0
 	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(data), "\n")
+	for line := range lines {
 		if strings.HasPrefix(line, "MemAvailable:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
@@ -5340,7 +5293,7 @@ func computeRegionStats(f *frame, x0, y0, x1, y1 int) normStats {
 	medianIdx := total / 2
 	cum := int64(0)
 	var medianBin int
-	for i := 0; i < numBins; i++ {
+	for i := range numBins {
 		cum += hist[i]
 		if cum >= medianIdx {
 			medianBin = i
@@ -5371,7 +5324,7 @@ func computeRegionStats(f *frame, x0, y0, x1, y1 int) normStats {
 	madIdx := absTotal / 2
 	cum = 0
 	var madBin int
-	for i := 0; i < numBins; i++ {
+	for i := range numBins {
 		cum += absHist[i]
 		if cum >= madIdx {
 			madBin = i
@@ -5393,7 +5346,7 @@ func channelNormStats(f *frame) [3]normStats {
 	if f == nil || f.Width <= 0 || f.Height <= 0 {
 		return out
 	}
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		const bins = 1024
 		var hist [bins]int64
 		total := int64(0)
@@ -5438,7 +5391,7 @@ func histMedian(hist []int64, total int64, bins int) float64 {
 		return 0
 	}
 	var acc int64
-	for b := 0; b < bins; b++ {
+	for b := range bins {
 		acc += hist[b]
 		if acc >= total/2 {
 			return float64(b) / float64(bins)
@@ -5453,13 +5406,13 @@ func globalNormalizePerChannel(f *frame, ref [3]normStats, mode string) *frame {
 	fs := channelNormStats(f)
 	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	n := f.Width * f.Height
-	for p := 0; p < n; p++ {
+	for p := range n {
 		i := p * 3
 		if f.Pix[i] < 0 {
 			out.Pix[i], out.Pix[i+1], out.Pix[i+2] = -1, -1, -1
 			continue
 		}
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			sc, off := normParams(fs[c], ref[c], mode)
 			v := float64(f.Pix[i+c])*sc + off
 			if v < 0 {
@@ -5480,7 +5433,7 @@ func applyNormTransform(f *frame, scale, offset float64) *frame {
 	nPix := f.Width * f.Height
 	s := float32(scale)
 	o := float32(offset)
-	for p := 0; p < nPix; p++ {
+	for p := range nPix {
 		i := p * 3
 		if f.Pix[i] < 0 {
 			out.Pix[i] = -1
@@ -5488,7 +5441,7 @@ func applyNormTransform(f *frame, scale, offset float64) *frame {
 			out.Pix[i+2] = -1
 			continue
 		}
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			v := f.Pix[i+c]*s + o
 			if v < 0 {
 				v = 0
@@ -5575,8 +5528,8 @@ func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normSt
 		ts = 64
 	}
 	frameStats := make([]normStats, ntx*nty)
-	for ty := 0; ty < nty; ty++ {
-		for tx := 0; tx < ntx; tx++ {
+	for ty := range nty {
+		for tx := range ntx {
 			x0 := tx * ts
 			y0 := ty * ts
 			x1 := x0 + ts
@@ -5610,7 +5563,7 @@ func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normSt
 	nPix := f.Width * f.Height
 	maxFx := float64(ntx - 1)
 	maxFy := float64(nty - 1)
-	for p := 0; p < nPix; p++ {
+	for p := range nPix {
 		i := p * 3
 		if f.Pix[i] < 0 {
 			out.Pix[i] = -1
@@ -5658,7 +5611,7 @@ func localNormalizeWithRefTiles(f *frame, refTiles []normStats, refGlobal normSt
 		of := (1-dx)*(1-dy)*o00 + dx*(1-dy)*o10 + (1-dx)*dy*o01 + dx*dy*o11
 		s := float32(sc)
 		o := float32(of)
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			v := f.Pix[i+c]*s + o
 			if v < 0 {
 				v = 0
@@ -5978,7 +5931,7 @@ func computeFootprintPct(srcW, srcH, refW, refH int, apply func(point2D) point2D
 		mapped[i] = apply(p)
 	}
 	var area float64
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		j := (i + 1) % 4
 		area += mapped[i].X*mapped[j].Y - mapped[j].X*mapped[i].Y
 	}
@@ -6023,10 +5976,7 @@ type frameDiag struct {
 // from 0 degrees. Frames scoring below ~30 are strong candidates for
 // removal (typically because they were registered on noise).
 func computeFrameQuality(inliers, stars, refStars int, scale, rotDeg float64) float64 {
-	minCount := stars
-	if refStars < minCount {
-		minCount = refStars
-	}
+	minCount := min(refStars, stars)
 	if minCount == 0 {
 		return 0
 	}
@@ -6388,7 +6338,7 @@ func medianInPlace(vals []float32) float32 {
 	if n == 0 {
 		return 0
 	}
-	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+	slices.Sort(vals)
 	if n%2 == 0 {
 		return 0.5 * (vals[n/2-1] + vals[n/2])
 	}
@@ -6605,7 +6555,7 @@ func readTileFromRaw(path string, fullW, fullH, x0, y0, x1, y1 int, dst []float3
 	rowBytes := int64(fullW) * 3 * 4
 	const chunk = 4096
 	buf := make([]byte, chunk*4)
-	for py := 0; py < tileH; py++ {
+	for py := range tileH {
 		off := int64(8) + int64(y0+py)*rowBytes + int64(x0)*3*4
 		if _, err := f.Seek(off, io.SeekStart); err != nil {
 			return err
@@ -6613,10 +6563,7 @@ func readTileFromRaw(path string, fullW, fullH, x0, y0, x1, y1 int, dst []float3
 		nFloats := tileW * 3
 		done := 0
 		for done < nFloats {
-			c := nFloats - done
-			if c > chunk {
-				c = chunk
-			}
+			c := min(nFloats-done, chunk)
 			if _, err := io.ReadFull(f, buf[:c*4]); err != nil {
 				return err
 			}
@@ -6634,7 +6581,7 @@ func readTileFromRaw(path string, fullW, fullH, x0, y0, x1, y1 int, dst []float3
 // red channel is >= 0. The same rule as accumulator.addFrameMasked.
 func updateValidCount(f *frame, validCount []int32) {
 	nPix := len(validCount)
-	for p := 0; p < nPix; p++ {
+	for p := range nPix {
 		if f.Pix[p*3] >= 0 {
 			validCount[p]++
 		}
@@ -6681,10 +6628,7 @@ func reduceTilesStack(
 	}
 	// Cap tile buffer to ~256 MB.
 	const maxTileBuf = 256 * 1024 * 1024
-	maxSide := int(math.Sqrt(float64(maxTileBuf / (nFrames * 3 * 4))))
-	if maxSide < 64 {
-		maxSide = 64
-	}
+	maxSide := max(int(math.Sqrt(float64(maxTileBuf/(nFrames*3*4)))), 64)
 	if ts > maxSide {
 		ts = maxSide
 	}
@@ -6695,14 +6639,8 @@ func reduceTilesStack(
 	var tiles []tile
 	for y := 0; y < outH; y += ts {
 		for x := 0; x < outW; x += ts {
-			x1 := x + ts
-			if x1 > outW {
-				x1 = outW
-			}
-			y1 := y + ts
-			if y1 > outH {
-				y1 = outH
-			}
+			x1 := min(x+ts, outW)
+			y1 := min(y+ts, outH)
 			tiles = append(tiles, tile{x, y, x1, y1})
 		}
 	}
@@ -6725,18 +6663,13 @@ func reduceTilesStack(
 
 	var completedTiles int64
 	totalTiles := int64(len(tiles))
-	reportEvery := totalTiles / 20
-	if reportEvery < 5 {
-		reportEvery = 5
-	}
+	reportEvery := max(totalTiles/20, 5)
 	startRed := time.Now()
 	stopTicker := startProgress(method+" reduce", 15*time.Second)
 	defer stopTicker()
 
 	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for t := range jobs {
 				if e := reduceTile(spillPaths, fullW, fullH, crop, t.x0, t.y0, t.x1, t.y1,
 					method, sigmaThreshold, sigmaIters, outW, sumPix, meanPix, rejPix, wgtPix, frameWeights, frameScales, flat, asym); e != nil {
@@ -6749,7 +6682,7 @@ func reduceTilesStack(
 					logf("  reduce: %d/%d tiles (%.1f%%, %.0fs elapsed)", n, totalTiles, 100.0*float64(n)/float64(totalTiles), time.Since(startRed).Seconds())
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if firstErr != nil {
@@ -6787,12 +6720,12 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 				scale = 1
 			}
 		}
-		for py := 0; py < tileH; py++ {
-			for px := 0; px < tileW; px++ {
+		for py := range tileH {
+			for px := range tileW {
 				pix := py*tileW + px
 				src := pix * 3
 				base := pix*3*nFrames + fi
-				for c := 0; c < 3; c++ {
+				for c := range 3 {
 					v := frameTile[src+c]
 					if v >= 0 {
 						if scale != 1 {
@@ -6819,12 +6752,12 @@ func reduceTile(spillPaths []string, fullW, fullH int, crop image.Rectangle,
 	validWeights := make([]float32, 0, nFrames)
 	workVals := make([]float32, 0, nFrames)
 
-	for py := 0; py < tileH; py++ {
-		for px := 0; px < tileW; px++ {
+	for py := range tileH {
+		for px := range tileW {
 			pix := py*tileW + px
 			outPix := (y0+py)*outW + (x0 + px)
 			var rejSum, wgtSum float32
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				off := pix*3*nFrames + c*nFrames
 				vals := buf[off : off+nFrames]
 				validVals = validVals[:0]
@@ -6923,8 +6856,8 @@ func exportCalibrationMasters(outputDir string, masters []calibrationMaster) ([]
 		}
 		minV, maxV := math.Inf(1), math.Inf(-1)
 		var meanR, meanG, meanB float64
-		for p := 0; p < n; p++ {
-			for c := 0; c < 3; c++ {
+		for p := range n {
+			for c := range 3 {
 				v := float64(m.Frame.Pix[p*3+c])
 				if math.IsNaN(v) || math.IsInf(v, 0) {
 					continue
@@ -6959,7 +6892,7 @@ func writeMasterPreviewJPEG(w io.Writer, f *frame) error {
 	n := f.Width * f.Height
 	stride := n/50000 + 1
 	sample := make([]float32, 0, n/stride+1)
-	for p := 0; p < n; p++ {
+	for p := range n {
 		l := (f.Pix[p*3] + f.Pix[p*3+1] + f.Pix[p*3+2]) / 3
 		if math.IsNaN(float64(l)) || math.IsInf(float64(l), 0) {
 			l = 0
@@ -6970,7 +6903,7 @@ func writeMasterPreviewJPEG(w io.Writer, f *frame) error {
 	}
 	var lo, hi float32
 	if len(sample) > 0 {
-		sort.Slice(sample, func(i, j int) bool { return sample[i] < sample[j] })
+		slices.Sort(sample)
 		lo = sample[int(0.01*float64(len(sample)-1))]
 		hi = sample[int(0.995*float64(len(sample)-1))]
 		if !(hi > lo) {
@@ -6987,7 +6920,7 @@ func writeMasterPreviewJPEG(w io.Writer, f *frame) error {
 		for x := 0; x < f.Width; x++ {
 			i := (y*f.Width + x) * 3
 			o := rowOff + x*4
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				img.Pix[o+c] = floatToByte((f.Pix[i+c] - lo) * scale)
 			}
 			img.Pix[o+3] = 255
@@ -7109,7 +7042,7 @@ func normalizeSelfFlat(f *frame) (*selfFlatResult, error) {
 	}
 	var med [3]float64
 	stride := n/20000 + 1
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		vals := make([]float32, 0, n/stride+1)
 		for p := 0; p < n; p += stride {
 			v := f.Pix[p*3+c]
@@ -7119,8 +7052,8 @@ func normalizeSelfFlat(f *frame) (*selfFlatResult, error) {
 		}
 		med[c] = float64(medianInPlace(vals))
 	}
-	for p := 0; p < n; p++ {
-		for c := 0; c < 3; c++ {
+	for p := range n {
+		for c := range 3 {
 			v := f.Pix[p*3+c]
 			if med[c] > 0 {
 				v = float32(float64(v) / med[c])
@@ -7154,19 +7087,13 @@ func centerEdgeRatio(f *frame) float64 {
 	if w < 4 || h < 4 {
 		return 1
 	}
-	bw := w / 10
-	if bw < 1 {
-		bw = 1
-	}
-	bh := h / 10
-	if bh < 1 {
-		bh = 1
-	}
+	bw := max(w/10, 1)
+	bh := max(h/10, 1)
 	cx0, cx1 := w/2-bw/2, w/2+bw/2
 	cy0, cy1 := h/2-bh/2, h/2+bh/2
 	var cSum, cN, bSum, bN float64
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			p := y*w + x
 			v := (float64(f.Pix[p*3]) + float64(f.Pix[p*3+1]) + float64(f.Pix[p*3+2])) / 3
 			if x >= cx0 && x < cx1 && y >= cy0 && y < cy1 {
@@ -7191,7 +7118,7 @@ func flatResidualRMS(f *frame) float64 {
 	n := f.Width * f.Height
 	var sum float64
 	var cnt int
-	for p := 0; p < n; p++ {
+	for p := range n {
 		v := (float64(f.Pix[p*3]) + float64(f.Pix[p*3+1]) + float64(f.Pix[p*3+2])) / 3
 		if v < 0.2 || v > 5 {
 			continue
@@ -7212,22 +7139,10 @@ func applyFlatToFrame(f *frame, flat *frame, rect image.Rectangle) {
 	if f == nil || flat == nil {
 		return
 	}
-	y0 := rect.Min.Y
-	if y0 < 0 {
-		y0 = 0
-	}
-	y1 := rect.Max.Y
-	if y1 > f.Height {
-		y1 = f.Height
-	}
-	x0 := rect.Min.X
-	if x0 < 0 {
-		x0 = 0
-	}
-	x1 := rect.Max.X
-	if x1 > f.Width {
-		x1 = f.Width
-	}
+	y0 := max(rect.Min.Y, 0)
+	y1 := min(rect.Max.Y, f.Height)
+	x0 := max(rect.Min.X, 0)
+	x1 := min(rect.Max.X, f.Width)
 	for y := y0; y < y1; y++ {
 		fy := y - rect.Min.Y
 		if fy < 0 || fy >= flat.Height {
@@ -7240,7 +7155,7 @@ func applyFlatToFrame(f *frame, flat *frame, rect image.Rectangle) {
 			}
 			fp := (fy*flat.Width + fx) * 3
 			tp := (y*f.Width + x) * 3
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				d := flat.Pix[fp+c]
 				if d > 1e-6 && f.Pix[tp+c] >= 0 {
 					f.Pix[tp+c] /= d
@@ -7322,21 +7237,12 @@ func newSelfFlatGridAccumulator(w, h, cellSize int) *selfFlatGridAccumulator {
 	}
 	cols := (w + cellSize - 1) / cellSize
 	rows := (h + cellSize - 1) / cellSize
-	minDim := w
-	if h < minDim {
-		minDim = h
-	}
-	dilateR := selfFlatGridDilateRadius
-	if minDim/10 < dilateR {
-		dilateR = minDim / 10
-	}
+	minDim := min(h, w)
+	dilateR := min(minDim/10, selfFlatGridDilateRadius)
 	if dilateR < 1 {
 		dilateR = 1
 	}
-	localR := selfFlatGridLocalRadius
-	if minDim/8 < localR {
-		localR = minDim / 8
-	}
+	localR := min(minDim/8, selfFlatGridLocalRadius)
 	if localR < 1 {
 		localR = 1
 	}
@@ -7359,13 +7265,13 @@ func boxMeanF32(src []float32, w, h, r int) []float32 {
 		r = 0
 	}
 	tmp := make([]float32, w*h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		row := y * w
 		var sum float64
 		for x := 0; x <= r && x < w; x++ {
 			sum += float64(src[row+x])
 		}
-		for x := 0; x < w; x++ {
+		for x := range w {
 			if x > 0 {
 				add := x + r
 				if add < w {
@@ -7376,10 +7282,7 @@ func boxMeanF32(src []float32, w, h, r int) []float32 {
 					sum -= float64(src[row+rem])
 				}
 			}
-			lo := x - r
-			if lo < 0 {
-				lo = 0
-			}
+			lo := max(x-r, 0)
 			hi := x + r
 			if hi >= w {
 				hi = w - 1
@@ -7388,12 +7291,12 @@ func boxMeanF32(src []float32, w, h, r int) []float32 {
 		}
 	}
 	out := make([]float32, w*h)
-	for x := 0; x < w; x++ {
+	for x := range w {
 		var sum float64
 		for y := 0; y <= r && y < h; y++ {
 			sum += float64(tmp[y*w+x])
 		}
-		for y := 0; y < h; y++ {
+		for y := range h {
 			if y > 0 {
 				add := y + r
 				if add < h {
@@ -7404,10 +7307,7 @@ func boxMeanF32(src []float32, w, h, r int) []float32 {
 					sum -= float64(tmp[rem*w+x])
 				}
 			}
-			lo := y - r
-			if lo < 0 {
-				lo = 0
-			}
+			lo := max(y-r, 0)
 			hi := y + r
 			if hi >= h {
 				hi = h - 1
@@ -7425,7 +7325,7 @@ func dilateMaskBox(src []bool, w, h, r int) []bool {
 		return out
 	}
 	horiz := make([]bool, w*h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		row := y * w
 		cnt := 0
 		limit := r
@@ -7437,7 +7337,7 @@ func dilateMaskBox(src []bool, w, h, r int) []bool {
 				cnt++
 			}
 		}
-		for x := 0; x < w; x++ {
+		for x := range w {
 			horiz[row+x] = cnt > 0
 			rem := x - r
 			if rem >= 0 && src[row+rem] {
@@ -7450,7 +7350,7 @@ func dilateMaskBox(src []bool, w, h, r int) []bool {
 		}
 	}
 	out := make([]bool, w*h)
-	for x := 0; x < w; x++ {
+	for x := range w {
 		cnt := 0
 		limit := r
 		if limit >= h {
@@ -7461,7 +7361,7 @@ func dilateMaskBox(src []bool, w, h, r int) []bool {
 				cnt++
 			}
 		}
-		for y := 0; y < h; y++ {
+		for y := range h {
 			out[y*w+x] = cnt > 0
 			rem := y - r
 			if rem >= 0 && horiz[rem*w+x] {
@@ -7501,7 +7401,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 	// only compact, high-contrast sources exceed the threshold.
 	invalidMask := make([]bool, n)
 	work := make([]float32, n)
-	for p := 0; p < n; p++ {
+	for p := range n {
 		r, g, b := f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2]
 		if r < 0 || g < 0 || b < 0 {
 			invalidMask[p] = true
@@ -7531,7 +7431,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 	thresh := float64(medR) + selfFlatGridLocalSigma*sigmaR
 
 	brightMask := make([]bool, n)
-	for p := 0; p < n; p++ {
+	for p := range n {
 		if invalidMask[p] {
 			continue
 		}
@@ -7547,7 +7447,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 	dilated := dilateMaskBox(brightMask, a.w, a.h, a.dilateR)
 	mask := make([]bool, n)
 	var maskedCnt int64
-	for p := 0; p < n; p++ {
+	for p := range n {
 		if invalidMask[p] || dilated[p] {
 			mask[p] = true
 			maskedCnt++
@@ -7557,7 +7457,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 	a.maskedPixels += maskedCnt
 
 	var chanMed [3]float64
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		vals := make([]float32, 0, n/stride+1)
 		for p := 0; p < n; p += stride {
 			if mask[p] {
@@ -7595,23 +7495,14 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 
 	processRow := func(cy int) {
 		y0 := cy * a.cellSize
-		y1 := y0 + a.cellSize
-		if y1 > a.h {
-			y1 = a.h
-		}
+		y1 := min(y0+a.cellSize, a.h)
 		maxCap := (y1 - y0) * a.cellSize
 		buf := make([]float32, 0, maxCap)
 		for cx := 0; cx < a.cols; cx++ {
 			x0 := cx * a.cellSize
-			x1 := x0 + a.cellSize
-			if x1 > a.w {
-				x1 = a.w
-			}
+			x1 := min(x0+a.cellSize, a.w)
 			area := (x1 - x0) * (y1 - y0)
-			minValid := int(selfFlatGridMinCellFrac * float64(area))
-			if minValid < 1 {
-				minValid = 1
-			}
+			minValid := max(int(selfFlatGridMinCellFrac*float64(area)), 1)
 			cellIdx := cy*a.cols + cx
 			validInCell := 0
 			for y := y0; y < y1; y++ {
@@ -7626,7 +7517,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 				continue
 			}
 			gf.counts[cellIdx] = int32(validInCell)
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				buf = buf[:0]
 				invMed := float32(1.0 / chanMed[c])
 				for y := y0; y < y1; y++ {
@@ -7646,7 +7537,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 					gf.vals[cellIdx*3+c] = -1
 					continue
 				}
-				sort.Slice(buf, func(i, j int) bool { return buf[i] < buf[j] })
+				slices.Sort(buf)
 				q25 := float64(percentile(buf, selfFlatGridQuantile))
 				q75 := float64(percentile(buf, 75))
 				med := float64(percentile(buf, 50))
@@ -7700,9 +7591,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 		var nextRow int32
 		var wg sync.WaitGroup
 		for w := 0; w < workers; w++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for {
 					cy := int(atomic.AddInt32(&nextRow, 1) - 1)
 					if cy >= a.rows {
@@ -7710,7 +7599,7 @@ func (a *selfFlatGridAccumulator) addFrame(f *frame, workers int) {
 					}
 					processRow(cy)
 				}
-			}()
+			})
 		}
 		wg.Wait()
 	}
@@ -7880,7 +7769,7 @@ func selfFlatIRLSFit(points []selfFlatPoint, phi [][]float64, robust bool) (coef
 	}
 	iters = 1
 	if robust {
-		for iter := 0; iter < selfFlatIRLSMaxIter; iter++ {
+		for range selfFlatIRLSMaxIter {
 			resid := make([]float32, len(points))
 			for i, p := range points {
 				pred := 0.0
@@ -8026,11 +7915,11 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	cellValid := make([]bool, nCells*3)
 	buf := make([]float32, 0, nFrames)
 
-	for cellIdx := 0; cellIdx < nCells; cellIdx++ {
-		for c := 0; c < 3; c++ {
+	for cellIdx := range nCells {
+		for c := range 3 {
 			buf = buf[:0]
 			var wSum float64
-			for fi := 0; fi < nFrames; fi++ {
+			for fi := range nFrames {
 				v := a.frames[fi].vals[cellIdx*3+c]
 				if v > 0 {
 					buf = append(buf, v)
@@ -8052,7 +7941,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	// polynomial. Reject it with zero weight; do not interpolate.
 	rejectedGrid := make([]bool, nCells)
 	neigh := make([]float32, 0, 25)
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		reject := make([]bool, nCells)
 		for cy := 0; cy < a.rows; cy++ {
 			for cx := 0; cx < a.cols; cx++ {
@@ -8087,7 +7976,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 				}
 			}
 		}
-		for cellIdx := 0; cellIdx < nCells; cellIdx++ {
+		for cellIdx := range nCells {
 			if reject[cellIdx] {
 				cellValid[cellIdx*3+c] = false
 				rejectedGrid[cellIdx] = true
@@ -8103,14 +7992,11 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	radialTerms := selfFlatRadialTerms
 	maxIRLS := 0
 
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		points := make([]selfFlatPoint, 0, nCells)
 		for cy := 0; cy < a.rows; cy++ {
 			y0 := cy * a.cellSize
-			y1 := y0 + a.cellSize
-			if y1 > a.h {
-				y1 = a.h
-			}
+			y1 := min(y0+a.cellSize, a.h)
 			cyCenter := 0.5 * float64(y0+y1-1)
 			v := 0.0
 			if a.h > 1 {
@@ -8122,10 +8008,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 					continue
 				}
 				x0 := cx * a.cellSize
-				x1 := x0 + a.cellSize
-				if x1 > a.w {
-					x1 = a.w
-				}
+				x1 := min(x0+a.cellSize, a.w)
 				cxCenter := 0.5 * float64(x0+x1-1)
 				u := 0.0
 				if a.w > 1 {
@@ -8182,7 +8065,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 		rowBase := y * a.w * 3
 		for x := 0; x < a.w; x++ {
 			xu := &tx[x]
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				cc := coeffs[c]
 				var sum float64
 				idx := 0
@@ -8205,7 +8088,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	if workers <= 1 || a.h < 2 {
 		for y := 0; y < a.h; y++ {
 			rs := evalRow(y)
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				chanSum[c] += rs[c]
 			}
 		}
@@ -8213,14 +8096,9 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 		var nextY int32
 		var mu sync.Mutex
 		var wg sync.WaitGroup
-		nw := workers
-		if nw > a.h {
-			nw = a.h
-		}
+		nw := min(workers, a.h)
 		for w := 0; w < nw; w++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				var local [3]float64
 				for {
 					y := int(atomic.AddInt32(&nextY, 1) - 1)
@@ -8228,23 +8106,23 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 						break
 					}
 					rs := evalRow(y)
-					for c := 0; c < 3; c++ {
+					for c := range 3 {
 						local[c] += rs[c]
 					}
 				}
 				mu.Lock()
-				for c := 0; c < 3; c++ {
+				for c := range 3 {
 					chanSum[c] += local[c]
 				}
 				mu.Unlock()
-			}()
+			})
 		}
 		wg.Wait()
 	}
 
 	var chanMeans [3]float64
 	nPix := float64(a.w * a.h)
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		chanMeans[c] = chanSum[c] / nPix
 		if chanMeans[c] <= 0 {
 			return nil, fmt.Errorf("self-flat grid: non-positive channel %d mean %.5f", c, chanMeans[c])
@@ -8254,7 +8132,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	minL, maxL := math.Inf(1), math.Inf(-1)
 	for p := 0; p < a.w*a.h; p++ {
 		var lum float64
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			v := float64(pix[p*3+c]) / chanMeans[c]
 			if v < 0.1 {
 				v = 0.1
@@ -8275,7 +8153,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 
 	validCells := 0
 	rejectedCells := 0
-	for i := 0; i < nCells; i++ {
+	for i := range nCells {
 		if rejectedGrid[i] {
 			rejectedCells++
 		}
@@ -8284,10 +8162,7 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 	var fitCount, olsCount, radialCount int
 	for cy := 0; cy < a.rows; cy++ {
 		y0 := cy * a.cellSize
-		y1 := y0 + a.cellSize
-		if y1 > a.h {
-			y1 = a.h
-		}
+		y1 := min(y0+a.cellSize, a.h)
 		cyCenter := 0.5 * float64(y0+y1-1)
 		v := 0.0
 		if a.h > 1 {
@@ -8301,17 +8176,14 @@ func (a *selfFlatGridAccumulator) finalize(workers int) (*selfFlatResult, error)
 			}
 			validCells++
 			x0 := cx * a.cellSize
-			x1 := x0 + a.cellSize
-			if x1 > a.w {
-				x1 = a.w
-			}
+			x1 := min(x0+a.cellSize, a.w)
 			cxCenter := 0.5 * float64(x0+x1-1)
 			u := 0.0
 			if a.w > 1 {
 				u = 2.0*cxCenter/float64(a.w-1) - 1.0
 			}
 			chebyshevBasis1D(u, deg, tu[:])
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				var pred float64
 				idx := 0
 				for p := 0; p <= deg; p++ {
@@ -9620,10 +9492,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			needsNormalize = false
 		}
 		if needsNormalize {
-			ts := opts.LNTileSize
-			if ts < 64 {
-				ts = 64
-			}
+			ts := max(opts.LNTileSize, 64)
 			var refFrame *frame
 			var rerr error
 			if len(spillPaths1) == len(accepted) {
@@ -10039,10 +9908,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if tr <= 0 {
 		tr = 3.0
 	}
-	it := opts.SigmaClipIters
-	if it < 1 {
-		it = 1
-	}
+	it := max(opts.SigmaClipIters, 1)
 	if selfFlatActive {
 		if len(spillPaths2) < selfFlatMinFrames || cropRect.Dx() <= 0 || cropRect.Dy() <= 0 {
 			logf("WARNING: --self-flat disabled: only %d registered frames have spill data", len(spillPaths2))
@@ -11054,10 +10920,7 @@ func healpixAng2PixNested(nside int, ra, dec float64) int {
 		ix = jm & (nside - 1)
 		iy = nside - (jp & (nside - 1)) - 1
 	} else {
-		ntt := int(tt)
-		if ntt > 3 {
-			ntt = 3
-		}
+		ntt := min(int(tt), 3)
 		tp := tt - float64(ntt)
 		var tmp float64
 		if za < 0.99 || !haveSth {
@@ -11362,7 +11225,7 @@ func testHealpixNested() error {
 	for _, c := range cases {
 		got := healpixAng2PixNested(c.nside, c.ra, c.dec)
 		corners := healpixTileCorners(c.nside, got)
-		for k := 0; k < 4; k++ {
+		for k := range 4 {
 			if math.IsNaN(corners[k].X) || math.IsNaN(corners[k].Y) {
 				return fmt.Errorf("corner %d of nside=%d ipix=%d is NaN",
 					k, c.nside, got)
@@ -11630,7 +11493,7 @@ func wcsTanInverseSIP(w *wcsTan, x, y float64) (ra, dec float64) {
 	up := x - w.CRPIX1
 	vp := y - w.CRPIX2
 	u, v := up, vp
-	for iter := 0; iter < 12; iter++ {
+	for range 12 {
 		fu := w.SIP[0]*u*u + w.SIP[1]*u*v + w.SIP[2]*v*v
 		fv := w.SIP[3]*u*u + w.SIP[4]*u*v + w.SIP[5]*v*v
 		un := up - fu
@@ -11721,7 +11584,7 @@ func medianPairwiseDistancePoints(p []point2D) float64 {
 		return 0
 	}
 	d := make([]float64, 0, n*(n-1)/2)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		for j := i + 1; j < n; j++ {
 			d = append(d, math.Hypot(p[i].X-p[j].X, p[i].Y-p[j].Y))
 		}
@@ -11919,10 +11782,7 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 	// similarity exactly and the pre-screen only demands a couple more
 	// chance hits, so across millions of candidates a few coincidences
 	// are expected. Demand at least a quarter of the frame stars (and 6).
-	minInliers := len(frameStars) / 4
-	if minInliers < 6 {
-		minInliers = 6
-	}
+	minInliers := max(len(frameStars)/4, 6)
 	// Tight descriptor tolerance first (~11x fewer candidates than 0.05),
 	// widened only if that finds nothing convincing.
 	bestQuick := 0
@@ -11953,7 +11813,7 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 			grid := newPlaneGrid(pts, tolPlane)
 			var src, dst [3]point2D
 			for _, m := range tm {
-				for k := 0; k < 3; k++ {
+				for k := range 3 {
 					src[k] = pts[gOrder[m.Ref[k]]]
 					dst[k] = point2D{frameTop[m.Tgt[k]].X, frameTop[m.Tgt[k]].Y}
 				}
@@ -11965,10 +11825,7 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 				inv := sim.inverse()
 				// Cheap pre-screen over the brightest frame stars with early
 				// abort: a candidate that cannot reach `need` hits is dropped.
-				need := bestQuick * 7 / 10
-				if need < 5 {
-					need = 5
-				}
+				need := max(bestQuick*7/10, 5)
 				hits := 0
 				for k := 0; k < nF; k++ {
 					if grid.has(inv.apply(point2D{frameTop[k].X, frameTop[k].Y}), tolPlane) {
@@ -12003,7 +11860,7 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 
 	// Refine on all inliers; stop when the pair count stops growing.
 	pairs := best.pairs
-	for iter := 0; iter < 3; iter++ {
+	for range 3 {
 		src := make([]point2D, len(pairs))
 		dst := make([]point2D, len(pairs))
 		for i, p := range pairs {
@@ -12095,14 +11952,14 @@ func fitWCSFromMatches(frameStars []star, gaia []gaiaStar) (wcsTan, error) {
 	// gnomonic projection, so a few iterations make the fit exact for
 	// noise-free input (and unbiased for noisy input).
 	var out wcsTan
-	for iter := 0; iter < 5; iter++ {
+	for iter := range 5 {
 		// Normal equations M = XᵀX (2x2), B = XᵀΞ (2x2), where X is
 		// [x-cx, y-cy] per row and Ξ is [ξ, η] per row.
 		var M [2][2]float64
 		var B [2][2]float64
 		sd0 := math.Sin(crval2)
 		cd0 := math.Cos(crval2)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			x := frameStars[i].X - cx
 			y := frameStars[i].Y - cy
 			d1 := gaia[i].RA - crval1
@@ -12131,8 +11988,8 @@ func fitWCSFromMatches(frameStars []star, gaia []gaiaStar) (wcsTan, error) {
 		}
 		// A = (XᵀX)⁻¹ XᵀΞ solves Ξ = X·A, i.e. A[j][k] = ∂(ξ,η)[k]/∂(x,y)[j].
 		var A [2][2]float64
-		for j := 0; j < 2; j++ {
-			for k := 0; k < 2; k++ {
+		for j := range 2 {
+			for k := range 2 {
 				A[j][k] = invM[j][0]*B[0][k] + invM[j][1]*B[1][k]
 			}
 		}
@@ -12201,7 +12058,7 @@ func fitSIPFromMatches(frameStars []star, gaia []gaiaStar, wcs wcsTan, order int
 	var BB [3]float64
 	sd0 := math.Sin(wcs.CRVAL2)
 	cd0 := math.Cos(wcs.CRVAL2)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d1 := gaia[i].RA - wcs.CRVAL1
 		d2 := gaia[i].Dec - wcs.CRVAL2
 		sd := math.Sin(d2 + wcs.CRVAL2)
@@ -12216,8 +12073,8 @@ func fitSIPFromMatches(frameStars []star, gaia []gaiaStar, wcs wcsTan, order int
 		du := up - u
 		dv := vp - v
 		b := [3]float64{u * u, u * v, v * v}
-		for r := 0; r < 3; r++ {
-			for c := 0; c < 3; c++ {
+		for r := range 3 {
+			for c := range 3 {
 				M[r][c] += b[r] * b[c]
 			}
 			BA[r] += b[r] * du
@@ -12580,7 +12437,7 @@ func gaiaQueryTile(mirror string, nside, ipix int, magLimit float64) ([]gaiaStar
 	adql := gaiaBuildADQL(nside, ipix, magLimit)
 	backoff := []time.Duration{0, 2 * time.Second, 4 * time.Second}
 	var lastErr error
-	for attempt := 0; attempt < len(backoff); attempt++ {
+	for attempt := range backoff {
 		if attempt > 0 {
 			time.Sleep(backoff[attempt])
 		}
@@ -12984,10 +12841,7 @@ func testGaiaCLI(opts *cliOptions) error {
 	}
 	fmt.Printf("Tile nside=%d ipix=%d: %d stars (mag_G \u2264 %.1f)\n",
 		tile.Nside, tile.Ipix, len(tile.Stars), tile.MagLimit)
-	n := len(tile.Stars)
-	if n > 5 {
-		n = 5
-	}
+	n := min(len(tile.Stars), 5)
 	for i := 0; i < n; i++ {
 		s := tile.Stars[i]
 		fmt.Printf("  %d: RA=%9.5f\u00b0  Dec=%9.5f\u00b0  G=%5.2f  plx=%6.2f mas  pm=(%6.2f,%6.2f) mas/yr\n",
@@ -13037,7 +12891,7 @@ func testPlateCLI(opts *cliOptions) error {
 	}
 	frame := make([]star, nStars)
 	gaia := make([]gaiaStar, nStars)
-	for i := 0; i < nStars; i++ {
+	for i := range nStars {
 		x := 100.0 + rng.Float64()*312.0
 		y := 100.0 + rng.Float64()*312.0
 		gra, gdec := wcsTanInverse(&wcs, x, y)
@@ -13139,7 +12993,7 @@ func testWCSTANForwardInverse() error {
 	}
 	arcsecPerRad := 180.0 / math.Pi * 3600.0
 	rng := rand.New(rand.NewSource(42))
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		dRA := (rng.Float64() - 0.5) * 0.02
 		dDec := (rng.Float64() - 0.5) * 0.02
 		ra := w.CRVAL1 + dRA
@@ -13175,7 +13029,7 @@ func testWCSFitSimple() error {
 	nStars := 50
 	frameStars := make([]star, nStars)
 	gaiaStars := make([]gaiaStar, nStars)
-	for i := 0; i < nStars; i++ {
+	for i := range nStars {
 		x := rng.Float64() * 512.0
 		y := rng.Float64() * 512.0
 		frameStars[i] = star{X: x, Y: y, Flux: 100}
@@ -13191,7 +13045,7 @@ func testWCSFitSimple() error {
 	if scaleRad <= 0 {
 		return fmt.Errorf("degenerate CD matrix")
 	}
-	for i := 0; i < nStars; i++ {
+	for i := range nStars {
 		x, y := wcsTanForward(&got, gaiaStars[i].RA, gaiaStars[i].Dec)
 		errPix := math.Hypot(x-frameStars[i].X, y-frameStars[i].Y)
 		errArcsec := errPix * scaleRad * arcsecPerRad
@@ -13216,7 +13070,7 @@ func testWCSSIP() error {
 	nStars := 50
 	frameStars := make([]star, nStars)
 	gaiaStars := make([]gaiaStar, nStars)
-	for i := 0; i < nStars; i++ {
+	for i := range nStars {
 		x := rng.Float64() * 512.0
 		y := rng.Float64() * 512.0
 		dx := x - w.CRPIX1
@@ -13226,7 +13080,7 @@ func testWCSSIP() error {
 		u := (w.CD[1][1]*dx - w.CD[0][1]*dy) * invDet
 		v := (-w.CD[1][0]*dx + w.CD[0][0]*dy) * invDet
 		up, vp := u, v
-		for iter := 0; iter < 10; iter++ {
+		for range 10 {
 			f := sip[0]*up*up + sip[1]*up*vp + sip[2]*vp*vp
 			g := sip[3]*up*up + sip[4]*up*vp + sip[5]*vp*vp
 			up = u - f
@@ -13276,14 +13130,14 @@ func testMatchStarsToGaiaSynthetic() error {
 	rng := rand.New(rand.NewSource(23))
 	frameStars := make([]star, 50)
 	gaiaStars := make([]gaiaStar, 0, 53)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		x := rng.Float64() * 400.0
 		y := rng.Float64() * 400.0
 		frameStars[i] = star{X: x, Y: y, Flux: 100 + float64(i)}
 		ra, dec := wcsTanInverse(w, x, y)
 		gaiaStars = append(gaiaStars, gaiaStar{RA: ra, Dec: dec, MagG: 12})
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		gaiaStars = append(gaiaStars, gaiaStar{
 			RA:   rng.Float64() * 2 * math.Pi,
 			Dec:  (rng.Float64() - 0.5) * math.Pi,
@@ -13309,7 +13163,7 @@ func synthSkyField(w *wcsTan, seed int64, nField, nExtra int, sigmaPix float64) 
 	rng := rand.New(rand.NewSource(seed))
 	var frame []star
 	var gaia []gaiaStar
-	for i := 0; i < nField; i++ {
+	for range nField {
 		x := 8 + rng.Float64()*496
 		y := 8 + rng.Float64()*496
 		ra, dec := wcsTanInverse(w, x, y)
@@ -13320,7 +13174,7 @@ func synthSkyField(w *wcsTan, seed int64, nField, nExtra int, sigmaPix float64) 
 			Flux: math.Pow(10, -0.4*mag) * 1e6, Size: 5,
 		})
 	}
-	for i := 0; i < nExtra; i++ {
+	for range nExtra {
 		// Uniform over a region ~3x the frame size, rejecting in-frame.
 		var x, y float64
 		for {
@@ -13477,7 +13331,7 @@ func testHealpixCornersMatchHealpy() error {
 	}
 	for _, tc := range cases {
 		got := healpixTileCornersExact(tc.nside, tc.ipix)
-		for k := 0; k < 4; k++ {
+		for k := range 4 {
 			if math.Abs(got[k].X-tc.c[k][0]) > 1e-9 || math.Abs(got[k].Y-tc.c[k][1]) > 1e-9 {
 				return fmt.Errorf("nside=%d ipix=%d corner %d: got (%.9f, %.9f) want (%.9f, %.9f)",
 					tc.nside, tc.ipix, k, got[k].X, got[k].Y, tc.c[k][0], tc.c[k][1])
@@ -13494,7 +13348,7 @@ func testHealpixCornersMatchHealpy() error {
 func testHealpixPolygonCoversPixel() error {
 	rng := rand.New(rand.NewSource(5))
 	for _, nside := range []int{16, 64, 256} {
-		for n := 0; n < 3000; n++ {
+		for range 3000 {
 			ra := rng.Float64() * 2 * math.Pi
 			dec := math.Asin(rng.Float64()*2 - 1)
 			ipix := healpixAng2PixNested(nside, ra, dec)
@@ -13652,11 +13506,11 @@ func testCalibrationQA() error {
 func testDetrendStarDetection() error {
 	const w, h = 128, 128
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for p := 0; p < w*h; p++ {
+	for p := range w * h {
 		v := float32(0.1 + 0.4*float64(p%w)/float64(w))
 		f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2] = v, v, v
 	}
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		x, y := 10+(i%5)*24, 10+(i/5)*24
 		for dy := -1; dy <= 1; dy++ {
 			for dx := -1; dx <= 1; dx++ {
@@ -14080,8 +13934,8 @@ func testStackCalibrationFolder() error {
 
 	// Single-file path: decoded via decodeImageFile. Use a tiny PNG.
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 2; x++ {
+	for y := range 2 {
+		for x := range 2 {
 			img.SetRGBA(x, y, color.RGBA{200, 100, 50, 255})
 		}
 	}
@@ -14162,8 +14016,8 @@ func testStackCalibrationFolder() error {
 func solidPNG(w, h int, v float64) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	byteV := uint8(clampFloat(v, 0, 1) * 255)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			img.SetRGBA(x, y, color.RGBA{byteV, byteV, byteV, 255})
 		}
 	}
@@ -14188,8 +14042,8 @@ func testFrameFromYCbCr() error {
 	if f.Width != w || f.Height != h {
 		return fmt.Errorf("dims %dx%d, want %dx%d", f.Width, f.Height, w, h)
 	}
-	for i := 0; i < w*h; i++ {
-		for c := 0; c < 3; c++ {
+	for i := range w * h {
+		for c := range 3 {
 			if f.Pix[i*3+c] < 0.45 || f.Pix[i*3+c] > 0.55 {
 				return fmt.Errorf("pixel %d ch %d = %v, want ~0.5", i, c, f.Pix[i*3+c])
 			}
@@ -14363,7 +14217,7 @@ func testFitSIPFailureModes() error {
 	w.CD = [2][2]float64{{0, 0}, {0, 0}}
 	frame := make([]star, 10)
 	gaia := make([]gaiaStar, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		frame[i] = star{X: float64(i), Y: float64(i)}
 		gaia[i] = gaiaStar{RA: 1.0 + float64(i)*1e-4, Dec: float64(i) * 1e-4}
 	}
@@ -14439,10 +14293,8 @@ func testFrameLimiterFootprintZero() error {
 	const refW, refH = 2400, 1600
 	d := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 0}
 	flags := frameLimiterFlags(d, refW, refH, refW, refH)
-	for _, f := range flags {
-		if f == "LOW FOOTPRINT" {
-			return fmt.Errorf("FootprintPct=0 should be sentinel, got flags %v", flags)
-		}
+	if slices.Contains(flags, "LOW FOOTPRINT") {
+		return fmt.Errorf("FootprintPct=0 should be sentinel, got flags %v", flags)
 	}
 	d.FootprintPct = 49.9
 	flags = frameLimiterFlags(d, refW, refH, refW, refH)
@@ -14720,7 +14572,7 @@ func testCropExplanationMentionsValidity() error {
 func testPNGBMPSnapshot() error {
 	const w, h = 4, 4
 	pix := make([]float32, w*h*3)
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		pix[i*3+0] = float32(i) / float32(w*h)
 		pix[i*3+1] = 1.0 - float32(i)/float32(w*h)
 		pix[i*3+2] = float32(i%2) * 0.5
@@ -14739,7 +14591,7 @@ func testPNGBMPSnapshot() error {
 	}
 	// Byte equality: decode and compare each channel via floatToByte
 	// (gamma 0.5 LUT is the same mapping writePNGPreview used).
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		x, y := i%w, i/w
 		r, g, b, _ := img.At(x, y).RGBA()
 		wantR := previewLUT[stretchIndex(pix[i*3+0])]
@@ -14782,7 +14634,7 @@ func testPNGBMPSnapshot() error {
 	// Bottom-up: row 0 in the file is the BOTTOM row of the image, so
 	// pixel (0, h-1) of the source appears first, in BGR order.
 	firstRowY := h - 1
-	for x := 0; x < w; x++ {
+	for x := range w {
 		srcI := (firstRowY*w + x) * 3
 		wantB := floatToByte(pix[srcI+2])
 		wantG := floatToByte(pix[srcI+1])
@@ -15127,20 +14979,20 @@ func testSelfFlatRecovery() error {
 	}
 	defer os.RemoveAll(dir)
 	trueFlat := make([]float32, w*h)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			dx := (float64(x) - 31.5) / 32
 			dy := (float64(y) - 31.5) / 32
 			trueFlat[y*w+x] = float32(1.0 - 0.10*(dx*dx+dy*dy))
 		}
 	}
 	var paths []string
-	for i := 0; i < frames; i++ {
+	for i := range frames {
 		pix := make([]float32, w*h*3)
 		sx := 5 + (i*7)%(w-10)
 		sy := 5 + (i*11)%(h-10)
-		for p := 0; p < w*h; p++ {
-			for c := 0; c < 3; c++ {
+		for p := range w * h {
+			for c := range 3 {
 				pix[p*3+c] = trueFlat[p]
 			}
 		}
@@ -15162,7 +15014,7 @@ func testSelfFlatRecovery() error {
 		return fmt.Errorf("self-flat used %d frames, want %d", sr.Frames, frames)
 	}
 	truthVals := append([]float32(nil), trueFlat...)
-	sort.Slice(truthVals, func(i, j int) bool { return truthVals[i] < truthVals[j] })
+	slices.Sort(truthVals)
 	truthMed := truthVals[len(truthVals)/2]
 	var sumSq float64
 	for p, want := range trueFlat {
@@ -15193,12 +15045,12 @@ func testSelfFlatGridRecovery() error {
 	const w, h = 128, 96
 	const frames = 20
 	acc := newSelfFlatGridAccumulator(w, h, selfFlatGridDefaultCell)
-	for i := 0; i < frames; i++ {
+	for i := range frames {
 		pix := make([]float32, w*h*3)
 		sx := 8 + (i*17)%(w-16)
 		sy := 8 + (i*13)%(h-16)
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				v := syntheticVignette(w, h, x, y)
 				p := (y*w + x) * 3
 				pix[p], pix[p+1], pix[p+2] = v, v, v
@@ -15220,15 +15072,15 @@ func testSelfFlatGridRecovery() error {
 		return fmt.Errorf("grid result model=%s frames=%d size=%dx%d", sr.Model, sr.Frames, sr.Frame.Width, sr.Frame.Height)
 	}
 	var sum float64
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			sum += float64(syntheticVignette(w, h, x, y))
 		}
 	}
 	truthMean := sum / float64(w*h)
 	var sumSq float64
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			got := float64(sr.Frame.Pix[(y*w+x)*3])
 			exp := float64(syntheticVignette(w, h, x, y)) / truthMean
 			d := got - exp
@@ -15258,14 +15110,14 @@ func testSelfFlatGridNebula() error {
 	const dustAmp = -0.05
 
 	acc := newSelfFlatGridAccumulator(w, h, selfFlatGridDefaultCell)
-	for i := 0; i < frames; i++ {
+	for i := range frames {
 		pix := make([]float32, w*h*3)
 		sx := 20 + (i*37)%(w-40)
 		sy := 20 + (i*53)%(h-40)
 		sx2 := 20 + (i*61+11)%(w-40)
 		sy2 := 20 + (i*29+7)%(h-40)
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				base := sky
 				dx := float64(x) - nebX
 				dy := float64(y) - nebY
@@ -15299,8 +15151,8 @@ func testSelfFlatGridNebula() error {
 	}
 
 	var gotSum, wantSum float64
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			gotSum += float64(sr.Frame.Pix[(y*w+x)*3])
 			wantSum += float64(syntheticVignette(w, h, x, y))
 		}
@@ -15308,8 +15160,8 @@ func testSelfFlatGridNebula() error {
 	scale := gotSum / wantSum
 	var sumSq float64
 	var n int
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			got := float64(sr.Frame.Pix[(y*w+x)*3]) / scale
 			want := float64(syntheticVignette(w, h, x, y))
 			d := got - want
@@ -15357,8 +15209,8 @@ func testSelfFlatIRLSRobust() error {
 	// edge extrapolation; every seventh remaining cell is contaminated
 	// with a positive spike, as if a star or nebula survived the mask.
 	var pts []selfFlatPoint
-	for cy := 0; cy < rows; cy++ {
-		for cx := 0; cx < cols-4; cx++ {
+	for cy := range rows {
+		for cx := range cols - 4 {
 			u, v := cellUV(cx, cy)
 			val := truth(u, v)
 			if (cx*7+cy*3)%9 == 0 {
@@ -15383,8 +15235,8 @@ func testSelfFlatIRLSRobust() error {
 	var olsSumSq, robSumSq float64
 	var edgeMax float64
 	var n int
-	for cy := 0; cy < rows; cy++ {
-		for cx := 0; cx < cols; cx++ {
+	for cy := range rows {
+		for cx := range cols {
 			u, v := cellUV(cx, cy)
 			want := truth(u, v)
 			olsErr := evalSelfFlatPoly(ols, u, v, deg) - want
@@ -15425,8 +15277,8 @@ func testSelfFlatRadialModel() error {
 		return u, v
 	}
 	var pts []selfFlatPoint
-	for cy := 0; cy < rows; cy++ {
-		for cx := 0; cx < cols; cx++ {
+	for cy := range rows {
+		for cx := range cols {
 			u, v := cellUV(cx, cy)
 			pts = append(pts, selfFlatPoint{u: u, v: v, val: truth(u, v), w: 100})
 		}
@@ -15443,8 +15295,8 @@ func testSelfFlatRadialModel() error {
 
 	var radSumSq, polySumSq float64
 	var n int
-	for cy := 0; cy < rows; cy++ {
-		for cx := 0; cx < cols; cx++ {
+	for cy := range rows {
+		for cx := range cols {
 			u, v := cellUV(cx, cy)
 			want := truth(u, v)
 			dr := evalSelfFlatRadial(rad, u, v) - want
@@ -15480,9 +15332,9 @@ func testSelfFlatGridApplication() error {
 	const w, h = 32, 8
 	pix := make([]float32, w*h*3)
 	flatPix := make([]float32, w*h*3)
-	for x := 0; x < w; x++ {
+	for x := range w {
 		f := float32(0.6 + 0.4*float64(x)/float64(w-1))
-		for y := 0; y < h; y++ {
+		for y := range h {
 			p := (y*w + x) * 3
 			pix[p], pix[p+1], pix[p+2] = f*0.5, f*0.5, f*0.5
 			flatPix[p], flatPix[p+1], flatPix[p+2] = f, f, f
@@ -15499,7 +15351,7 @@ func testSelfFlatGridApplication() error {
 	for i := range shifted {
 		shifted[i] = -1
 	}
-	for y := 0; y < h; y++ {
+	for y := range h {
 		for x := 4; x < w; x++ {
 			shifted[(y*w+x)*3] = pix[(y*w+(x-4))*3]
 			shifted[(y*w+x)*3+1] = pix[(y*w+(x-4))*3+1]
@@ -15747,8 +15599,8 @@ func testCometEphemerisParse() error {
 func testReferenceCropAlignment() error {
 	const refW, refH = 240, 220
 	var refStars []star
-	for gy := 0; gy < 6; gy++ {
-		for gx := 0; gx < 6; gx++ {
+	for gy := range 6 {
+		for gx := range 6 {
 			refStars = append(refStars, star{
 				X:    35 + float64(gx)*32,
 				Y:    30 + float64(gy)*31,
@@ -15900,12 +15752,12 @@ func testExportCalibrationMasters() error {
 		return &frame{Width: w, Height: h, Pix: pix}
 	}
 	flat := mk(1)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			dx := (float64(x) - 31.5) / 32
 			dy := (float64(y) - 31.5) / 32
 			v := float32(1.0 - 0.10*(dx*dx+dy*dy))
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				flat.Pix[(y*w+x)*3+c] = v
 			}
 		}
@@ -15915,13 +15767,13 @@ func testExportCalibrationMasters() error {
 			dx := (float64(x) - 31.5) / 32
 			dy := (float64(y) - 31.5) / 32
 			v := 0.85 * float32(1.0-0.10*(dx*dx+dy*dy))
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				flat.Pix[(y*w+x)*3+c] = v
 			}
 		}
 	}
 	dark := mk(0.02)
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		dark.Pix[(5*w+5)*3+c] = 1.0
 	}
 	bias := mk(0.01)
@@ -16246,7 +16098,7 @@ func testAccumulatorSumMean() error {
 func testAccumulatorOverflow() error {
 	a := newAccumulator(1, 1)
 	f := &frame{Width: 1, Height: 1, Pix: []float32{1, 1, 1}}
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		if err := a.addFrame(f, 1); err != nil {
 			return err
 		}
@@ -16538,8 +16390,8 @@ func testDecodeRGBA() error {
 
 func testDecodeJPEG() error {
 	src := image.NewRGBA(image.Rect(0, 0, 4, 3))
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 3 {
+		for x := range 4 {
 			src.SetRGBA(x, y, color.RGBA{200, 100, 50, 255})
 		}
 	}
@@ -16556,8 +16408,8 @@ func testDecodeJPEG() error {
 		return err
 	}
 	want := [3]float32{200.0 / 255.0, 100.0 / 255.0, 50.0 / 255.0}
-	for i := 0; i < 4*3; i++ {
-		for c := 0; c < 3; c++ {
+	for i := range 4 * 3 {
+		for c := range 3 {
 			if math.Abs(float64(f.Pix[i*3+c]-want[c])) > 0.02 {
 				return fmt.Errorf("pixel %d ch %d = %v, want ~%v", i, c, f.Pix[i*3+c], want[c])
 			}
@@ -16667,8 +16519,8 @@ func testStarHFR() error {
 	const w, h = 64, 64
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	sigma := 3.0
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			dx, dy := float64(x)-32, float64(y)-32
 			v := float32(0.1 + 0.9*math.Exp(-(dx*dx+dy*dy)/(2*sigma*sigma)))
 			i := (y*w + x) * 3
@@ -16810,7 +16662,7 @@ func testSafeCrop() error {
 		valid[i] = 3 // all valid
 	}
 	// Carve out an invalid region: row 0
-	for x := 0; x < w; x++ {
+	for x := range w {
 		valid[x] = 2
 	}
 	crop := findSafeCrop(valid, w, h, 3)
@@ -16907,7 +16759,7 @@ func testRegistrationWithOutliers() error {
 		tgtStars = append(tgtStars, star{X: p.X, Y: p.Y, Flux: s.Flux})
 	}
 	// 10 spurious detections scattered across the field
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tgtStars = append(tgtStars, star{
 			X: float64(500 + i*15), Y: float64(500 + i*11), Flux: 50,
 		})
@@ -16986,8 +16838,8 @@ func testStarDetectionOnBrightBackground() error {
 	const w, h = 200, 200
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	// Radial nebula: 0.5 in the centre, 0.05 at the edges.
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			dx := float64(x-100) / 100.0
 			dy := float64(y-100) / 100.0
 			d := math.Sqrt(dx*dx + dy*dy)
@@ -17125,10 +16977,10 @@ func testPipelineGridSelfFlatStackOnly() error {
 	}
 	defer os.RemoveAll(dir)
 	const w, h = 32, 32
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -17168,10 +17020,10 @@ func testPipelineGridSelfFlatMedianStackOnly() error {
 	}
 	defer os.RemoveAll(dir)
 	const w, h = 32, 32
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -17211,10 +17063,10 @@ func testPipelineGridSelfFlatSigmaStackOnly() error {
 	}
 	defer os.RemoveAll(dir)
 	const w, h = 32, 32
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -17288,10 +17140,10 @@ func testPipelineStackOnly() error {
 	defer os.RemoveAll(dir)
 
 	const w, h = 32, 32
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -17500,7 +17352,7 @@ func testPipelinePostOnly() error {
 
 	const w, h = 64, 64
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		x, y := i%w, i/w
 		bg := float32(0.1 + 0.3*float64(x)/float64(w) + 0.1*float64(y)/float64(h))
 		f.Pix[i*3] = bg
@@ -17563,7 +17415,7 @@ func testPipelinePostOnly() error {
 func testRemoveStarsBasic() error {
 	const w, h = 100, 100
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		f.Pix[i*3] = 0.1
 		f.Pix[i*3+1] = 0.1
 		f.Pix[i*3+2] = 0.1
@@ -17651,7 +17503,7 @@ func testRemoveStarsRadius() error {
 func testRemoveStarsPreservesBackground() error {
 	const w, h = 100, 100
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		v := float32(0.1 + 0.05*float64(i%10)/10.0)
 		f.Pix[i*3] = v
 		f.Pix[i*3+1] = v * 0.9
@@ -17679,7 +17531,7 @@ func testRemoveStarsPreservesBackground() error {
 func testDetectStarsSigma() error {
 	const w, h = 200, 200
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		noise := float32(0.05 * float64(i%97) / 97.0)
 		v := float32(0.1) + noise
 		f.Pix[i*3] = v
@@ -17712,10 +17564,10 @@ func testPreviewJPGRemoved() error {
 	}
 	defer os.RemoveAll(dir)
 	const w, h = 32, 32
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -17746,10 +17598,10 @@ func testOutputFilesList() error {
 	}
 	defer os.RemoveAll(dir)
 	const w, h = 32, 32
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -17809,10 +17661,10 @@ func testTiffFlagOnlySum() error {
 	}
 	defer os.RemoveAll(dir)
 	const w, h = 32, 32
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -17939,9 +17791,9 @@ func testFindCR2Tool() error {
 func testSubtractBlackLevel() error {
 	const w, h = 64, 64
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		v := float32(0.05 + 0.0005*float64(i)/float64(w*h-1))
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			f.Pix[i*3+c] = v
 		}
 	}
@@ -17950,7 +17802,7 @@ func testSubtractBlackLevel() error {
 		for i := range vals {
 			vals[i] = 0.299*src.Pix[i*3] + 0.587*src.Pix[i*3+1] + 0.114*src.Pix[i*3+2]
 		}
-		sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+		slices.Sort(vals)
 		return float64(vals[len(vals)/100])
 	}
 	if got := percentile(f); got <= 1.0/65535.0 {
@@ -17994,9 +17846,9 @@ func testFrameBgNoiseReported() error {
 		const w, h = 256, 256
 		rng := rand.New(rand.NewSource(seed))
 		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-		for i := 0; i < w*h; i++ {
+		for i := range w * h {
 			v := float32(0.5 + sigma*rng.NormFloat64())
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				f.Pix[i*3+c] = v
 			}
 		}
@@ -18056,7 +17908,7 @@ func testBPMAuto() error {
 	for i := range bad.Pix {
 		bad.Pix[i] = 0.05
 	}
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		p := (i * 7 % (w * h)) * 3
 		bad.Pix[p], bad.Pix[p+1], bad.Pix[p+2] = 0.9, 0.9, 0.9
 	}
@@ -18143,8 +17995,8 @@ func testBPMMasksPixels() error {
 	const tx, ty = 5, 5
 	makeFrame := func(bright float32) *frame {
 		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-		for i := 0; i < w*h; i++ {
-			for c := 0; c < 3; c++ {
+		for i := range w * h {
+			for c := range 3 {
 				f.Pix[i*3+c] = 0.10
 			}
 		}
@@ -18258,14 +18110,14 @@ func testBPMMasksPixels() error {
 func testBlackPointShift() error {
 	const w, h = 10, 10
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		v := float32(0.05 + 0.10*float64(i)/float64(w*h))
 		f.Pix[i*3] = v
 		f.Pix[i*3+1] = v
 		f.Pix[i*3+2] = v
 	}
 	result := blackPointShift(f, 10.0)
-	for i := 0; i < w*h/10; i++ {
+	for i := range w * h / 10 {
 		if result.Pix[i*3] > 0.01 {
 			return fmt.Errorf("darkest pixel %d not zeroed: %v", i, result.Pix[i*3])
 		}
@@ -18304,7 +18156,7 @@ func testMTF() error {
 func testAutoStretch() error {
 	const w, h = 100, 100
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		v := float32(0.05) + float32(0.001)*float32(i%10)
 		f.Pix[i*3] = v
 		f.Pix[i*3+1] = v
@@ -18339,8 +18191,8 @@ func testStrictUniformDimensions() error {
 	defer os.RemoveAll(dir)
 	writeJPEG := func(name string, w, h int) error {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -18389,8 +18241,8 @@ func testSameDimensionsSucceeds() error {
 	defer os.RemoveAll(dir)
 	writeJPEG := func(name string, w, h int) error {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				img.SetRGBA(x, y, color.RGBA{100, 100, 100, 255})
 			}
 		}
@@ -18425,7 +18277,7 @@ func testHDRBlend() error {
 	const w, h = 8, 8
 	base := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	detail := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		base.Pix[i*3] = 0.2
 		base.Pix[i*3+1] = 0.3
 		base.Pix[i*3+2] = 0.4
@@ -18434,7 +18286,7 @@ func testHDRBlend() error {
 		detail.Pix[i*3+2] = 0.1
 	}
 	out := blendHDR(base, detail, 1.0)
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		if math.Abs(float64(out.Pix[i*3]-0.3)) > 1e-6 {
 			return fmt.Errorf("R pixel %d = %v, want 0.3", i, out.Pix[i*3])
 		}
@@ -18446,13 +18298,13 @@ func testHDRBlend() error {
 		}
 	}
 	out = blendHDR(base, detail, 0.5)
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		if math.Abs(float64(out.Pix[i*3]-0.25)) > 1e-6 {
 			return fmt.Errorf("factor 0.5 R pixel %d = %v, want 0.25", i, out.Pix[i*3])
 		}
 	}
 	out = blendHDR(base, detail, 0)
-	for i := 0; i < w*h*3; i++ {
+	for i := range w * h * 3 {
 		if out.Pix[i] != base.Pix[i] {
 			return fmt.Errorf("factor 0 altered pixel %d", i)
 		}
@@ -18501,7 +18353,7 @@ func testGuidedFilterGray() error {
 func testDenoiseFrame() error {
 	const w, h = 16, 16
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		v := float32(0.5)
 		if i%2 == 0 {
 			v = 0.6
@@ -18514,7 +18366,7 @@ func testDenoiseFrame() error {
 	}
 	out := denoiseFrame(f, 3, 0.01, 1.0)
 	beforeDev, afterDev := 0.0, 0.0
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		beforeDev += math.Abs(float64(f.Pix[i*3]) - 0.5)
 		afterDev += math.Abs(float64(out.Pix[i*3]) - 0.5)
 	}
@@ -18534,7 +18386,7 @@ func testDenoiseFrameIterations() error {
 	const w, h = 32, 32
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	// Checkerboard of +/-0.1 around a 0.5 baseline.
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		v := float32(0.5)
 		if i%2 == 0 {
 			v = 0.6
@@ -18547,7 +18399,7 @@ func testDenoiseFrameIterations() error {
 	}
 	deviation := func(x *frame) float64 {
 		total := 0.0
-		for i := 0; i < w*h; i++ {
+		for i := range w * h {
 			total += math.Abs(float64(x.Pix[i*3]) - 0.5)
 		}
 		return total
@@ -18659,10 +18511,10 @@ func testMatchStarsRejectsFewInliers() error {
 		refStars[i] = star{X: float64(100 + i*50), Y: float64(100 + i*30), Flux: 1000}
 	}
 	var tgtStars []star
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		tgtStars = append(tgtStars, star{X: refStars[i].X + 1, Y: refStars[i].Y + 1, Flux: 1000})
 	}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tgtStars = append(tgtStars, star{X: float64(2000 + i*100), Y: float64(2000 + i*100), Flux: 100})
 	}
 	_, inliers, ok := matchStarsToReference(refStars, tgtStars)
@@ -18776,8 +18628,8 @@ func testReadTileFromRaw() error {
 	defer os.RemoveAll(dir)
 	const w, h = 16, 16
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			i := (y*w + x) * 3
 			f.Pix[i] = float32(y*w+x) / float32(w*h)
 			f.Pix[i+1] = f.Pix[i] * 2
@@ -18793,8 +18645,8 @@ func testReadTileFromRaw() error {
 	if err := readTileFromRaw(path, w, h, 4, 4, 8, 8, dst); err != nil {
 		return err
 	}
-	for py := 0; py < tileH; py++ {
-		for px := 0; px < tileW; px++ {
+	for py := range tileH {
+		for px := range tileW {
 			origI := ((4+py)*w + (4 + px)) * 3
 			dstI := (py*tileW + px) * 3
 			if math.Abs(float64(dst[dstI]-f.Pix[origI])) > 1e-9 {
@@ -18861,7 +18713,7 @@ func testReduceTilesStack() error {
 	defer os.RemoveAll(dir)
 	const w, h = 32, 32
 	var spillPaths []string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 		for j := range f.Pix {
 			f.Pix[j] = 0.5
@@ -19011,8 +18863,8 @@ func testChromaDenoiseGB() error {
 	// follows a sinusoidal spatial pattern at ~20 px scale. This is
 	// the synthetic analogue of "color blotch" noise in the sky
 	// background of a stretched astro frame.
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			i := (y*w + x) * 3
 			cb := 0.10 * math.Sin(float64(x+y)/20*2*math.Pi)
 			cr := 0.10 * math.Sin(float64(x-y)/20*2*math.Pi)
@@ -19037,7 +18889,7 @@ func testChromaDenoiseGB() error {
 		return math.Sqrt(sq/n - mean*mean)
 	}
 	var origCb, afterCb, origY, afterY []float64
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		r0 := float64(f.Pix[i*3])
 		g0 := float64(f.Pix[i*3+1])
 		b0 := float64(f.Pix[i*3+2])
@@ -19078,8 +18930,8 @@ func testChromaDenoiseMultiScale() error {
 	// Uniform luminance Y=0.5, with sinusoidal chroma at 20 px and
 	// 60 px scales. This is the synthetic analogue of the low-freq
 	// red/green blotchiness that survives the small-radius passes.
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			i := (y*w + x) * 3
 			cb := 0.06*math.Sin(float64(x+y)/20*2*math.Pi) + 0.06*math.Sin(float64(x-y)/60*2*math.Pi)
 			cr := 0.06*math.Sin(float64(x-y)/20*2*math.Pi) + 0.06*math.Sin(float64(x+y)/60*2*math.Pi)
@@ -19104,7 +18956,7 @@ func testChromaDenoiseMultiScale() error {
 	}
 	beforeCb := make([]float64, 0, w*h)
 	beforeY := make([]float64, 0, w*h)
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		r := float64(f.Pix[i*3])
 		g := float64(f.Pix[i*3+1])
 		b := float64(f.Pix[i*3+2])
@@ -19115,7 +18967,7 @@ func testChromaDenoiseMultiScale() error {
 	out := chromaDenoiseMultiScale(f, 1.0)
 	afterCb := make([]float64, 0, w*h)
 	afterY := make([]float64, 0, w*h)
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		r := float64(out.Pix[i*3])
 		g := float64(out.Pix[i*3+1])
 		b := float64(out.Pix[i*3+2])
@@ -19147,7 +18999,7 @@ func testChromaDenoiseMultiScale() error {
 	// less chroma residual than strength=1.
 	out2 := chromaDenoiseMultiScale(f, 2.0)
 	afterCb2 := make([]float64, 0, w*h)
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		r := float64(out2.Pix[i*3])
 		g := float64(out2.Pix[i*3+1])
 		b := float64(out2.Pix[i*3+2])
@@ -19170,7 +19022,7 @@ func testApplyCurves() error {
 	// differed by ~0.017 and the test failed once it was actually run.
 	const w, h = 33, 1
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w; i++ {
+	for i := range w {
 		v := float32(i) / float32(w-1)
 		f.Pix[i*3] = v
 		f.Pix[i*3+1] = v
@@ -19211,7 +19063,7 @@ func testApplyCurves() error {
 	f.Pix[4] = 1.5
 	f.Pix[5] = 1.5
 	out = applyCurves(f, 0.03, 1.20)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		if out.Pix[i] < 0 || out.Pix[i] > 1 {
 			return fmt.Errorf("output %d out of range: %v", i, out.Pix[i])
 		}
@@ -19226,10 +19078,10 @@ func testSpikesMinCount() error {
 		f.Pix[i] = 0.05
 	}
 	// Three bright stars — below the minCount floor.
-	for k := 0; k < 3; k++ {
+	for k := range 3 {
 		cx := 30 + k*60
 		cy := 100
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			f.Pix[(cy*w+cx)*3+c] = 0.9
 		}
 	}
@@ -19250,10 +19102,10 @@ func testSpikesMinCount() error {
 	for i := range dense.Pix {
 		dense.Pix[i] = 0.05
 	}
-	for k := 0; k < 100; k++ {
+	for k := range 100 {
 		cx := 20 + (k%10)*18
 		cy := 20 + (k/10)*18
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			dense.Pix[(cy*w+cx)*3+c] = 0.9
 		}
 	}
@@ -19277,11 +19129,11 @@ func testAddDiffractionSpikes() error {
 	}
 	// 20 stars in a grid (2 rows x 10 cols), each a single bright pixel.
 	// Slight brightness variation keeps the flux-sort well-defined.
-	for k := 0; k < 20; k++ {
+	for k := range 20 {
 		cx := 20 + (k%10)*16
 		cy := 20 + (k/10)*100
 		v := float32(0.9) - float32(k)*0.03
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			f.Pix[(cy*w+cx)*3+c] = v
 		}
 	}
@@ -19331,7 +19183,7 @@ func testAddDiffractionSpikes() error {
 		f2.Pix[i] = 0.05
 	}
 	// Bright star at (50, 50), dim star at (150, 50). Both single pixels.
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		f2.Pix[(50*w+50)*3+c] = 0.9
 		f2.Pix[(50*w+150)*3+c] = 0.3
 	}
@@ -19601,8 +19453,8 @@ func testWaveSharpen() error {
 	}
 	const w, h = 64, 64
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			dx, dy := float64(x)-32, float64(y)-32
 			v := float32(0.05 + 0.9*math.Exp(-(dx*dx+dy*dy)/(2*3.0*3.0)))
 			i := (y*w + x) * 3
@@ -19656,7 +19508,7 @@ func testDrizzleUpsample() error {
 func testNarrowband() error {
 	mk := func(v float32) *frame {
 		f := &frame{Width: 2, Height: 2, Pix: make([]float32, 2*2*3)}
-		for p := 0; p < 4; p++ {
+		for p := range 4 {
 			f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2] = v, v, v
 		}
 		return f
@@ -19665,7 +19517,7 @@ func testNarrowband() error {
 	if err != nil {
 		return err
 	}
-	for p := 0; p < 4; p++ {
+	for p := range 4 {
 		if out.Pix[p*3] != 0.1 || out.Pix[p*3+1] != 0.5 || out.Pix[p*3+2] != 0.9 {
 			return fmt.Errorf("HOO pixel %d: %v", p, out.Pix[p*3:p*3+3])
 		}
@@ -19692,8 +19544,8 @@ func testRichardsonLucy() error {
 	const w, h = 64, 64
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	sigma := 3.0
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			dx, dy := float64(x)-32, float64(y)-32
 			v := float32(0.05 + 0.9*math.Exp(-(dx*dx+dy*dy)/(2*sigma*sigma)))
 			i := (y*w + x) * 3
@@ -19719,8 +19571,8 @@ func testRichardsonLucy() error {
 func testMultiscaleBackground() error {
 	const w, h = 128, 128
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			v := float32(0.1 + 0.3*float64(x)/float64(w))
 			i := (y*w + x) * 3
 			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = v, v, v
@@ -19736,7 +19588,7 @@ func testMultiscaleBackground() error {
 	out := multiscaleBackground(f, 64)
 	colMedian := func(x int) float64 {
 		vals := make([]float64, h)
-		for y := 0; y < h; y++ {
+		for y := range h {
 			vals[y] = float64(out.Pix[(y*w+x)*3])
 		}
 		sort.Float64s(vals)
@@ -19790,13 +19642,13 @@ func testConfigFile() error {
 func testNormalizePerChannel() error {
 	const w, h = 32, 32
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for p := 0; p < w*h; p++ {
+	for p := range w * h {
 		f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2] = 0.2, 0.4, 0.6
 	}
 	ref := [3]normStats{{Median: 0.4}, {Median: 0.4}, {Median: 0.4}}
 	out := globalNormalizePerChannel(f, ref, "additive")
 	p := (10*w + 10) * 3
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		if math.Abs(float64(out.Pix[p+c])-0.4) > 0.02 {
 			return fmt.Errorf("channel %d after per-channel additive: %g", c, out.Pix[p+c])
 		}
@@ -19854,8 +19706,8 @@ func testGlobalNormalizeOffset() error {
 	const w, h = 64, 64
 	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	target := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			base := float32(0.4 + 0.15*float64((x*7+y*13)%17)/17.0)
 			i := (y*w + x) * 3
 			ref.Pix[i] = base
@@ -19883,8 +19735,8 @@ func testGlobalNormalizeOffset() error {
 func testGlobalNormalizeIdentity() error {
 	const w, h = 32, 32
 	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			base := float32(0.3 + 0.2*float64((x*3+y*7)%13)/13.0)
 			i := (y*w + x) * 3
 			ref.Pix[i] = base
@@ -19908,8 +19760,8 @@ func testLocalNormalizeGradient() error {
 	const w, h = 128, 128
 	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	target := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			noise := float32(0.01 * float64((x*7+y*13)%17) / 17.0)
 			base := float32(0.4) + noise
 			i := (y*w + x) * 3
@@ -19927,8 +19779,8 @@ func testLocalNormalizeGradient() error {
 	ntx := (w + ts - 1) / ts
 	nty := (h + ts - 1) / ts
 	refTiles := make([]normStats, ntx*nty)
-	for ty := 0; ty < nty; ty++ {
-		for tx := 0; tx < ntx; tx++ {
+	for ty := range nty {
+		for tx := range ntx {
 			x0, y0 := tx*ts, ty*ts
 			x1, y1 := x0+ts, y0+ts
 			if x1 > w {
@@ -19958,8 +19810,8 @@ func testLocalNormalizeMaskedPixels() error {
 	const w, h = 32, 32
 	ref := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	target := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			noise := float32(0.02 * float64((x*7+y*13)%11) / 11.0)
 			v := float32(0.5) + noise
 			i := (y*w + x) * 3
@@ -19980,8 +19832,8 @@ func testLocalNormalizeMaskedPixels() error {
 	ntx := (w + ts - 1) / ts
 	nty := (h + ts - 1) / ts
 	refTiles := make([]normStats, ntx*nty)
-	for ty := 0; ty < nty; ty++ {
-		for tx := 0; tx < ntx; tx++ {
+	for ty := range nty {
+		for tx := range ntx {
 			x0, y0 := tx*ts, ty*ts
 			x1, y1 := x0+ts, y0+ts
 			if x1 > w {
@@ -20153,10 +20005,8 @@ func testFrameLimiterFlags() error {
 	// Under threshold must not fire.
 	under := frameDiag{Quality: 80, BoxPct: 95, FootprintPct: 95, OffsetX: 220, OffsetY: 100}
 	flags = frameLimiterFlags(under, refW, refH, refW, refH)
-	for _, f := range flags {
-		if f == "LARGE OFFSET" {
-			return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
-		}
+	if slices.Contains(flags, "LARGE OFFSET") {
+		return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
 	}
 	// LOW QUALITY still works.
 	lowQ := frameDiag{Quality: 20, BoxPct: 95, FootprintPct: 95, OffsetX: 0, OffsetY: 0}
@@ -20250,10 +20100,8 @@ func testFrameLimiterFlagsRotationAware() error {
 		OffsetY:     100.0,
 	}
 	flags = frameLimiterFlags(under, 2400, 1600, 2400, 1600)
-	for _, f := range flags {
-		if f == "LARGE OFFSET" {
-			return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
-		}
+	if slices.Contains(flags, "LARGE OFFSET") {
+		return fmt.Errorf("under-threshold frame incorrectly flagged: %v", flags)
 	}
 	return nil
 }
@@ -20794,12 +20642,12 @@ func evalPoly(coeffs []float64, x, y float64, degree int) float64 {
 // Returns zeros if the matrix is singular.
 func solveLinear(A [][]float64, b []float64, n int) []float64 {
 	M := make([][]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		M[i] = make([]float64, n+1)
 		copy(M[i], A[i])
 		M[i][n] = b[i]
 	}
-	for col := 0; col < n; col++ {
+	for col := range n {
 		pivot := col
 		for row := col + 1; row < n; row++ {
 			if math.Abs(M[row][col]) > math.Abs(M[pivot][col]) {
@@ -20814,7 +20662,7 @@ func solveLinear(A [][]float64, b []float64, n int) []float64 {
 		for j := col; j <= n; j++ {
 			M[col][j] /= pv
 		}
-		for row := 0; row < n; row++ {
+		for row := range n {
 			if row == col {
 				continue
 			}
@@ -20828,7 +20676,7 @@ func solveLinear(A [][]float64, b []float64, n int) []float64 {
 		}
 	}
 	x := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		x[i] = M[i][n]
 	}
 	return x
@@ -20838,10 +20686,7 @@ func percentile(sorted []float32, pct float64) float32 {
 	if len(sorted) == 0 {
 		return 0
 	}
-	idx := int(pct * float64(len(sorted)-1) / 100)
-	if idx < 0 {
-		idx = 0
-	}
+	idx := max(int(pct*float64(len(sorted)-1)/100), 0)
 	if idx >= len(sorted) {
 		idx = len(sorted) - 1
 	}
@@ -20910,7 +20755,7 @@ func drizzleUpsample(src *frame, scale int, pixfrac float64) *frame {
 					}
 					pi := yy*ow + xx
 					weights[pi] += float32(wt)
-					for c := 0; c < 3; c++ {
+					for c := range 3 {
 						out.Pix[pi*3+c] += src.Pix[si+c] * float32(wt)
 					}
 				}
@@ -20919,7 +20764,7 @@ func drizzleUpsample(src *frame, scale int, pixfrac float64) *frame {
 	}
 	for pi := range weights {
 		if weights[pi] > 1e-8 {
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				out.Pix[pi*3+c] /= weights[pi]
 			}
 		}
@@ -20945,7 +20790,7 @@ func narrowbandCombine(a, b, c *frame, mapping string) (*frame, error) {
 	default:
 		return nil, fmt.Errorf("narrowband: unknown mapping %q", mapping)
 	}
-	for p := 0; p < n; p++ {
+	for p := range n {
 		out.Pix[p*3] = srcR[p*3]
 		out.Pix[p*3+1] = srcG[p*3]
 		out.Pix[p*3+2] = srcB[p*3]
@@ -20957,10 +20802,7 @@ func blurMono(src []float32, w, h int, sigma float64) []float32 {
 	if sigma <= 0 || len(src) != w*h {
 		return append([]float32(nil), src...)
 	}
-	r := int(math.Ceil(3 * sigma))
-	if r < 1 {
-		r = 1
-	}
+	r := max(int(math.Ceil(3*sigma)), 1)
 	if r > 32 {
 		r = 32
 	}
@@ -20975,14 +20817,11 @@ func blurMono(src []float32, w, h int, sigma float64) []float32 {
 		kw[i] /= sum
 	}
 	tmp := make([]float32, len(src))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			var acc float64
 			for k := -r; k <= r; k++ {
-				xx := x + k
-				if xx < 0 {
-					xx = 0
-				}
+				xx := max(x+k, 0)
 				if xx >= w {
 					xx = w - 1
 				}
@@ -20992,14 +20831,11 @@ func blurMono(src []float32, w, h int, sigma float64) []float32 {
 		}
 	}
 	out := make([]float32, len(src))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			var acc float64
 			for k := -r; k <= r; k++ {
-				yy := y + k
-				if yy < 0 {
-					yy = 0
-				}
+				yy := max(y+k, 0)
 				if yy >= h {
 					yy = h - 1
 				}
@@ -21046,13 +20882,13 @@ func multiScaleSharpen(f *frame, gains []float64) *frame {
 		if gain == 0 || i >= len(sigmas) {
 			continue
 		}
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			base := make([]float32, n)
-			for p := 0; p < n; p++ {
+			for p := range n {
 				base[p] = out.Pix[p*3+c]
 			}
 			blur := blurMono(base, f.Width, f.Height, sigmas[i])
-			for p := 0; p < n; p++ {
+			for p := range n {
 				v := float64(out.Pix[p*3+c]) + gain*(float64(out.Pix[p*3+c])-float64(blur[p]))
 				if v < 0 {
 					v = 0
@@ -21076,22 +20912,22 @@ func richardsonLucy(f *frame, sigma float64, iters int) *frame {
 	}
 	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	n := f.Width * f.Height
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		obs := make([]float32, n)
-		for p := 0; p < n; p++ {
+		for p := range n {
 			obs[p] = f.Pix[p*3+c]
 		}
 		est := append([]float32(nil), obs...)
-		for it := 0; it < iters; it++ {
+		for range iters {
 			conv := blurMono(est, f.Width, f.Height, sigma)
 			corr := make([]float32, n)
-			for p := 0; p < n; p++ {
+			for p := range n {
 				if conv[p] > 1e-8 {
 					corr[p] = obs[p] / conv[p]
 				}
 			}
 			back := blurMono(corr, f.Width, f.Height, sigma)
-			for p := 0; p < n; p++ {
+			for p := range n {
 				v := est[p] * back[p]
 				if v < 0 {
 					v = 0
@@ -21099,7 +20935,7 @@ func richardsonLucy(f *frame, sigma float64, iters int) *frame {
 				est[p] = v
 			}
 		}
-		for p := 0; p < n; p++ {
+		for p := range n {
 			out.Pix[p*3+c] = est[p]
 		}
 	}
@@ -21121,10 +20957,7 @@ func removeBackground(f *frame, degree int, useMask bool) *frame {
 	if degree < 1 || degree > 3 {
 		degree = 2
 	}
-	blockSize := 32
-	if f.Width/8 < blockSize {
-		blockSize = f.Width / 8
-	}
+	blockSize := min(f.Width/8, 32)
 	if f.Height/8 < blockSize {
 		blockSize = f.Height / 8
 	}
@@ -21136,8 +20969,8 @@ func removeBackground(f *frame, degree int, useMask bool) *frame {
 
 	var samples []bgSample
 	const subsample = 4
-	for by := 0; by < nby; by++ {
-		for bx := 0; bx < nbx; bx++ {
+	for by := range nby {
+		for bx := range nbx {
 			x0 := bx * blockSize
 			y0 := by * blockSize
 			x1 := x0 + blockSize
@@ -21163,9 +20996,9 @@ func removeBackground(f *frame, degree int, useMask bool) *frame {
 			if len(rV) < 8 {
 				continue
 			}
-			sort.Slice(rV, func(i, j int) bool { return rV[i] < rV[j] })
-			sort.Slice(gV, func(i, j int) bool { return gV[i] < gV[j] })
-			sort.Slice(bV, func(i, j int) bool { return bV[i] < bV[j] })
+			slices.Sort(rV)
+			slices.Sort(gV)
+			slices.Sort(bV)
 			cx := float64(x0+x1)/2.0/float64(f.Width)*2.0 - 1.0
 			cy := float64(y0+y1)/2.0/float64(f.Height)*2.0 - 1.0
 			samples = append(samples, bgSample{
@@ -21185,14 +21018,14 @@ func removeBackground(f *frame, degree int, useMask bool) *frame {
 
 	// Robust polynomial fit per channel
 	coeffs := make([][]float64, 3)
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		active := make([]bool, len(samples))
 		for i := range active {
 			active[i] = true
 		}
 		n := nCoeff(degree)
 		const iters = 3
-		for iter := 0; iter < iters; iter++ {
+		for iter := range iters {
 			A := make([][]float64, n)
 			for i := range A {
 				A[i] = make([]float64, n)
@@ -21204,8 +21037,8 @@ func removeBackground(f *frame, degree int, useMask bool) *frame {
 					continue
 				}
 				basis := polyBasis(samples[i].x, samples[i].y, degree)
-				for j := 0; j < n; j++ {
-					for k := 0; k < n; k++ {
+				for j := range n {
+					for k := range n {
 						A[j][k] += basis[j] * basis[k]
 					}
 					b[j] += basis[j] * samples[i].v[c]
@@ -21268,7 +21101,7 @@ func removeBackground(f *frame, degree int, useMask bool) *frame {
 		for x := 0; x < f.Width; x++ {
 			nx := float64(x)*invW - 1.0
 			i := (y*f.Width + x) * 3
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				bg := evalPoly(coeffs[c], nx, ny, degree)
 				result.Pix[i+c] = f.Pix[i+c] - float32(bg)
 			}
@@ -21284,7 +21117,7 @@ func stretchContrast(f *frame, level int) *frame {
 	for i := 0; i < len(f.Pix); i += 3 {
 		lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
 	}
-	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+	slices.Sort(lums)
 
 	pWhite := float64(lums[int(float64(len(lums)-1)*0.999)])
 	if pWhite < 1e-5 {
@@ -21379,7 +21212,7 @@ func calibrateColor(f *frame) *frame {
 			lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
 		}
 	}
-	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+	slices.Sort(lums)
 
 	// Use the mid-tones (10th to 50th percentile) to find the true sky background color.
 	// The darkest 10% might be completely black due to background subtraction.
@@ -21398,9 +21231,9 @@ func calibrateColor(f *frame) *frame {
 	if len(rSamples) == 0 {
 		return f
 	}
-	sort.Slice(rSamples, func(i, j int) bool { return rSamples[i] < rSamples[j] })
-	sort.Slice(gSamples, func(i, j int) bool { return gSamples[i] < gSamples[j] })
-	sort.Slice(bSamples, func(i, j int) bool { return bSamples[i] < bSamples[j] })
+	slices.Sort(rSamples)
+	slices.Sort(gSamples)
+	slices.Sort(bSamples)
 
 	medR := float64(rSamples[len(rSamples)/2])
 	medG := float64(gSamples[len(gSamples)/2])
@@ -21473,14 +21306,11 @@ func gaussianBlur(f *frame, sigma float64) *frame {
 	if sigma <= 0 {
 		sigma = 1.5
 	}
-	radius := int(math.Ceil(sigma * 3))
-	if radius < 1 {
-		radius = 1
-	}
+	radius := max(int(math.Ceil(sigma*3)), 1)
 	kernelSize := radius*2 + 1
 	kernel := make([]float32, kernelSize)
 	var sum float32
-	for i := 0; i < kernelSize; i++ {
+	for i := range kernelSize {
 		off := float64(i - radius)
 		kernel[i] = float32(math.Exp(-off * off / (2 * sigma * sigma)))
 		sum += kernel[i]
@@ -21492,9 +21322,9 @@ func gaussianBlur(f *frame, sigma float64) *frame {
 	tmp := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	for y := 0; y < f.Height; y++ {
 		for x := 0; x < f.Width; x++ {
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				var acc float32
-				for k := 0; k < kernelSize; k++ {
+				for k := range kernelSize {
 					sx := x + k - radius
 					if sx < 0 {
 						sx = 0
@@ -21511,9 +21341,9 @@ func gaussianBlur(f *frame, sigma float64) *frame {
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	for y := 0; y < f.Height; y++ {
 		for x := 0; x < f.Width; x++ {
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				var acc float32
-				for k := 0; k < kernelSize; k++ {
+				for k := range kernelSize {
 					sy := y + k - radius
 					if sy < 0 {
 						sy = 0
@@ -21601,10 +21431,7 @@ func applyHDR(f *frame, amount float64) *frame {
 // nebula/galaxy signal behind it.
 func removeStars(f *frame, sigma float64, radius int) *frame {
 	if radius <= 0 {
-		radius = (f.Width + f.Height) / 400
-		if radius < 8 {
-			radius = 8
-		}
+		radius = max((f.Width+f.Height)/400, 8)
 	}
 	stars := detectStarsSigma(f, 100000, sigma)
 	logf("  star removal: %d stars detected (sigma=%.1f, maxRadius=%d)",
@@ -21624,21 +21451,12 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 		case s.Size <= 2:
 			starRadius = 2
 		case s.Size <= 5:
-			starRadius = radius / 2
-			if starRadius < 3 {
-				starRadius = 3
-			}
+			starRadius = max(radius/2, 3)
 		case s.Size <= 20:
-			starRadius = (radius * 2) / 3
-			if starRadius < 4 {
-				starRadius = 4
-			}
+			starRadius = max((radius*2)/3, 4)
 		}
 		rInner := starRadius
-		rOuter := starRadius * 2
-		if rOuter > radius*2 {
-			rOuter = radius * 2
-		}
+		rOuter := min(starRadius*2, radius*2)
 
 		var rS, gS, bS []float32
 		for dy := -rOuter; dy <= rOuter; dy++ {
@@ -21660,9 +21478,9 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 		if len(rS) == 0 {
 			continue
 		}
-		sort.Slice(rS, func(i, j int) bool { return rS[i] < rS[j] })
-		sort.Slice(gS, func(i, j int) bool { return gS[i] < gS[j] })
-		sort.Slice(bS, func(i, j int) bool { return bS[i] < bS[j] })
+		slices.Sort(rS)
+		slices.Sort(gS)
+		slices.Sort(bS)
 		rMed := rS[len(rS)/2]
 		gMed := gS[len(gS)/2]
 		bMed := bS[len(bS)/2]
@@ -21749,7 +21567,7 @@ func blackPointShift(f *frame, percentile float64) *frame {
 	if len(lums) == 0 {
 		return f
 	}
-	sort.Slice(lums, func(i, j int) bool { return lums[i] < lums[j] })
+	slices.Sort(lums)
 	idx := int(float64(len(lums)-1) * percentile / 100)
 	threshold := float64(lums[idx])
 
@@ -21812,26 +21630,23 @@ func computeSTFParams(vals []float32, shadowsClip, targetBG float64) (c0, m floa
 	}
 	step := 1
 	if len(vals) > 200000 {
-		step = len(vals) / 100000
-		if step < 1 {
-			step = 1
-		}
+		step = max(len(vals)/100000, 1)
 	}
 	sampled := make([]float32, 0, len(vals)/step+1)
 	for i := 0; i < len(vals); i += step {
 		sampled = append(sampled, vals[i])
 	}
-	sort.Slice(sampled, func(i, j int) bool { return sampled[i] < sampled[j] })
+	slices.Sort(sampled)
 	n := len(sampled)
 	if n == 0 {
 		return 0, 0.5
 	}
 	median := float64(sampled[n/2])
 	absDev := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		absDev[i] = float32(math.Abs(float64(sampled[i]) - median))
 	}
-	sort.Slice(absDev, func(i, j int) bool { return absDev[i] < absDev[j] })
+	slices.Sort(absDev)
 	mad := float64(absDev[n/2])
 	sigma := 1.4826 * mad
 	c0 = median + shadowsClip*sigma
@@ -21878,12 +21693,12 @@ func autoStretch(f *frame, shadowsClip, targetBG float64, linked bool) *frame {
 			lums = append(lums, 0.299*f.Pix[i]+0.587*f.Pix[i+1]+0.114*f.Pix[i+2])
 		}
 		c0, m := computeSTFParams(lums, shadowsClip, targetBG)
-		for c := 0; c < nCh; c++ {
+		for c := range nCh {
 			stats[c] = chanStats{c0: c0, m: m}
 		}
 		logf("  auto-stretch (linked): c0=%.4f m=%.4f", c0, m)
 	} else {
-		for c := 0; c < nCh; c++ {
+		for c := range nCh {
 			vals := make([]float32, 0, f.Width*f.Height)
 			for i := c; i < len(f.Pix); i += 3 {
 				vals = append(vals, f.Pix[i])
@@ -21897,7 +21712,7 @@ func autoStretch(f *frame, shadowsClip, targetBG float64, linked bool) *frame {
 	for y := 0; y < f.Height; y++ {
 		for x := 0; x < f.Width; x++ {
 			i := (y*f.Width + x) * 3
-			for c := 0; c < nCh; c++ {
+			for c := range nCh {
 				st := stats[c]
 				v := float64(f.Pix[i+c])
 				norm := (v - st.c0) / (1 - st.c0)
@@ -21957,13 +21772,13 @@ func guidedFilterGray(I []float32, w, h, radius int, eps float64) []float32 {
 	}
 	mean_I := boxBlurLuminance(I, w, h, radius)
 	II := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		II[i] = I[i] * I[i]
 	}
 	mean_II := boxBlurLuminance(II, w, h, radius)
 	a := make([]float32, n)
 	b := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		varI := float64(mean_II[i]) - float64(mean_I[i])*float64(mean_I[i])
 		if varI < 0 {
 			varI = 0
@@ -21975,7 +21790,7 @@ func guidedFilterGray(I []float32, w, h, radius int, eps float64) []float32 {
 	mean_a := boxBlurLuminance(a, w, h, radius)
 	mean_b := boxBlurLuminance(b, w, h, radius)
 	q := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		q[i] = mean_a[i]*I[i] + mean_b[i]
 	}
 	return q
@@ -21988,12 +21803,12 @@ func guidedFilterFrameOnce(f *frame, radius int, eps float64) *frame {
 	nPix := f.Width * f.Height
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	I := make([]float32, nPix)
-	for c := 0; c < 3; c++ {
-		for i := 0; i < nPix; i++ {
+	for c := range 3 {
+		for i := range nPix {
 			I[i] = f.Pix[i*3+c]
 		}
 		den := guidedFilterGray(I, f.Width, f.Height, radius, eps)
-		for i := 0; i < nPix; i++ {
+		for i := range nPix {
 			v := den[i]
 			if v < 0 {
 				v = 0
@@ -22024,7 +21839,7 @@ func denoiseFrame(f *frame, radius int, eps, strength float64, chromaMul ...floa
 	frac := float32(strength - float64(nFull))
 
 	cur := f
-	for i := 0; i < nFull; i++ {
+	for range nFull {
 		cur = guidedFilterFrameOnce(cur, radius, eps)
 	}
 	if frac > 1e-6 {
@@ -22133,7 +21948,7 @@ func chromaDenoiseMultiScaleOnce(f *frame, blend float64) *frame {
 	Y := make([]float32, nPix)
 	Cb := make([]float32, nPix)
 	Cr := make([]float32, nPix)
-	for i := 0; i < nPix; i++ {
+	for i := range nPix {
 		r := float64(f.Pix[i*3])
 		g := float64(f.Pix[i*3+1])
 		b := float64(f.Pix[i*3+2])
@@ -22142,10 +21957,7 @@ func chromaDenoiseMultiScaleOnce(f *frame, blend float64) *frame {
 		Cb[i] = float32(b - y)
 		Cr[i] = float32(r - y)
 	}
-	maxR := f.Width
-	if f.Height < maxR {
-		maxR = f.Height
-	}
+	maxR := min(f.Height, f.Width)
 	maxR /= 6
 	if maxR < 16 {
 		maxR = 16
@@ -22158,17 +21970,14 @@ func chromaDenoiseMultiScaleOnce(f *frame, blend float64) *frame {
 		{96, 0.55},
 	}
 	for _, s := range scales {
-		r := s.radius
-		if r > maxR {
-			r = maxR
-		}
+		r := min(s.radius, maxR)
 		w := float32(s.weight * blend)
 		if w <= 0 {
 			continue
 		}
 		Cbd := guidedFilterGray(Cb, f.Width, f.Height, r, 0.005)
 		Crd := guidedFilterGray(Cr, f.Width, f.Height, r, 0.005)
-		for i := 0; i < nPix; i++ {
+		for i := range nPix {
 			Cb[i] = Cb[i] + w*(Cbd[i]-Cb[i])
 			Cr[i] = Cr[i] + w*(Crd[i]-Cr[i])
 		}
@@ -22176,7 +21985,7 @@ func chromaDenoiseMultiScaleOnce(f *frame, blend float64) *frame {
 	const cCrToG = 0.299 / 0.587
 	const cCbToG = 0.114 / 0.587
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
-	for i := 0; i < nPix; i++ {
+	for i := range nPix {
 		y := Y[i]
 		cr := Cr[i]
 		cb := Cb[i]
@@ -22267,7 +22076,7 @@ func chromaDenoiseGB(f *frame, radius int, eps, chromaStrength, lumStrength floa
 	Y := make([]float32, nPix)
 	Cb := make([]float32, nPix)
 	Cr := make([]float32, nPix)
-	for i := 0; i < nPix; i++ {
+	for i := range nPix {
 		r := float64(f.Pix[i*3])
 		g := float64(f.Pix[i*3+1])
 		b := float64(f.Pix[i*3+2])
@@ -22280,19 +22089,16 @@ func chromaDenoiseGB(f *frame, radius int, eps, chromaStrength, lumStrength floa
 		Cbd := guidedFilterGray(Cb, f.Width, f.Height, radius, eps)
 		Crd := guidedFilterGray(Cr, f.Width, f.Height, radius, eps)
 		cs := float32(chromaStrength)
-		for i := 0; i < nPix; i++ {
+		for i := range nPix {
 			Cb[i] = Cb[i] + cs*(Cbd[i]-Cb[i])
 			Cr[i] = Cr[i] + cs*(Crd[i]-Cr[i])
 		}
 	}
 	if lumStrength > 0 {
-		lumRadius := radius / 4
-		if lumRadius < 3 {
-			lumRadius = 3
-		}
+		lumRadius := max(radius/4, 3)
 		Yd := guidedFilterGray(Y, f.Width, f.Height, lumRadius, eps*0.5)
 		ls := float32(lumStrength)
-		for i := 0; i < nPix; i++ {
+		for i := range nPix {
 			Y[i] = Y[i] + ls*(Yd[i]-Y[i])
 		}
 	}
@@ -22303,7 +22109,7 @@ func chromaDenoiseGB(f *frame, radius int, eps, chromaStrength, lumStrength floa
 	const cCrToG = 0.299 / 0.587
 	const cCbToG = 0.114 / 0.587
 	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
-	for i := 0; i < nPix; i++ {
+	for i := range nPix {
 		y := Y[i]
 		cr := Cr[i]
 		cb := Cb[i]
@@ -22397,10 +22203,7 @@ func selectSpikeStars(f *frame, percent float64, minCount int) []star {
 	if len(stars) == 0 {
 		return nil
 	}
-	n := int(float64(len(stars)) * percent / 100.0)
-	if n < 1 {
-		n = 1
-	}
+	n := max(int(float64(len(stars))*percent/100.0), 1)
 	if minCount > 0 && n < minCount {
 		n = minCount
 	}
@@ -22576,7 +22379,7 @@ func overlaySpikes(f *frame, stars []star, baseLength, baseIntensity float64, nu
 						continue
 					}
 					i := (iy2*f.Width + ix2) * 3
-					for c := 0; c < 3; c++ {
+					for c := range 3 {
 						v := result.Pix[i+c] + add
 						if v > 1 {
 							v = 1
@@ -22604,9 +22407,9 @@ func floatToByte(v float32) uint8 {
 // gamma. Use for post-processing stages whose outputs are already stretched.
 func writeLinearPreviewJPEG(w io.Writer, width, height int, pix []float32) error {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
+	for y := range height {
 		rowOff := y * img.Stride
-		for x := 0; x < width; x++ {
+		for x := range width {
 			i := (y*width + x) * 3
 			o := rowOff + x*4
 			img.Pix[o+0] = floatToByte(pix[i+0])
@@ -22633,9 +22436,9 @@ func writeAutoNormalizedLinearPreviewJPEG(w io.Writer, width, height int, pix []
 	}
 	inv := float32(1.0) / maxVal
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
+	for y := range height {
 		rowOff := y * img.Stride
-		for x := 0; x < width; x++ {
+		for x := range width {
 			i := (y*width + x) * 3
 			o := rowOff + x*4
 			img.Pix[o+0] = floatToByte(pix[i+0] * inv)
@@ -22662,10 +22465,7 @@ func multiscaleBackground(f *frame, block int) *frame {
 	if f == nil || f.Width < 16 || f.Height < 16 {
 		return f
 	}
-	m := f.Width
-	if f.Height < m {
-		m = f.Height
-	}
+	m := min(f.Height, f.Width)
 	if block < 64 {
 		block = 64
 	}
@@ -22678,8 +22478,8 @@ func multiscaleBackground(f *frame, block int) *frame {
 	nx := (f.Width + block - 1) / block
 	ny := (f.Height + block - 1) / block
 	samples := make([]float32, nx*ny)
-	for by := 0; by < ny; by++ {
-		for bx := 0; bx < nx; bx++ {
+	for by := range ny {
+		for bx := range nx {
 			x0, y0 := bx*block, by*block
 			x1, y1 := x0+block, y0+block
 			if x1 > f.Width {
@@ -22707,7 +22507,7 @@ func multiscaleBackground(f *frame, block int) *frame {
 			}
 			acc := int64(0)
 			v := float32(0)
-			for b := 0; b < bins; b++ {
+			for b := range bins {
 				acc += hist[b]
 				if acc >= total/5 {
 					v = float32(b) / bins
@@ -22720,31 +22520,19 @@ func multiscaleBackground(f *frame, block int) *frame {
 	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
 	for y := 0; y < f.Height; y++ {
 		gy := float64(y) / float64(block)
-		y0 := int(math.Floor(gy))
-		if y0 > ny-1 {
-			y0 = ny - 1
-		}
-		y1 := y0 + 1
-		if y1 > ny-1 {
-			y1 = ny - 1
-		}
+		y0 := min(int(math.Floor(gy)), ny-1)
+		y1 := min(y0+1, ny-1)
 		wy := gy - float64(y0)
 		for x := 0; x < f.Width; x++ {
 			gx := float64(x) / float64(block)
-			x0 := int(math.Floor(gx))
-			if x0 > nx-1 {
-				x0 = nx - 1
-			}
-			x1 := x0 + 1
-			if x1 > nx-1 {
-				x1 = nx - 1
-			}
+			x0 := min(int(math.Floor(gx)), nx-1)
+			x1 := min(x0+1, nx-1)
 			wx := gx - float64(x0)
 			v00, v10 := samples[y0*nx+x0], samples[y0*nx+x1]
 			v01, v11 := samples[y1*nx+x0], samples[y1*nx+x1]
 			bg := float32((1-wy)*((1-wx)*float64(v00)+wx*float64(v10)) + wy*((1-wx)*float64(v01)+wx*float64(v11)))
 			i := (y*f.Width + x) * 3
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				v := f.Pix[i+c] - bg
 				if v < 0 {
 					v = 0
@@ -23192,10 +22980,7 @@ func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
 	}
 
 	nPix := w * h
-	numPlanes := 1
-	if naxis3 > 1 {
-		numPlanes = naxis3
-	}
+	numPlanes := max(naxis3, 1)
 
 	data := make([]byte, nPix*numPlanes*bytesPerPixel)
 	if _, err := io.ReadFull(f, data); err != nil {
@@ -23224,7 +23009,7 @@ func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
 
 	for p := 0; p < numPlanes; p++ {
 		minVal, maxVal := float32(1e30), float32(-1e30)
-		for i := 0; i < nPix; i++ {
+		for i := range nPix {
 			v := vals[p*nPix+i]
 			if v < minVal {
 				minVal = v
@@ -23237,7 +23022,7 @@ func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
 		if rangeVal <= 0 {
 			rangeVal = 1.0
 		}
-		for i := 0; i < nPix; i++ {
+		for i := range nPix {
 			v := (vals[p*nPix+i] - minVal) / rangeVal
 			if v < 0 {
 				v = 0
@@ -23267,7 +23052,7 @@ func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
 func debayerFITS(vals []float32, w, h int, baypat, roworder string, targetW, targetH int) *frame {
 	if roworder == "BOTTOM-UP" {
 		for y := 0; y < h/2; y++ {
-			for x := 0; x < w; x++ {
+			for x := range w {
 				idx1 := y*w + x
 				idx2 := (h-1-y)*w + x
 				vals[idx1], vals[idx2] = vals[idx2], vals[idx1]
@@ -23343,8 +23128,8 @@ func debayerFITS(vals []float32, w, h int, baypat, roworder string, targetW, tar
 		return norm[y*w+x]
 	}
 
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			c := cfa[y%2][x%2]
 			var r, g, b float32
 			if c == 0 { // R
@@ -23430,10 +23215,7 @@ func testFITSFileDebayer(path string) error {
 		return err
 	}
 	nPix := w * h
-	numPlanes := 1
-	if naxis3 > 1 {
-		numPlanes = naxis3
-	}
+	numPlanes := max(naxis3, 1)
 	if numPlanes != 1 {
 		return fmt.Errorf("test-debayer expects mono data, got NAXIS3=%d", naxis3)
 	}
@@ -23442,7 +23224,7 @@ func testFITSFileDebayer(path string) error {
 		return fmt.Errorf("read data: %w", err)
 	}
 	vals := make([]float32, nPix)
-	for i := 0; i < nPix; i++ {
+	for i := range nPix {
 		var v float64
 		switch bitpix {
 		case 8:
@@ -23492,8 +23274,8 @@ func testFITSFileDebayer(path string) error {
 	default:
 		haveCFA = false
 	}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			i := y*w + x
 			n := (vals[i] - minVal) / rng
 			if haveCFA {
@@ -23599,8 +23381,8 @@ func testDebayerCLI() error {
 	}
 	payload := make([]byte, w*h*2)
 	cfa := [2][2]int{{0, 1}, {1, 2}}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			var v uint16
 			switch cfa[y%2][x%2] {
 			case 0:
@@ -23658,7 +23440,7 @@ func testFITSNative() error {
 		buf.WriteByte(' ')
 	}
 	payload := make([]byte, 200)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		binary.BigEndian.PutUint16(payload[i*2:], uint16(i))
 	}
 	buf.Write(payload)
@@ -23708,7 +23490,7 @@ func testFITSDebayer() error {
 		buf.WriteByte(' ')
 	}
 	payload := make([]byte, 200)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		binary.BigEndian.PutUint16(payload[i*2:], uint16(i))
 	}
 	buf.Write(payload)
@@ -23761,8 +23543,8 @@ func testBackgroundRemoval() error {
 	const w, h = 128, 128
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	// Linear gradient background: 0.10 → 0.60
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			bg := float32(0.01 + 0.04*float64(x)/float64(w) + 0.02*float64(y)/float64(h))
 			i := (y*w + x) * 3
 			f.Pix[i] = bg
@@ -23822,7 +23604,7 @@ func testBackgroundRemoval() error {
 func testContrastStretch() error {
 	const w, h = 100, 100
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		var v float32
 		switch {
 		case i%100 == 0:
@@ -23839,7 +23621,7 @@ func testContrastStretch() error {
 	result := stretchContrast(f, 3)
 	var bgSum, midSum, brSum float32
 	var nBg, nMid, nBr int
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		switch {
 		case i%100 == 0:
 			brSum += result.Pix[i*3]
@@ -23870,7 +23652,7 @@ func testContrastStretch() error {
 func testColorCalibration() error {
 	const w, h = 32, 32
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
-	for i := 0; i < w*h; i++ {
+	for i := range w * h {
 		// Red cast: R mean 0.2, G mean 0.1, B mean 0.1
 		f.Pix[i*3] = 0.2
 		f.Pix[i*3+1] = 0.1
@@ -23921,7 +23703,7 @@ func testUnsharpMask() error {
 	const w, h = 16, 1
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
 	// Step edge at x=8
-	for x := 0; x < w; x++ {
+	for x := range w {
 		v := float32(0.2)
 		if x >= 8 {
 			v = 0.6
@@ -24231,7 +24013,7 @@ func medianPairwiseDistancePixels(s []star) float64 {
 		return 0
 	}
 	dists := make([]float64, 0, n*(n-1)/2)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		for j := i + 1; j < n; j++ {
 			dists = append(dists, math.Hypot(s[i].X-s[j].X, s[i].Y-s[j].Y))
 		}
@@ -24250,7 +24032,7 @@ func medianPairwiseDistanceRadians(g []gaiaStar) float64 {
 		return 0
 	}
 	dists := make([]float64, 0, n*(n-1)/2)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		for j := i + 1; j < n; j++ {
 			dists = append(dists, math.Hypot(g[i].RA-g[j].RA, g[i].Dec-g[j].Dec))
 		}

@@ -31,6 +31,8 @@ Build and install
         -o /home/jips/.local/bin/skystacker .
       cp -f /home/jips/.local/bin/skystacker ./skystacker
       /home/jips/.local/bin/skystacker --selftest
+      go test ./...   # Go 1.26 synctest rate-limiter check
+- `go fix ./...` (Go 1.26 modernizers) was applied; re-check it after large refactors.
 - Verify: `skystacker --version` must print 0.6.1 (or the current version), not 0.5.1.
 
 Repository hygiene

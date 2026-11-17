@@ -98,3 +98,9 @@ Adopted the conservative option: **go1.26.11** installed at `/home/jips/.local/g
 ### Current-state correction (2026-11-17, post-migration)
 
 The "Current state" section above describes the pre-migration baseline (go1.20.3, `go 1.20`). The repository now uses **go1.26.11** with `go 1.26` + `toolchain go1.26.11` in both modules, CI/release pinned to 1.26.11, and all matrices green. Sections on Go 1.27 remain a forward-looking option, not the adopted toolchain.
+
+### Code improvements adopted (2026-11-17)
+
+- Applied `go fix` (Go 1.26 modernizers: `newexpr`, `minmax`, `rangeint`, `mapsloop`, `slicescontains`, `slicessort`, `fmtappendf`, `omitzero`, `forvar`) to both modules; all tests remained green.
+- Added `main_test.go` using Go 1.26 `testing/synctest` to verify the 1 req/s Gaia TAP rate limiter deterministically (no wall-clock sleeps in CI).
+- No `simd/archsimd`, no `encoding/json/v2` (not available in 1.26 without an experiment).

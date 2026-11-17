@@ -106,7 +106,7 @@ func (Decoder) Decode(r io.ReaderAt, size int64) (*raw.Image, error) {
 	}
 	w, h := lj.Width*2, lj.Height
 	pix := make([]uint16, w*h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		for x := 0; x < lj.Width; x++ {
 			p := y*lj.Width + x
 			pix[y*w+2*x] = lj.Planes[0][p]

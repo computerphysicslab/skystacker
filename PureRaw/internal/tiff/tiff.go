@@ -128,7 +128,7 @@ func readIFD(r io.ReaderAt, order binary.ByteOrder, off int64) (*IFD, error) {
 	if _, err := r.ReadAt(entryBytes, base); err != nil {
 		return nil, ErrTruncated
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		e := entryBytes[i*12 : i*12+12]
 		tag := order.Uint16(e[0:])
 		typ := order.Uint16(e[2:])

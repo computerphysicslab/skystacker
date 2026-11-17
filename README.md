@@ -226,10 +226,11 @@ cd skystacker
 go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .
 ```
 
-Run the embedded unit & integration self-tests (authoritative count printed at runtime; `runSelfTests` in `main.go` is the source of truth):
+Run the embedded unit & integration self-tests (authoritative count printed at runtime; `runSelfTests` in `main.go` is the source of truth). Go 1.26 also enables a deterministic `testing/synctest` check of the Gaia rate limiter via `go test ./...`:
 
 ```bash
 ./skystacker --selftest
+go test ./...
 ```
 
 Print the version or command-line help:
