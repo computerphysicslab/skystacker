@@ -54,3 +54,6 @@ For traceability, the original files in `research/` map to the reorganized struc
 ### Toolchain upgrade status (2026-11-17)
 
 The upgrade analysed in `GO_TOOLCHAIN_UPGRADE_ANALYSIS.md` was implemented with **go1.26.11** (not 1.27.4); see its "Decision implemented" and "Current-state correction" sections.
+### CR2 bit-exact investigation prompt (2026-11-17)
+
+* **[`GEMINI_CR2_BITEXACT_PROMPT.md`](GEMINI_CR2_BITEXACT_PROMPT.md)** — self-contained Deep Research prompt with all verified CR2/SOF3/dcraw observations and 7 targeted research questions about the blocked bit-exact validation.
