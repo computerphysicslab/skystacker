@@ -64,6 +64,25 @@ right, the likely explanations are now:
 Total focused work: roughly **2–4 h**, lower than the previous estimate now
 that the source review confirms the decoder core is correct.
 
+### Source check (2026-11-17, append-only): cr2_slice hypothesis refuted
+
+A direct source check of `dcraw.c` v9.28 (ncruces/dcraw, downloaded and grepped
+locally) shows that `cr2_slice[3]` is **only ever reset to zero** (line 8631) and
+read in `lossless_jpeg_load_raw` / `canon_sraw_load_raw`; no Canon maker-note tag
+assigns it in this version. The EOS 40D maker note Exif tag `0x0009` is a 32-byte
+ASCII/artist field, not a slice table, and it is all zeros in
+`assets/OrionNebula/lights/IMG_7005.CR2`. Therefore the "leading hypothesis"
+above cannot explain the mismatch and the 1–2 h slice-extraction step should be
+dropped from the work plan.
+
+The remaining value differences must come from the pixel pipeline after JPEG
+decode: `curve[]` is initialised to identity for this camera (no Canon
+linearization table is loaded), while dcraw's output path applies black-level
+subtraction (`cblack[]`) and white scaling before writing 16-bit PPM. The next
+concrete step is an oracle comparison at the **raw Bayer plane** level (our
+decoder vs `dcraw -D -4 -t 1` after cropping the margins and normalising black/
+white), not another geometry search over dihedral transforms.
+
 ## Sources
 
 - `dcraw.c` v9.28 — `https://github.com/ncruces/dcraw/blob/master/dcraw.c` (source).

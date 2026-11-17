@@ -1724,3 +1724,8 @@ rejection and disk spill. `--scale N` downsamples.
 - `testResampleSIP` verifies distort/undistort round-trip, the composed mapping, a synthetic star relocation versus the plain warp, no-op behavior with nil WCS, and flag parsing. Selftests 212.
 - E2E smoke: OrionNebula 4-frame sigma stack with `--resample-sip` and a seeded SIP plate solution completed (~38 s) and logged use of the stored SIP.
 - Living docs updated (README, TECHNICAL_SPEC, COMPARISON, prompt-ai); research/ received only appended status sections.
+
+### CR2 bit-exact investigation status (2026-11-17)
+
+- `cr2_slice[]` hypothesis refuted: dcraw v9.28 only resets it to zero; no maker-note tag assigns it. The EOS 40D `0x0009` maker tag is an all-zero ASCII artist field, not a slice table.
+- Next experiment is a raw-Bayer-plane comparison against `dcraw -D -4 -t 1` with margins cropped and black/white normalised; `curve[]` is identity for this camera, so linearization is not the cause. See the appended section in `research/GEMINI_CR2_BITEXACT_PROMPT-outcome.md`.
