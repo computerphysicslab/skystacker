@@ -92,18 +92,35 @@ astronomical post-processing, and because its reference-frame crop
 (two manually picked stars) is the direct precedent for SkyStacker's
 automatic `--reference-crop`.
 
-| Tool | License | Platforms | Interface | Calibration | Star alignment | Crop to reference frame | Deconvolution | Mosaic | Scripting |
-|---|---|---|---|---|---|---|---|---|---|
-| **SkyStacker** | MIT | Win / Mac / Linux | CLI | Yes | Automatic star-pattern | **Yes, automatic (`--reference-crop`)** | Yes (`--deconvolve` RL; `--wavesharp` classical) | Partial (`--resume`, `--json-report`) | CLI flags + `--config` |
-| **Fitswork** | Freeware | Windows | GUI | Yes | Manual 2-star + pattern | **Yes (manual 2-star)** | Yes (Richardson–Lucy, Wiener) | Yes | – |
-| **PixInsight** | Paid | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (StarAlignment / DynamicCrop) | Yes | Yes | PJSR / Python |
-| **Siril** | GPLv3 | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (registration + crop) | Yes | Partial | Scripts + CLI |
-| **IRIS** | Free | Windows | GUI + CLI | Yes | Yes | Yes (manual) | Yes (RL) | Yes | Editor + CLI |
-| **Nebulosity** | Paid | Win / Mac | GUI | Yes | Yes | Partial | Partial | Partial | – |
-| **MaxIm DL** | Paid | Windows | GUI + COM | Yes | Yes | Yes | Yes | Yes | COM |
-| **ASTAP** | MPL 2.0 | Win / Linux | GUI + CLI | Yes | Yes | Partial | – | Yes | CLI |
-| **AstroImageJ** | GPL | Java (all OS) | GUI + macros | Yes | Yes | Partial | – | – | Macros |
-| **AutoStakkert!** | Free | Windows | GUI + CLI | – | Yes (lucky imaging) | Partial | – | – | CLI |
+**A. Interface, calibration and registration**
+
+| Tool | License | Platforms | Interface | Calibration | Star alignment | Crop to reference frame |
+|---|---|---|---|---|---|---|
+| **SkyStacker** | MIT | Win / Mac / Linux | CLI | Yes | Automatic star-pattern | **Yes, automatic (`--reference-crop`)** |
+| **Fitswork** | Freeware | Windows | GUI | Yes | Manual 2-star + pattern | **Yes (manual 2-star)** |
+| **PixInsight** | Paid | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (StarAlignment / DynamicCrop) |
+| **Siril** | GPLv3 | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (registration + crop) |
+| **IRIS** | Free | Windows | GUI + CLI | Yes | Yes | Yes (manual) |
+| **Nebulosity** | Paid | Win / Mac | GUI | Yes | Yes | Partial |
+| **MaxIm DL** | Paid | Windows | GUI + COM | Yes | Yes | Yes |
+| **ASTAP** | MPL 2.0 | Win / Linux | GUI + CLI | Yes | Yes | Partial |
+| **AstroImageJ** | GPL | Java (all OS) | GUI + macros | Yes | Yes | Partial |
+| **AutoStakkert!** | Free | Windows | GUI + CLI | – | Yes (lucky imaging) | Partial |
+
+**B. Post-processing and automation**
+
+| Tool | Deconvolution | Starless layers | Multiscale background | Mosaic | Scripting |
+|---|---|---|---|---|---|
+| **SkyStacker** | Yes (`--deconvolve` RL, `--wavesharp` classical) | Yes (basic, `--starless`) | Yes (`--bg-multiscale`, partial) | – | CLI flags + `--config` |
+| **Fitswork** | Yes (Richardson–Lucy, Wiener) | – | – | Yes | – |
+| **PixInsight** | Yes | Yes | Yes | Yes | PJSR / Python |
+| **Siril** | Yes | Yes | Partial | Partial | Scripts + CLI |
+| **IRIS** | Yes (RL) | Partial | – | Yes | Editor + CLI |
+| **Nebulosity** | Partial | – | – | Partial | – |
+| **MaxIm DL** | Yes | Yes | Partial | Yes | COM |
+| **ASTAP** | – | – | – | Yes | CLI |
+| **AstroImageJ** | – | – | – | – | Macros |
+| **AutoStakkert!** | – | – | – | – | CLI |
 
 The key difference: Fitswork requires the user to mark the same two stars
 in both images; SkyStacker detects the star field in both images, finds the
