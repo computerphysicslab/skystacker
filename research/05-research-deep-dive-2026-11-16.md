@@ -280,3 +280,6 @@ Reviewed `runPostProcessing` default order: background polynomial → star remov
 - **New functions are deliberately opt-in:** `--bg-multiscale`, `--deconvolve`, `--wavesharp` run *before* star removal/stretch so they operate on linear data. Enabling them by default would risk noise amplification/ringing on unknown data; keep opt-in and let the user choose via `--config`.
 - **Actionable improvement implemented:** report the reference-frame HFR (seeing proxy) in the log and `report.txt`/`report.json` notes, so users can decide whether `--deconvolve`/`--wavesharp` is worthwhile. This uses the new per-star HFR primitive and makes the honest "no recovery if contrast is already lost" point visible.
 - **Ordering note:** optional sharpening runs before denoise; on noisy data the subsequent denoise partly cancels it. A future `--post-preset` could move detail enhancement after denoise for a `detail` preset, but that changes the meaning of the existing step outputs and is not done here.
+### 13.5 Implemented from the Gemini survey (2026-11-17)
+
+- Pre-solve gradient detrending (survey proposal 6, `S`): `detectStarsWithDetrend` retries star detection on a scratch copy processed with the existing coarse percentile background when the first pass finds <20 stars. It does not modify the light buffer and is covered by `testDetrendStarDetection`.

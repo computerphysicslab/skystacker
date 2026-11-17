@@ -5328,7 +5328,7 @@ func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]sta
 			if sc, ok := loadStarCache(cpath, starDetectionSig(scale)); ok {
 				return sc.Stars, sc.MedianBlob, sc.MedianEcc, sc.BgNoise, true
 			}
-			stars := detectStars(f, 100)
+			stars := detectStarsWithDetrend(f, 100)
 			mb := medianBlobSize(stars)
 			me := medianStarEcc(stars)
 			bn := estimateFrameBgNoise(f)
@@ -5343,8 +5343,26 @@ func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]sta
 			return stars, mb, me, bn, false
 		}
 	}
-	stars := detectStars(f, 100)
+	stars := detectStarsWithDetrend(f, 100)
 	return stars, medianBlobSize(stars), medianStarEcc(stars), estimateFrameBgNoise(f), false
+}
+
+// detectStarsWithDetrend retries star detection on a scratch copy with a
+// coarse, object-protected background removed when the raw detection finds
+// too few stars. This rescues gradient-heavy wide-field frames (and their
+// plate solves) without touching the original pixel buffer.
+func detectStarsWithDetrend(f *frame, maxStars int) []star {
+	stars := detectStars(f, maxStars)
+	if len(stars) >= 20 {
+		return stars
+	}
+	scratch := multiscaleBackground(f, 256)
+	retry := detectStars(scratch, maxStars)
+	if len(retry) > len(stars) {
+		logf("  star detection: %d -> %d stars after scratch gradient detrend", len(stars), len(retry))
+		return retry
+	}
+	return stars
 }
 
 func checkXfCache(cacheDir, refPath, framePath string, scale int) (xfCache, bool) {
@@ -13053,6 +13071,36 @@ func loadGaiaPlateFixture() (wcsTan, []star, []gaiaStar, error) {
 	return w, frame, gaia, nil
 }
 
+func testDetrendStarDetection() error {
+	const w, h = 128, 128
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for p := 0; p < w*h; p++ {
+		v := float32(0.1 + 0.4*float64(p%w)/float64(w))
+		f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2] = v, v, v
+	}
+	for i := 0; i < 25; i++ {
+		x, y := 10+(i%5)*24, 10+(i/5)*24
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				p := ((y+dy)*w + x + dx) * 3
+				f.Pix[p], f.Pix[p+1], f.Pix[p+2] = 0.9, 0.9, 0.9
+			}
+		}
+	}
+	before := append([]float32(nil), f.Pix...)
+	raw := detectStars(f, 100)
+	got := detectStarsWithDetrend(f, 100)
+	if len(got) < len(raw) {
+		return fmt.Errorf("detrend lost stars: %d -> %d", len(raw), len(got))
+	}
+	for i := range before {
+		if f.Pix[i] != before[i] {
+			return fmt.Errorf("detrend modified input at %d", i)
+		}
+	}
+	return nil
+}
+
 func testReferenceFITSSeed() error {
 	dir, err := os.MkdirTemp("", "skystacker-fits-seed-")
 	if err != nil {
@@ -15483,6 +15531,7 @@ func runSelfTests() int {
 		{"match stars to gaia synthetic", testMatchStarsToGaiaSynthetic},
 		{"plate solve header seeded", testPlateSolveHeaderSeeded},
 		{"reference FITS seed", testReferenceFITSSeed},
+		{"detrend star detection", testDetrendStarDetection},
 		{"plate solve blind", testPlateSolveBlind},
 		{"wcs fit rotated both parities", testWCSFitRotatedBothParities},
 		{"match stars to gaia stress", testMatchStarsToGaiaStress},

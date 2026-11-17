@@ -31,3 +31,4 @@
 - Added `--wavesharp` classical multi-scale detail enhancement (BXT-like baseline from research §13); `testWaveSharpen`; self-tests 203.
 - Default pipeline now logs and records reference-frame HFR (seeing proxy) in report notes; review in research §13.4.
 - Added `testReferenceFITSSeed` (FITS RA/DEC plate-solve seed) and README links to BENCHMARKS/research; self-tests 204.
+- Gemini outcome archived in `research/`; implemented scratch gradient-detrend retry for star detection (`testDetrendStarDetection`); self-tests 205.

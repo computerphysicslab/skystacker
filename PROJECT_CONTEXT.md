@@ -1665,3 +1665,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Default post pipeline review (research §13.4): kept sharpening/deconvolution opt-in; added reference-frame HFR seeing-proxy note to log/report to guide their use.
 
 - Added `testReferenceFITSSeed`: validates FITS-header RA/DEC seed parsing (degrees to radians) and rejection of non-FITS/no-keyword files. selftests 204.
+
+- Implemented proposal from Gemini outcome: `detectStarsWithDetrend` retries detection on a scratch `--bg-multiscale`-style background-removed copy when fewer than 20 stars are found (gradient-heavy wide fields / plate solving). Input buffer untouched; `testDetrendStarDetection`; selftests 205.
