@@ -434,6 +434,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconv-sigma float` / `--deconv-iters int` | PSF sigma (px) and RL iterations | `1.5` / `3` |
+| `--narrowband M` + `--nb-a/--nb-b/--nb-c` | HOO/SHO mapping from three mono `.f32raw` stacks (`_work/stacked_narrowband.f32raw` written) | — |
 
 ### Normalization
 
@@ -647,7 +648,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.0)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 198 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 199 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -691,7 +692,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 - **Star separation (PSF-based)**: `--starless` provides a crude annulus-median baseline; a proper star mask / PSF-based separation remains.
 - **Advanced noise reduction**: Multiscale noise estimation and spatially adaptive denoising (the current guided filter + two-scale chroma pass is the baseline).
 - **Advanced photometric & colour calibration (PCC / SPCC)**: Use stellar spectral information from Gaia DR3 plus camera sensor response and filter transmission to derive true colour. Depends on plate solving (Tier 2) and the Gaia layer.
-- **Narrowband & advanced calibration**: Monochrome Hα / OIII / SII support with HOO / SHO / LRGB mappings, dark-frame scaling, and separate RGB channel normalization.
+- **Narrowband & advanced calibration**: `--narrowband HOO|SHO` maps three mono `.f32raw` stacks into an RGB stack for post-processing (test: `testNarrowband`); dark-frame scaling and per-channel normalization remain.
 - **Per-frame normalization (extended)**: Already applied as global + local `scale + offset`; remaining work is additive and multiplicative modes and per-channel normalization.
 - **Multi-night integration**: Intelligent session classifiers, cross-session normalization, and calibration matching across nights.
 - **Mosaic construction**: Multi-panel alignment, overlap-based photometric normalization, feathered blending, and multiband seam elimination.

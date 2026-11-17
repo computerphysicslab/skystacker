@@ -216,6 +216,10 @@ type cliOptions struct {
 	Deconvolve         bool
 	DeconvSigma        float64
 	DeconvIters        int
+	Narrowband         string
+	NBChannelA         string
+	NBChannelB         string
+	NBChannelC         string
 	Limit              int
 	CometCenter        string
 	CometRate          string
@@ -445,6 +449,10 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
 	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
 	fs.IntVar(&o.DeconvIters, "deconv-iters", 3, "Richardson-Lucy iterations for --deconvolve")
+	fs.StringVar(&o.Narrowband, "narrowband", "", "narrowband mapping: HOO or SHO (requires --nb-a/--nb-b/--nb-c .f32raw mono stacks)")
+	fs.StringVar(&o.NBChannelA, "nb-a", "", "first narrowband mono stack (.f32raw): Ha for HOO, SII for SHO")
+	fs.StringVar(&o.NBChannelB, "nb-b", "", "second narrowband mono stack (.f32raw): OIII for HOO, Ha for SHO")
+	fs.StringVar(&o.NBChannelC, "nb-c", "", "third narrowband mono stack (.f32raw): OIII for HOO/SHO")
 	fs.BoolVar(&o.PostCA, "post-ca", false, "enable chromatic aberration reduction")
 	fs.BoolVar(&o.PostColor, "post-color", false, "enable color calibration")
 	fs.BoolVar(&o.PostFlatten, "post-flatten", false, "enable vignette flattening")
@@ -465,7 +473,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -581,6 +589,15 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.LocalNormalize {
 		o.Normalize = true
+	}
+	if o.Narrowband != "" {
+		m := strings.ToUpper(o.Narrowband)
+		if m != "HOO" && m != "SHO" {
+			return nil, fmt.Errorf("--narrowband must be HOO or SHO, got %q", o.Narrowband)
+		}
+		if o.NBChannelA == "" || o.NBChannelB == "" || o.NBChannelC == "" {
+			return nil, errors.New("--narrowband requires --nb-a, --nb-b and --nb-c")
+		}
 	}
 	if o.DeconvSigma < 0.3 || o.DeconvSigma > 10 {
 		return nil, fmt.Errorf("--deconv-sigma must be in [0.3, 10], got %g", o.DeconvSigma)
@@ -956,6 +973,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
+	fmt.Fprintln(w, "  --narrowband M     HOO or SHO mapping from --nb-a/--nb-b/--nb-c mono .f32raw stacks")
 	fmt.Fprintln(w, "  --png              write stacked_mean.png alongside the JPEGs")
 	fmt.Fprintln(w, "  --bmp              write stacked_mean.bmp alongside the JPEGs")
 	fmt.Fprintln(w, "  --limit N          process at most N discovered frames (0 = unlimited, default 0)")
@@ -4143,6 +4161,10 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Deconvolve {
 		add(fmt.Sprintf("--deconvolve --deconv-sigma %g --deconv-iters %d", o.DeconvSigma, o.DeconvIters))
 	}
+	if o.Narrowband != "" {
+		add(fmt.Sprintf("--narrowband %s --nb-a %s --nb-b %s --nb-c %s", o.Narrowband,
+			quoteReportArg(o.NBChannelA), quoteReportArg(o.NBChannelB), quoteReportArg(o.NBChannelC)))
+	}
 	if o.WritePNG {
 		add("--png")
 	}
@@ -4518,6 +4540,10 @@ type runOptions struct {
 	Deconvolve   bool
 	DeconvSigma  float64
 	DeconvIters  int
+	Narrowband   string
+	NBChannelA   string
+	NBChannelB   string
+	NBChannelC   string
 	PostCA       bool
 	PostColor    bool
 	PostFlatten  bool
@@ -15196,6 +15222,7 @@ func runSelfTests() int {
 		{"multiscale background", testMultiscaleBackground},
 		{"config file", testConfigFile},
 		{"richardson lucy", testRichardsonLucy},
+		{"narrowband mapping", testNarrowband},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
 		{"local normalize gradient", testLocalNormalizeGradient},
@@ -18647,6 +18674,41 @@ func testDiskSpaceGuard() error {
 	return nil
 }
 
+func testNarrowband() error {
+	mk := func(v float32) *frame {
+		f := &frame{Width: 2, Height: 2, Pix: make([]float32, 2*2*3)}
+		for p := 0; p < 4; p++ {
+			f.Pix[p*3], f.Pix[p*3+1], f.Pix[p*3+2] = v, v, v
+		}
+		return f
+	}
+	out, err := narrowbandCombine(mk(0.1), mk(0.5), mk(0.9), "HOO")
+	if err != nil {
+		return err
+	}
+	for p := 0; p < 4; p++ {
+		if out.Pix[p*3] != 0.1 || out.Pix[p*3+1] != 0.5 || out.Pix[p*3+2] != 0.9 {
+			return fmt.Errorf("HOO pixel %d: %v", p, out.Pix[p*3:p*3+3])
+		}
+	}
+	if _, err := narrowbandCombine(mk(0.1), mk(0.5), mk(0.9), "LRGB"); err == nil {
+		return errors.New("unknown narrowband mapping accepted")
+	}
+	bad := mk(0.1)
+	bad.Width = 3
+	if _, err := narrowbandCombine(bad, mk(0.5), mk(0.9), "SHO"); err == nil {
+		return errors.New("mismatched narrowband dimensions accepted")
+	}
+	opts, err := parseArgs([]string{"--narrowband", "SHO", "--nb-a", "a.f32raw", "--nb-b", "b.f32raw", "--nb-c", "c.f32raw"})
+	if err != nil || opts.Narrowband != "SHO" || opts.NBChannelA != "a.f32raw" {
+		return fmt.Errorf("narrowband flags: %+v err=%v", opts, err)
+	}
+	if _, err := parseArgs([]string{"--narrowband", "HOO"}); err == nil {
+		return errors.New("--narrowband without channels accepted")
+	}
+	return nil
+}
+
 func testRichardsonLucy() error {
 	const w, h = 64, 64
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
@@ -19794,6 +19856,35 @@ type bgSample struct {
 }
 
 // blurMono applies a separable Gaussian blur to a monochrome float buffer.
+// narrowbandCombine maps three monochrome channels into an RGB frame.
+// HOO: R=Ha, G=OIII, B=OIII. SHO: R=SII, G=Ha, B=OIII.
+// All three channels must have identical dimensions.
+func narrowbandCombine(a, b, c *frame, mapping string) (*frame, error) {
+	if a == nil || b == nil || c == nil {
+		return nil, errors.New("narrowband: missing channel frame")
+	}
+	if a.Width != b.Width || a.Width != c.Width || a.Height != b.Height || a.Height != c.Height {
+		return nil, errors.New("narrowband: channel dimensions differ")
+	}
+	n := a.Width * a.Height
+	out := &frame{Width: a.Width, Height: a.Height, Pix: make([]float32, n*3)}
+	var srcR, srcG, srcB []float32
+	switch strings.ToUpper(mapping) {
+	case "HOO":
+		srcR, srcG, srcB = a.Pix, b.Pix, c.Pix // caller passes Ha, OIII, OIII
+	case "SHO":
+		srcR, srcG, srcB = a.Pix, b.Pix, c.Pix // caller passes SII, Ha, OIII
+	default:
+		return nil, fmt.Errorf("narrowband: unknown mapping %q", mapping)
+	}
+	for p := 0; p < n; p++ {
+		out.Pix[p*3] = srcR[p*3]
+		out.Pix[p*3+1] = srcG[p*3]
+		out.Pix[p*3+2] = srcB[p*3]
+	}
+	return out, nil
+}
+
 func blurMono(src []float32, w, h int, sigma float64) []float32 {
 	if sigma <= 0 || len(src) != w*h {
 		return append([]float32(nil), src...)
@@ -21549,6 +21640,31 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		return nil, fmt.Errorf("post-process: read work file: %w", err)
 	}
 	src := &frame{Width: w, Height: h, Pix: pix}
+	if opts.Narrowband != "" {
+		loadMono := func(path string) *frame {
+			mw, mh, mpix, err := readRawFloat32RGB(path)
+			if err != nil {
+				logf("WARNING: narrowband channel %s: %v", path, err)
+				return nil
+			}
+			return &frame{Width: mw, Height: mh, Pix: mpix}
+		}
+		a := loadMono(opts.NBChannelA)
+		b := loadMono(opts.NBChannelB)
+		c := loadMono(opts.NBChannelC)
+		mapped, err := narrowbandCombine(a, b, c, opts.Narrowband)
+		if err != nil {
+			return nil, fmt.Errorf("narrowband: %w", err)
+		}
+		src = mapped
+		w, h = src.Width, src.Height
+		logf("  narrowband: %s from %s / %s / %s", strings.ToUpper(opts.Narrowband),
+			filepath.Base(opts.NBChannelA), filepath.Base(opts.NBChannelB), filepath.Base(opts.NBChannelC))
+		if err := writeFileAtomic(filepath.Join(outputDir, "_work", "stacked_narrowband.f32raw"),
+			func(out io.Writer) error { return writeRawFloat32RGB(out, w, h, src.Pix) }); err != nil {
+			logf("  WARNING: narrowband work file: %v", err)
+		}
+	}
 
 	var outputs []string
 	cur := src
@@ -22862,6 +22978,10 @@ func main() {
 		Deconvolve:           opts.Deconvolve,
 		DeconvSigma:          opts.DeconvSigma,
 		DeconvIters:          opts.DeconvIters,
+		Narrowband:           opts.Narrowband,
+		NBChannelA:           opts.NBChannelA,
+		NBChannelB:           opts.NBChannelB,
+		NBChannelC:           opts.NBChannelC,
 		PostCA:               opts.PostCA,
 		PostColor:            opts.PostColor,
 		PostFlatten:          opts.PostFlatten,

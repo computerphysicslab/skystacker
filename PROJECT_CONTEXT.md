@@ -1649,3 +1649,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--config FILE`: JSON object of flag names/values expanded into CLI args before parsing (CLI wins); supports strings, numbers, booleans and arrays. `testConfigFile`; selftests 197.
 
 - Added `--deconvolve` (Gaussian-PSF Richardson-Lucy, `--deconv-sigma` default 1.5, `--deconv-iters` default 3) in post-processing; `testRichardsonLucy`; selftests 198.
+
+- Added `--narrowband HOO|SHO` + `--nb-a/--nb-b/--nb-c`: combines three mono `.f32raw` channels into an RGB stack before post-processing; `testNarrowband`; selftests 199.

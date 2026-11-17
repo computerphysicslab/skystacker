@@ -24,3 +24,4 @@
 - Added `--bg-multiscale` coarse percentile background before the polynomial fit; `testMultiscaleBackground`; self-tests 196.
 - Added `--config FILE` JSON flag files (CLI overrides config); `testConfigFile`; self-tests 197.
 - Added `--deconvolve` (Gaussian-PSF Richardson-Lucy) with `--deconv-sigma/-iters`; `testRichardsonLucy`; self-tests 198.
+- Added `--narrowband HOO|SHO` with `--nb-a/--nb-b/--nb-c` mono stacks; `testNarrowband`; self-tests 199.
