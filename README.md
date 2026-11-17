@@ -42,9 +42,11 @@ It takes a folder of night-sky exposures, detects stars, aligns the frames, comb
 - [Output Structure](#output-structure)
 - [Processing Pipeline at a Glance](#processing-pipeline-at-a-glance)
 - [Pre-Flight Resource Checks & Error Handling](#pre-flight-resource-checks--error-handling)
-- [Development Status & Recently Implemented (v0.6.0)](#development-status--recently-implemented-v060)
+- [Development Status & Recently Implemented (v0.6.1)](#development-status--recently-implemented-v061)
 - [Planned Potential Features and Technologies Roadmap](#planned-potential-features-and-technologies-roadmap)
 - [How SkyStacker Compares](#how-skystacker-compares)
+- [Benchmarks](BENCHMARKS.md)
+- [Research](research/README.md) (incl. [Gemini deep-research prompt](research/GEMINI_DEEP_RESEARCH_PROMPT.md))
 - [Project Goals & License](#project-goals--license)
 
 ---
@@ -650,9 +652,9 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ---
 
-## Development Status & Recently Implemented (v0.6.0)
+## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 203 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 204 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

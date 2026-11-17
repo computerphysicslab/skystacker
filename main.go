@@ -13053,6 +13053,61 @@ func loadGaiaPlateFixture() (wcsTan, []star, []gaiaStar, error) {
 	return w, frame, gaia, nil
 }
 
+func testReferenceFITSSeed() error {
+	dir, err := os.MkdirTemp("", "skystacker-fits-seed-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	cards := []string{
+		"SIMPLE  =                    T",
+		"BITPIX  =                   16",
+		"NAXIS   =                    2",
+		"NAXIS1  =                    4",
+		"NAXIS2  =                    4",
+		"RA      =                12.500",
+		"DEC     =               -20.250",
+		"END",
+	}
+	var buf bytes.Buffer
+	for _, c := range cards {
+		buf.WriteString(fmt.Sprintf("%-80s", c))
+	}
+	for buf.Len()%2880 != 0 {
+		buf.WriteByte(' ')
+	}
+	buf.Write(make([]byte, 4*4*2))
+	path := filepath.Join(dir, "seed.fits")
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		return err
+	}
+	ra, dec, ok := referenceFITSSeed(path)
+	if !ok {
+		return errors.New("FITS header seed not detected")
+	}
+	if math.Abs(ra-12.5*math.Pi/180) > 1e-6 || math.Abs(dec-(-20.25)*math.Pi/180) > 1e-6 {
+		return fmt.Errorf("seed RA/DEC = %.6f %.6f rad, want 12.5 -20.25 deg", ra, dec)
+	}
+	if _, _, ok := referenceFITSSeed(filepath.Join(dir, "seed.txt")); ok {
+		return errors.New("non-FITS path accepted as seed")
+	}
+	noCards := filepath.Join(dir, "nocards.fits")
+	os.WriteFile(noCards, buf.Bytes()[:2880], 0o644)
+	// Overwrite header block with a minimal header lacking RA/DEC.
+	var empty bytes.Buffer
+	for _, c := range []string{"SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2", "NAXIS1  =                    4", "NAXIS2  =                    4", "END"} {
+		empty.WriteString(fmt.Sprintf("%-80s", c))
+	}
+	for empty.Len()%2880 != 0 {
+		empty.WriteByte(' ')
+	}
+	os.WriteFile(noCards, empty.Bytes(), 0o644)
+	if _, _, ok := referenceFITSSeed(noCards); ok {
+		return errors.New("FITS without RA/DEC accepted as seed")
+	}
+	return nil
+}
+
 func testPlateSolveHeaderSeeded() error {
 	trueWCS, frameStars, gaiaStars, err := loadGaiaPlateFixture()
 	if err != nil {
@@ -15427,6 +15482,7 @@ func runSelfTests() int {
 		{"wcs sip", testWCSSIP},
 		{"match stars to gaia synthetic", testMatchStarsToGaiaSynthetic},
 		{"plate solve header seeded", testPlateSolveHeaderSeeded},
+		{"reference FITS seed", testReferenceFITSSeed},
 		{"plate solve blind", testPlateSolveBlind},
 		{"wcs fit rotated both parities", testWCSFitRotatedBothParities},
 		{"match stars to gaia stress", testMatchStarsToGaiaStress},

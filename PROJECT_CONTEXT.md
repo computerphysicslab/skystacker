@@ -1663,3 +1663,5 @@ rejection and disk spill. `--scale N` downsamples.
 - Added `--wavesharp`/`--wave-gains`: coarse-to-fine multi-scale Gaussian detail enhancement as a classical, stdlib-only analogue to AI deconvolution (research §13). `testWaveSharpen`; selftests 203.
 
 - Default post pipeline review (research §13.4): kept sharpening/deconvolution opt-in; added reference-frame HFR seeing-proxy note to log/report to guide their use.
+
+- Added `testReferenceFITSSeed`: validates FITS-header RA/DEC seed parsing (degrees to radians) and rejection of non-FITS/no-keyword files. selftests 204.
