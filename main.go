@@ -50,14 +50,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/sha3"
+	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/computerphysicslab/skystacker/PureRaw/formats/cr2"
 	"github.com/computerphysicslab/skystacker/PureRaw/raw"
+	"hash"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -214,15 +218,21 @@ type cliOptions struct {
 	WriteBMP               bool
 	CreateFITS             bool
 	CreateXISF             bool
+	XISFRev2               bool
+	CreateBigTIFF          bool
 	HFRQuality             bool
 	Annotate               bool
+	AnnotationCatalogs     string
 	Starless               bool
 	JSONReport             bool
+	Provenance             bool
 	BGMultiscale           bool
 	ConfigPath             string
 	Deconvolve             bool
 	DeconvSigma            float64
 	DeconvIters            int
+	DeconvolveGrid         bool
+	DeconvGridSize         int
 	Narrowband             string
 	NBChannelA             string
 	NBChannelB             string
@@ -462,13 +472,19 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.NoNativeCR2, "no-native-cr2", false, "disable the built-in pure-Go CR2 decoder (use dcraw/ImageMagick)")
 	fs.BoolVar(&o.CreateFITS, "fits", false, "write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fs.BoolVar(&o.CreateXISF, "xisf", false, "write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
+	fs.BoolVar(&o.XISFRev2, "xisf-rev2", false, "with --xisf: add Rev 2 checksum and strict sample-mapping validation")
+	fs.BoolVar(&o.CreateBigTIFF, "bigtiff", false, "write BigTIFF float32 stacks (64-bit offsets, files >4 GiB)")
 	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
+	fs.StringVar(&o.AnnotationCatalogs, "annotation-catalogs", "", "comma-separated JSON catalogs (ra/dec degrees, optional name/type/mag/major/minor/pa) for multi-catalog cross-match")
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
 	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
+	fs.BoolVar(&o.Provenance, "provenance", false, "write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
 	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
 	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
+	fs.BoolVar(&o.DeconvolveGrid, "deconvolve-grid", false, "use a spatially gridded local PSF from star HFR for --deconvolve")
+	fs.IntVar(&o.DeconvGridSize, "deconv-grid-size", 3, "grid side for --deconvolve-grid (3 or 4)")
 	fs.IntVar(&o.DeconvIters, "deconv-iters", 3, "Richardson-Lucy iterations for --deconvolve")
 	fs.StringVar(&o.Narrowband, "narrowband", "", "narrowband mapping: HOO or SHO (requires --nb-a/--nb-b/--nb-c .f32raw mono stacks)")
 	fs.StringVar(&o.NBChannelA, "nb-a", "", "first narrowband mono stack (.f32raw): Ha for HOO, SII for SHO")
@@ -506,7 +522,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -664,6 +680,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DeconvIters < 1 || o.DeconvIters > 20 {
 		return nil, fmt.Errorf("--deconv-iters must be in [1, 20], got %d", o.DeconvIters)
+	}
+	if o.DeconvGridSize != 3 && o.DeconvGridSize != 4 {
+		return nil, fmt.Errorf("--deconv-grid-size must be 3 or 4, got %d", o.DeconvGridSize)
 	}
 	switch o.NormalizeMode {
 	case "", "scale-offset", "additive", "multiplicative":
@@ -1030,12 +1049,17 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --no-native-cr2    use dcraw/ImageMagick instead of the built-in pure-Go CR2 decoder")
 	fmt.Fprintln(w, "  --fits             write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fmt.Fprintln(w, "  --xisf             write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
+	fmt.Fprintln(w, "  --xisf-rev2        with --xisf: SHA3-256 block checksum + strict sample validation")
+	fmt.Fprintln(w, "  --bigtiff          write stacked_sum/mean.bigtif with 64-bit offsets")
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
+	fmt.Fprintln(w, "  --annotation-catalogs LIST  extra JSON catalogs for cross-match (RA/Dec in degrees)")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
+	fmt.Fprintln(w, "  --provenance       write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
+	fmt.Fprintln(w, "  --deconvolve-grid  local PSF from star HFR over a 3x3/4x4 grid (--deconv-grid-size)")
 	fmt.Fprintln(w, "  --narrowband M     HOO or SHO mapping from --nb-a/--nb-b/--nb-c mono .f32raw stacks")
 	fmt.Fprintln(w, "  --resume           reuse an existing stack in the output dir and continue with post-processing")
 	fmt.Fprintln(w, "  --drizzle-upsample N  write a drizzled N x upsample of the stack (1 = off)")
@@ -3623,7 +3647,7 @@ func runExternalSidecar(stage, command string, f *frame, allowNonlinear bool, ti
 // 16-byte XISF0100 preamble, an XML header with the mandatory Metadata
 // properties and one RGB Float32 Image, and a single attached planar data
 // block of little-endian float32 samples (default byte order/codec).
-func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor float32) error {
+func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor float32, rev2 ...bool) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("xisf: invalid dimensions %dx%d", width, height)
 	}
@@ -3634,7 +3658,21 @@ func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor 
 	if divisor == 0 {
 		return errors.New("xisf: divisor must be non-zero")
 	}
+	strict := len(rev2) > 0 && rev2[0]
 	dataLen := n * 4
+	extraProps := ""
+	if strict {
+		checksum, err := xisfChecksum(pix, divisor, "SHA3-256")
+		if err != nil {
+			return err
+		}
+		extraProps = fmt.Sprintf(
+			"  <Property id=\"XISF:Revision\" type=\"String\" value=\"2\" />\n"+
+				"  <Property id=\"XISF:ChecksumAlgorithm\" type=\"String\" value=\"SHA3-256\" />\n"+
+				"  <Property id=\"XISF:Checksum\" type=\"String\" value=\"%s\" />\n"+
+				"  <Property id=\"XISF:SampleValidation\" type=\"Boolean\" value=\"true\" />\n",
+			checksum)
+	}
 	xmlBody := fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"+
 		"<xisf version=\"1.0\" xmlns=\"http://www.pixinsight.com/xisf\" "+
 		"xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "+
@@ -3642,10 +3680,11 @@ func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor 
 		" <Metadata>\n"+
 		"  <Property id=\"XISF:CreationTime\" type=\"TimePoint\" value=\"%s\" />\n"+
 		"  <Property id=\"XISF:CreatorApplication\" type=\"String\">SkyStacker %s</Property>\n"+
+		"%s"+
 		" </Metadata>\n"+
 		" <Image id=\"StackedSum\" geometry=\"%d:%d:3\" sampleFormat=\"Float32\" bounds=\"0:1\" "+
 		"colorSpace=\"RGB\" pixelStorage=\"Planar\" location=\"attachment:{POS}:%d\" />\n"+
-		"</xisf>\n", time.Now().UTC().Format(time.RFC3339), version, width, height, dataLen)
+		"</xisf>\n", time.Now().UTC().Format(time.RFC3339), version, extraProps, width, height, dataLen)
 	xmlBody = strings.Replace(xmlBody, "{POS}", "0000000000", 1)
 	header := []byte(xmlBody)
 	pos := 16 + len(header)
@@ -3690,6 +3729,283 @@ func writeFloat32RGBXISF(w io.Writer, width, height int, pix []float32, divisor 
 		}
 	}
 	return nil
+}
+
+func xisfChecksum(pix []float32, divisor float32, algorithm string) (string, error) {
+	var h hash.Hash
+	switch algorithm {
+	case "SHA-256":
+		h = sha256.New()
+	case "SHA-512":
+		h = sha512.New()
+	case "SHA3-256":
+		h = sha3.New256()
+	case "SHA3-512":
+		h = sha3.New512()
+	default:
+		return "", fmt.Errorf("xisf: unsupported checksum %q", algorithm)
+	}
+	scratch := make([]byte, 4096*4)
+	inv := float32(1) / divisor
+	n := len(pix) / 3
+	for plane := range 3 {
+		base := plane * n
+		for i := 0; i < n; {
+			count := min(n-i, 4096)
+			for j := range count {
+				binary.LittleEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[base+i+j]*inv))
+			}
+			if _, err := h.Write(scratch[:count*4]); err != nil {
+				return "", err
+			}
+			i += count
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+type xisfDocument struct {
+	Version    string `xml:"version,attr"`
+	Properties []struct {
+		ID    string `xml:"id,attr"`
+		Type  string `xml:"type,attr"`
+		Value string `xml:"value,attr"`
+	} `xml:"Metadata>Property"`
+	Images []struct {
+		Geometry     string `xml:"geometry,attr"`
+		SampleFormat string `xml:"sampleFormat,attr"`
+		Bounds       string `xml:"bounds,attr"`
+		PixelStorage string `xml:"pixelStorage,attr"`
+		Location     string `xml:"location,attr"`
+	} `xml:"Image"`
+}
+
+func readFloat32RGBXISF(path string, strict bool) (width, height int, pix []float32, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	if len(data) < 16 || string(data[:8]) != "XISF0100" {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: bad signature", path)
+	}
+	if binary.LittleEndian.Uint32(data[12:16]) != 0 {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: reserved header bytes are not zero", path)
+	}
+	hdrLen := int(binary.LittleEndian.Uint32(data[8:12]))
+	if hdrLen <= 0 || 16+hdrLen > len(data) {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: invalid header length %d", path, hdrLen)
+	}
+	var doc xisfDocument
+	if err := xml.Unmarshal(data[16:16+hdrLen], &doc); err != nil {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: malformed header: %w", path, err)
+	}
+	if doc.Version != "1.0" || len(doc.Images) != 1 {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: expected one XISF 1.0 image, got version %q and %d images", path, doc.Version, len(doc.Images))
+	}
+	img := doc.Images[0]
+	geom := strings.Split(img.Geometry, ":")
+	if len(geom) != 3 {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: bad geometry %q", path, img.Geometry)
+	}
+	width, err = strconv.Atoi(geom[0])
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: bad width: %w", path, err)
+	}
+	height, err = strconv.Atoi(geom[1])
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: bad height: %w", path, err)
+	}
+	channels, err := strconv.Atoi(geom[2])
+	if err != nil || width <= 0 || height <= 0 || channels != 3 {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: unsupported geometry %q", path, img.Geometry)
+	}
+	if img.SampleFormat != "Float32" || img.PixelStorage != "Planar" {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: expected planar Float32, got %s/%s", path, img.SampleFormat, img.PixelStorage)
+	}
+	loc := strings.Split(img.Location, ":")
+	if len(loc) != 3 || loc[0] != "attachment" {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: bad location %q", path, img.Location)
+	}
+	pos, perr := strconv.Atoi(loc[1])
+	size, serr := strconv.Atoi(loc[2])
+	if perr != nil || serr != nil || pos < 16+hdrLen || size != width*height*3*4 || pos+size > len(data) {
+		return 0, 0, nil, fmt.Errorf("xisf: %s: sample mapping out of range (%s, file %d bytes)", path, img.Location, len(data))
+	}
+	props := make(map[string]string)
+	for _, p := range doc.Properties {
+		props[p.ID] = p.Value
+	}
+	if strict && props["XISF:SampleValidation"] == "true" {
+		want, ok := props["XISF:Checksum"]
+		if !ok {
+			return 0, 0, nil, fmt.Errorf("xisf: %s: missing block checksum", path)
+		}
+		got, cerr := xisfChecksumFromBytes(data[pos:pos+size], props["XISF:ChecksumAlgorithm"])
+		if cerr != nil || !strings.EqualFold(got, want) {
+			return 0, 0, nil, fmt.Errorf("xisf: %s: checksum mismatch (corrupt block)", path)
+		}
+	}
+	bounds := strings.Split(img.Bounds, ":")
+	var lo, hi float64 = 0, 1
+	if len(bounds) == 2 {
+		lo, err = strconv.ParseFloat(bounds[0], 64)
+		if err == nil {
+			hi, err = strconv.ParseFloat(bounds[1], 64)
+		}
+		if err != nil || lo >= hi {
+			return 0, 0, nil, fmt.Errorf("xisf: %s: bad bounds %q", path, img.Bounds)
+		}
+	}
+	pix = make([]float32, width*height*3)
+	for i := range pix {
+		bits := binary.LittleEndian.Uint32(data[pos+i*4:])
+		v := math.Float32frombits(bits)
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || float64(v) < lo || float64(v) > hi {
+			return 0, 0, nil, fmt.Errorf("xisf: %s: sample %d = %g outside bounds %s", path, i, v, img.Bounds)
+		}
+		pix[i] = v
+	}
+	return width, height, pix, nil
+}
+
+func xisfChecksumFromBytes(data []byte, algorithm string) (string, error) {
+	var h hash.Hash
+	switch algorithm {
+	case "SHA-256":
+		h = sha256.New()
+	case "SHA-512":
+		h = sha512.New()
+	case "SHA3-256":
+		h = sha3.New256()
+	case "SHA3-512":
+		h = sha3.New512()
+	default:
+		return "", fmt.Errorf("xisf: unsupported checksum %q", algorithm)
+	}
+	if _, err := h.Write(data); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+type bigTiffEntry struct {
+	tag   uint16
+	typ   uint16
+	count uint64
+	value uint64
+}
+
+func writeFloat32RGBBigTIFF(w io.Writer, width, height int, pix []float32) error {
+	n := width * height * 3
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("bigtiff: invalid dimensions %dx%d", width, height)
+	}
+	if len(pix) != n {
+		return fmt.Errorf("bigtiff: pixel buffer length %d does not match %dx%dx3 = %d", len(pix), width, height, n)
+	}
+	const (
+		typeShort = uint16(3)
+		typeLong  = uint16(4)
+		typeLong8 = uint16(16)
+	)
+	ifdOff := uint64(16)
+	dataOff := ifdOff + 8 + 11*20 + 8
+	inline := func(a, b uint16) uint64 { return uint64(a) | uint64(b)<<16 }
+	entries := []bigTiffEntry{
+		{256, typeLong, 1, uint64(width)},
+		{257, typeLong, 1, uint64(height)},
+		{258, typeShort, 3, inline(32, 32)},
+		{259, typeShort, 1, 1},
+		{262, typeShort, 1, 2},
+		{273, typeLong8, 1, dataOff},
+		{277, typeShort, 1, 3},
+		{278, typeLong8, 1, uint64(height)},
+		{279, typeLong8, 1, uint64(n * 4)},
+		{284, typeShort, 1, 1},
+		{339, typeShort, 3, inline(sampleFormatFloat, sampleFormatFloat)},
+	}
+	hdr := make([]byte, 16)
+	copy(hdr, "II")
+	binary.LittleEndian.PutUint16(hdr[2:], 43)
+	binary.LittleEndian.PutUint16(hdr[4:], 8)
+	binary.LittleEndian.PutUint64(hdr[8:], ifdOff)
+	if _, err := w.Write(hdr); err != nil {
+		return err
+	}
+	var buf [20]byte
+	binary.LittleEndian.PutUint64(buf[:8], uint64(len(entries)))
+	if _, err := w.Write(buf[:8]); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		binary.LittleEndian.PutUint16(buf[0:], e.tag)
+		binary.LittleEndian.PutUint16(buf[2:], e.typ)
+		binary.LittleEndian.PutUint64(buf[4:], e.count)
+		binary.LittleEndian.PutUint64(buf[12:], e.value)
+		if _, err := w.Write(buf[:]); err != nil {
+			return err
+		}
+	}
+	binary.LittleEndian.PutUint64(buf[:8], 0)
+	if _, err := w.Write(buf[:8]); err != nil {
+		return err
+	}
+	scratch := make([]byte, 4096*4)
+	for i := 0; i < n; {
+		count := min(n-i, 4096)
+		for j := range count {
+			binary.LittleEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[i+j]))
+		}
+		if _, err := w.Write(scratch[:count*4]); err != nil {
+			return err
+		}
+		i += count
+	}
+	return nil
+}
+
+func readFloat32RGBBigTIFF(path string) (width, height int, pix []float32, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	if len(data) < 16 || string(data[:2]) != "II" || binary.LittleEndian.Uint16(data[2:4]) != 43 ||
+		binary.LittleEndian.Uint16(data[4:6]) != 8 {
+		return 0, 0, nil, fmt.Errorf("bigtiff: %s: bad header", path)
+	}
+	pos := binary.LittleEndian.Uint64(data[8:16])
+	if pos+8 > uint64(len(data)) {
+		return 0, 0, nil, fmt.Errorf("bigtiff: %s: IFD out of range", path)
+	}
+	nEntries := binary.LittleEndian.Uint64(data[pos : pos+8])
+	if nEntries != 11 || pos+8+nEntries*20+8 > uint64(len(data)) {
+		return 0, 0, nil, fmt.Errorf("bigtiff: %s: bad IFD entry count %d", path, nEntries)
+	}
+	tags := make(map[uint16]bigTiffEntry)
+	for i := uint64(0); i < nEntries; i++ {
+		off := pos + 8 + i*20
+		e := bigTiffEntry{
+			tag:   binary.LittleEndian.Uint16(data[off:]),
+			typ:   binary.LittleEndian.Uint16(data[off+2:]),
+			count: binary.LittleEndian.Uint64(data[off+4:]),
+			value: binary.LittleEndian.Uint64(data[off+12:]),
+		}
+		tags[e.tag] = e
+	}
+	width = int(tags[256].value)
+	height = int(tags[257].value)
+	stripOff := tags[273].value
+	stripBytes := tags[279].value
+	if width <= 0 || height <= 0 || tags[259].value != 1 || tags[277].value != 3 ||
+		tags[262].value != 2 || tags[273].typ != 16 || stripBytes != uint64(width*height*3*4) ||
+		stripOff+stripBytes > uint64(len(data)) {
+		return 0, 0, nil, fmt.Errorf("bigtiff: %s: unsupported layout", path)
+	}
+	pix = make([]float32, width*height*3)
+	for i := range pix {
+		pix[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[stripOff+uint64(i)*4:]))
+	}
+	return width, height, pix, nil
 }
 
 // fitsWCS returns the plate-solution WCS with SIP coefficients attached,
@@ -4384,6 +4700,92 @@ type processingReport struct {
 	PlateSolution         *plateSolution
 }
 
+type provEntity struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Label string `json:"label"`
+}
+
+type provActivity struct {
+	ID            string         `json:"id"`
+	StartTime     string         `json:"startedAtTime"`
+	EndTime       string         `json:"endedAtTime"`
+	Description   string         `json:"description"`
+	Configuration map[string]any `json:"configuration"`
+}
+
+type provAgent struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Build   string `json:"build"`
+}
+
+type provRelation struct {
+	Subject string `json:"subject"`
+	Object  string `json:"object"`
+	Role    string `json:"role,omitempty"`
+}
+
+type provDocument struct {
+	Namespace    map[string]string `json:"namespace"`
+	Entities     []provEntity      `json:"entities"`
+	Activities   []provActivity    `json:"activities"`
+	Agents       []provAgent       `json:"agents"`
+	GeneratedBy  []provRelation    `json:"wasGeneratedBy"`
+	AttributedTo []provRelation    `json:"wasAttributedTo"`
+	Used         []provRelation    `json:"used"`
+	ConfiguredBy []provRelation    `json:"wasConfiguredBy"`
+}
+
+func buildProvenanceDocument(rep *processingReport, opts runOptions) provDocument {
+	doc := provDocument{
+		Namespace: map[string]string{"skystacker": "https://github.com/computerphysicslab/skystacker#"},
+		Entities: []provEntity{
+			{ID: "skystacker:input", Type: "dataset", Label: rep.InputDir},
+			{ID: "skystacker:stack", Type: "stack", Label: "stacked_mean.f32raw"},
+			{ID: "skystacker:report", Type: "report", Label: "report.txt"},
+		},
+		Activities: []provActivity{{
+			ID:          "skystacker:run",
+			StartTime:   rep.Timestamp.UTC().Format(time.RFC3339),
+			EndTime:     rep.Timestamp.Add(rep.Duration).UTC().Format(time.RFC3339),
+			Description: "SkyStacker " + version + " reduction: " + rep.Method + " stacking",
+			Configuration: map[string]any{
+				"version": version, "buildDate": resolveBuildDate(), "method": rep.Method,
+				"workers": rep.Workers, "registration": rep.RegistrationOn,
+				"sigmaClip": opts.SigmaClipThreshold, "sigmaIters": opts.SigmaClipIters,
+				"sigmaLow": opts.SigmaClipLow, "sigmaHigh": opts.SigmaClipHigh,
+				"tileSize": opts.TileSize, "bgDegree": opts.BGDegree,
+				"selfFlatModel": rep.SelfFlatModel, "selfFlatDegree": rep.SelfFlatDegree,
+				"selfFlatCellSize": rep.SelfFlatCellSize, "calibration": strings.Join(appendIf(rep.SelfFlatApplied, "self-flat"), ","),
+				"resolvedFlags": rep.ResolvedFlags,
+			},
+		}},
+		Agents: []provAgent{{ID: "skystacker:agent", Name: "SkyStacker", Version: version, Build: resolveBuildDate()}},
+		GeneratedBy: []provRelation{
+			{Subject: "skystacker:stack", Object: "skystacker:run"},
+			{Subject: "skystacker:report", Object: "skystacker:run"},
+		},
+		AttributedTo: []provRelation{{Subject: "skystacker:run", Object: "skystacker:agent"}},
+		Used:         []provRelation{{Subject: "skystacker:run", Object: "skystacker:input", Role: "lights"}},
+		ConfiguredBy: []provRelation{{Subject: "skystacker:run", Object: "skystacker:run"}},
+	}
+	if rep.PlateSolution != nil {
+		sol := rep.PlateSolution
+		doc.Entities = append(doc.Entities, provEntity{ID: "skystacker:plate", Type: "wcs", Label: "plate_solution.json"})
+		doc.GeneratedBy = append(doc.GeneratedBy, provRelation{Subject: "skystacker:plate", Object: "skystacker:run"})
+		doc.Activities[0].Configuration["plateSolveMethod"] = sol.Method
+		doc.Activities[0].Configuration["plateSolveRmsArcsec"] = sol.RMSArcsec
+		doc.Activities[0].Configuration["plateSolveMatches"] = sol.NMatches
+		doc.Activities[0].Configuration["gaiaNside"] = opts.GaiaNside
+		doc.Activities[0].Configuration["gaiaMagLimit"] = opts.GaiaMagLimit
+		doc.Activities[0].Configuration["gaiaMirror"] = opts.GaiaMirror
+		doc.Used = append(doc.Used, provRelation{Subject: "skystacker:run", Object: "skystacker:plate", Role: "catalogue-cache"})
+	}
+	return doc
+}
+
 type errWriter struct {
 	w   io.Writer
 	err error
@@ -4546,14 +4948,23 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.CreateFITS {
 		add("--fits")
 	}
+	if o.CreateBigTIFF {
+		add("--bigtiff")
+	}
 	if o.CreateXISF {
 		add("--xisf")
+		if o.XISFRev2 {
+			add("--xisf-rev2")
+		}
 	}
 	if o.HFRQuality {
 		add("--hfr-quality")
 	}
 	if o.Annotate {
 		add("--annotate")
+		if o.AnnotationCatalogs != "" {
+			add("--annotation-catalogs " + quoteReportArg(o.AnnotationCatalogs))
+		}
 	}
 	if o.Starless {
 		add("--starless")
@@ -4561,11 +4972,17 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.JSONReport {
 		add("--json-report")
 	}
+	if o.Provenance {
+		add("--provenance")
+	}
 	if o.BGMultiscale {
 		add("--bg-multiscale")
 	}
 	if o.Deconvolve {
 		add(fmt.Sprintf("--deconvolve --deconv-sigma %g --deconv-iters %d", o.DeconvSigma, o.DeconvIters))
+		if o.DeconvolveGrid {
+			add(fmt.Sprintf("--deconvolve-grid --deconv-grid-size %d", o.DeconvGridSize))
+		}
 	}
 	if o.Resume {
 		add("--resume")
@@ -4971,14 +5388,20 @@ type runOptions struct {
 	CreateTIFF             bool
 	CreateFITS             bool
 	CreateXISF             bool
+	XISFRev2               bool
+	CreateBigTIFF          bool
 	HFRQuality             bool
 	Annotate               bool
+	AnnotationCatalogs     string
 	Starless               bool
 	JSONReport             bool
+	Provenance             bool
 	BGMultiscale           bool
 	Deconvolve             bool
 	DeconvSigma            float64
 	DeconvIters            int
+	DeconvolveGrid         bool
+	DeconvGridSize         int
 	Narrowband             string
 	NBChannelA             string
 	NBChannelB             string
@@ -5008,7 +5431,10 @@ type runOptions struct {
 
 	PlateSolve bool
 	// GaiaOffline makes the plate-solve step use only cached Gaia tiles.
-	GaiaOffline bool
+	GaiaOffline  bool
+	GaiaMirror   string
+	GaiaNside    int
+	GaiaMagLimit float64
 	// PlateCenter is "RA,DEC" in decimal degrees; empty means "fall back
 	// to the reference frame's FITS header RA/DEC, else blind".
 	PlateCenter string
@@ -6757,7 +7183,7 @@ func reduceTilesStack(
 					}
 					return
 				}
-				if n := atomic.AddInt64(&completedTiles, 1); n%int64(reportEvery) == 0 || n == totalTiles {
+				if n := atomic.AddInt64(&completedTiles, 1); n%int64(reportEvery) == 0 || (n == totalTiles && totalTiles > 1) {
 					logf("  reduce: %d/%d tiles (%.1f%%, %.0fs elapsed)", n, totalTiles, 100.0*float64(n)/float64(totalTiles), time.Since(startRed).Seconds())
 				}
 			}
@@ -8550,6 +8976,13 @@ func referenceFITSSeed(path string) (float64, float64, bool) {
 	return ra, dec, true
 }
 
+func selfFlatGammaNote(linear bool) string {
+	if linear {
+		return "Gamma-aware (EOTF) correction is enabled (--self-flat-linear-srgb, experimental); division is performed in linear light."
+	}
+	return "Gamma-aware (EOTF) correction is not applied; division is approximate for sRGB/encoded pipeline data."
+}
+
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
 	var plateSolutionOut *plateSolution
@@ -10155,9 +10588,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	sumTiff := filepath.Join(tiffDir, "stacked_sum.tif")
 	sumFits := filepath.Join(outputDir, "stacked_sum.fits")
 	sumXisf := filepath.Join(outputDir, "stacked_sum.xisf")
+	sumBigTiff := filepath.Join(outputDir, "stacked_sum.bigtif")
 	sumJPG := filepath.Join(outputDir, "stacked_sum.jpg")
 	meanFits := filepath.Join(outputDir, "stacked_mean.fits")
 	meanXisf := filepath.Join(outputDir, "stacked_mean.xisf")
+	meanBigTiff := filepath.Join(outputDir, "stacked_mean.bigtif")
 	meanWorkPath := filepath.Join(workDir, "stacked_mean.f32raw")
 	meanJPG := filepath.Join(outputDir, "stacked_mean.jpg")
 	noCorrJPG := filepath.Join(outputDir, "stacked_no_correction_mean.jpg")
@@ -10226,9 +10661,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateXISF {
 			logf("Writing registered sum XISF")
 			if err := writeFileAtomic(sumXisf, func(w io.Writer) error {
-				return writeFloat32RGBXISF(w, outW, outH, sumPix, sumDivisor)
+				return writeFloat32RGBXISF(w, outW, outH, sumPix, sumDivisor, opts.XISFRev2)
 			}); err != nil {
 				return fmt.Errorf("write sum xisf: %w", err)
+			}
+		}
+		if opts.CreateBigTIFF {
+			if err := writeFileAtomic(sumBigTiff, func(w io.Writer) error {
+				return writeFloat32RGBBigTIFF(w, outW, outH, sumPix)
+			}); err != nil {
+				return fmt.Errorf("write sum bigtiff: %w", err)
 			}
 		}
 		logf("Writing registered sum preview")
@@ -10261,9 +10703,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		if opts.CreateXISF {
 			if err := writeFileAtomic(meanXisf, func(w io.Writer) error {
-				return writeFloat32RGBXISF(w, outW, outH, meanPix, 1)
+				return writeFloat32RGBXISF(w, outW, outH, meanPix, 1, opts.XISFRev2)
 			}); err != nil {
 				return fmt.Errorf("write mean xisf: %w", err)
+			}
+		}
+		if opts.CreateBigTIFF {
+			if err := writeFileAtomic(meanBigTiff, func(w io.Writer) error {
+				return writeFloat32RGBBigTIFF(w, outW, outH, meanPix)
+			}); err != nil {
+				return fmt.Errorf("write mean bigtiff: %w", err)
 			}
 		}
 		logf("Writing registered mean preview")
@@ -10376,9 +10825,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateXISF {
 			logf("Writing sum XISF")
 			if err := writeFileAtomic(sumXisf, func(w io.Writer) error {
-				return writeFloat32RGBXISF(w, outW, outH, sumPix, sumDivisor)
+				return writeFloat32RGBXISF(w, outW, outH, sumPix, sumDivisor, opts.XISFRev2)
 			}); err != nil {
 				return fmt.Errorf("write sum xisf: %w", err)
+			}
+		}
+		if opts.CreateBigTIFF {
+			if err := writeFileAtomic(sumBigTiff, func(w io.Writer) error {
+				return writeFloat32RGBBigTIFF(w, outW, outH, sumPix)
+			}); err != nil {
+				return fmt.Errorf("write sum bigtiff: %w", err)
 			}
 		}
 		logf("Writing sum preview")
@@ -10411,9 +10867,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		if opts.CreateXISF {
 			if err := writeFileAtomic(meanXisf, func(w io.Writer) error {
-				return writeFloat32RGBXISF(w, outW, outH, meanPix, 1)
+				return writeFloat32RGBXISF(w, outW, outH, meanPix, 1, opts.XISFRev2)
 			}); err != nil {
 				return fmt.Errorf("write mean xisf: %w", err)
+			}
+		}
+		if opts.CreateBigTIFF {
+			if err := writeFileAtomic(meanBigTiff, func(w io.Writer) error {
+				return writeFloat32RGBBigTIFF(w, outW, outH, meanPix)
+			}); err != nil {
+				return fmt.Errorf("write mean bigtiff: %w", err)
 			}
 		}
 		logf("Writing mean preview")
@@ -10534,10 +10997,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if selfFlatApplied {
 		if selfFlat.Model == "grid" {
 			notes = append(notes, fmt.Sprintf(
-				"Self-flat (grid): derived from %d unregistered frames in sensor coordinates (degree-%d Chebyshev, %d px cells, %d/%d valid cells, %d rejected by the 5x5 filter, mask fraction %.1f%%) and applied before resampling (center/edge=%.4f, fit RMS=%.5f, OLS RMS=%.5f, radial RMS=%.5f, IRLS iterations=%d, min=%.4f, max=%.4f). This is a relative illumination model, not a sensor-level flat: it cannot correct dust, and a stable sky gradient may be absorbed. Gamma-aware (EOTF) correction is not applied; division is approximate for sRGB/encoded pipeline data.",
+				"Self-flat (grid): derived from %d unregistered frames in sensor coordinates (degree-%d Chebyshev, %d px cells, %d/%d valid cells, %d rejected by the 5x5 filter, mask fraction %.1f%%) and applied before resampling (center/edge=%.4f, fit RMS=%.5f, OLS RMS=%.5f, radial RMS=%.5f, IRLS iterations=%d, min=%.4f, max=%.4f). This is a relative illumination model, not a sensor-level flat: it cannot correct dust, and a stable sky gradient may be absorbed. %s",
 				selfFlat.Frames, selfFlat.Degree, selfFlat.CellSize, selfFlat.ValidCells, selfFlat.TotalCells,
 				selfFlat.RejectedCells, 100*selfFlat.MaskedFrac, selfFlat.CenterEdge, selfFlat.ResidualRMS,
-				selfFlat.OLSRMS, selfFlat.RadialRMS, selfFlat.IRLSIters, selfFlat.Min, selfFlat.Max))
+				selfFlat.OLSRMS, selfFlat.RadialRMS, selfFlat.IRLSIters, selfFlat.Min, selfFlat.Max,
+				selfFlatGammaNote(opts.SelfFlatLinearSRGB)))
 			if selfFlat.Extrapolated {
 				notes = append(notes, "Self-flat (grid): the fit extrapolates over at least one dropped edge cell; check the field border for vignetting or clipping.")
 			}
@@ -10755,6 +11219,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			logf("WARNING: could not write report.json: %v", err)
 		}
 	}
+	if opts.Provenance {
+		provPath := filepath.Join(outputDir, "provenance.json")
+		if err := writeJSON(provPath, buildProvenanceDocument(rep, opts)); err != nil {
+			logf("WARNING: could not write provenance.json: %v", err)
+		} else {
+			rep.OutputFiles = append(rep.OutputFiles, provPath)
+		}
+	}
 
 	logf("Actual processing time: %s", rep.Duration.Round(time.Millisecond))
 	if cacheDir != "" && !opts.KeepCache {
@@ -10800,6 +11272,72 @@ type anomalyRecord struct {
 	RA   float64 `json:"ra"`
 	Dec  float64 `json:"dec"`
 	Flux float64 `json:"flux"`
+	SNR  float64 `json:"snr"`
+}
+
+type annotationCatalogEntry struct {
+	Name  string  `json:"name"`
+	Type  string  `json:"type"`
+	RA    float64 `json:"ra"`
+	Dec   float64 `json:"dec"`
+	Mag   float64 `json:"mag"`
+	Major float64 `json:"major"`
+	Minor float64 `json:"minor"`
+	PA    float64 `json:"pa"`
+}
+
+type annotatedSource struct {
+	x, y         float64
+	name, kind   string
+	major, minor float64
+	pa           float64
+}
+
+func loadAnnotationCatalogs(spec string) ([]annotationCatalogEntry, error) {
+	var out []annotationCatalogEntry
+	if strings.TrimSpace(spec) == "" {
+		return out, nil
+	}
+	for _, path := range strings.Split(spec, ",") {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("annotation catalog %s: %w", path, err)
+		}
+		var entries []annotationCatalogEntry
+		if err := json.Unmarshal(data, &entries); err != nil {
+			return nil, fmt.Errorf("annotation catalog %s: %w", path, err)
+		}
+		for _, e := range entries {
+			if e.Name == "" {
+				e.Name = filepath.Base(path)
+			}
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func flagUnassociated(snr float64) bool { return snr > 5 }
+
+func drawEllipseOutline(img *image.RGBA, cx, cy, a, b, paDeg float64, col color.RGBA) {
+	if a <= 0 || b <= 0 {
+		return
+	}
+	pa := paDeg * math.Pi / 180
+	cp, sp := math.Cos(pa), math.Sin(pa)
+	for i := range 128 {
+		t := 2 * math.Pi * float64(i) / 128
+		u, v := a*math.Cos(t), b*math.Sin(t)
+		x := int(math.Round(cx + u*cp - v*sp))
+		y := int(math.Round(cy + u*sp + v*cp))
+		if x >= 0 && y >= 0 && x < img.Bounds().Dx() && y < img.Bounds().Dy() {
+			img.Set(x, y, col)
+		}
+	}
 }
 
 // runCatalogAnnotation projects cached Gaia stars through the stored plate
@@ -10835,29 +11373,59 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 		logf("Catalog annotation: cannot read stack: %v", err)
 		return nil
 	}
-	type projected struct{ x, y float64 }
-	cat := make([]projected, 0, len(tile.Stars))
+	extra, err := loadAnnotationCatalogs(opts.AnnotationCatalogs)
+	if err != nil {
+		logf("Catalog annotation: %v", err)
+		return err
+	}
+	cat := make([]annotatedSource, 0, len(tile.Stars)+len(extra))
 	for _, st := range tile.Stars {
 		x, y := wcsTanForward(&w, st.RA, st.Dec)
 		if x >= 0 && y >= 0 && x < float64(iw) && y < float64(ih) {
-			cat = append(cat, projected{x: x, y: y})
+			cat = append(cat, annotatedSource{x: x, y: y, name: "Gaia", kind: "star"})
 		}
 	}
-	stars := detectStars(&frame{Width: iw, Height: ih, Pix: pix}, 300)
+	for _, e := range extra {
+		x, y := wcsTanForward(&w, e.RA*math.Pi/180, e.Dec*math.Pi/180)
+		if x >= 0 && y >= 0 && x < float64(iw) && y < float64(ih) {
+			cat = append(cat, annotatedSource{x: x, y: y, name: e.Name, kind: e.Type, major: e.Major, minor: e.Minor, pa: e.PA})
+		}
+	}
+	srcFrame := &frame{Width: iw, Height: ih, Pix: pix}
+	stars := detectStars(srcFrame, 300)
+	bgSigma := estimateFrameBgNoise(srcFrame)
 	const tolPix = 8.0
 	var anomalies []anomalyRecord
+	type matchRecord struct {
+		X       float64 `json:"x"`
+		Y       float64 `json:"y"`
+		Name    string  `json:"name"`
+		Type    string  `json:"type"`
+		DistPix float64 `json:"dist_pix"`
+	}
+	var matches []matchRecord
 	for _, st := range stars {
 		best := tolPix
-		for _, c := range cat {
+		bestIdx := -1
+		for i, c := range cat {
 			d := math.Hypot(c.x-st.X, c.y-st.Y)
 			if d < best {
-				best = d
+				best, bestIdx = d, i
 			}
 		}
-		if best >= tolPix {
-			ra, dec := wcsTanInverseSIP(&w, st.X, st.Y)
-			anomalies = append(anomalies, anomalyRecord{X: st.X, Y: st.Y, RA: ra, Dec: dec, Flux: st.Flux})
+		if bestIdx >= 0 {
+			matches = append(matches, matchRecord{X: st.X, Y: st.Y, Name: cat[bestIdx].name, Type: cat[bestIdx].kind, DistPix: best})
+			continue
 		}
+		snr := 0.0
+		if bgSigma > 0 {
+			snr = st.Flux / (bgSigma * math.Sqrt(float64(max(st.Size, 1))))
+		}
+		if !flagUnassociated(snr) {
+			continue
+		}
+		ra, dec := wcsTanInverseSIP(&w, st.X, st.Y)
+		anomalies = append(anomalies, anomalyRecord{X: st.X, Y: st.Y, RA: ra, Dec: dec, Flux: st.Flux, SNR: snr})
 	}
 	jpgPath := filepath.Join(outputDir, "stacked_mean.jpg")
 	if f, err := os.Open(jpgPath); err == nil {
@@ -10882,7 +11450,11 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 			green := color.RGBA{0, 255, 0, 255}
 			red := color.RGBA{255, 0, 0, 255}
 			for _, c := range cat {
-				cross(c.x, c.y, green, 2)
+				if c.major > 0 && c.minor > 0 {
+					drawEllipseOutline(rgba, c.x, c.y, c.major, c.minor, c.pa, green)
+				} else {
+					cross(c.x, c.y, green, 2)
+				}
 			}
 			for _, a := range anomalies {
 				cross(a.X, a.Y, red, 4)
@@ -10904,6 +11476,9 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 	}
 	if err := writeJSON(filepath.Join(outputDir, "anomalies.json"), anomalies); err != nil {
 		logf("Catalog annotation: anomalies.json: %v", err)
+	}
+	if err := writeJSON(filepath.Join(outputDir, "catalog_matches.json"), matches); err != nil {
+		logf("Catalog annotation: catalog_matches.json: %v", err)
 	}
 	return nil
 }
@@ -14816,6 +15391,19 @@ func testSinglePassSigmaClipEquivalence() error {
 	return nil
 }
 
+func testSelfFlatGammaNote() error {
+	encoded := selfFlatGammaNote(false)
+	linear := selfFlatGammaNote(true)
+	if encoded == linear || !strings.Contains(encoded, "not applied") || !strings.Contains(linear, "linear light") {
+		return fmt.Errorf("gamma notes not distinct: %q / %q", encoded, linear)
+	}
+	opts, err := parseArgs([]string{"--self-flat-linear-srgb"})
+	if err != nil || !opts.SelfFlatLinearSRGB {
+		return fmt.Errorf("--self-flat-linear-srgb parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testResampleSIP() error {
 	w := &wcsTan{CRPIX1: 16, CRPIX2: 12, SIP: []float64{1e-3, 0, 5e-4, 0, -2e-4, 3e-4}}
 	for _, p := range []point2D{{20, 20}, {60, 40}, {200, 100}} {
@@ -16374,6 +16962,9 @@ func runSelfTests() int {
 		{"TIFF round trip", testTIFFRoundTrip},
 		{"fits writer round-trip", testFITSWriterRoundTrip},
 		{"xisf writer round-trip", testXISFWrite},
+		{"xisf rev2 checksum", testXISFRev2RoundTrip},
+		{"bigtiff round trip", testBigTIFFRoundTrip},
+		{"provenance DM graph", testProvenanceDM},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
 		{"TIFF bad input", testTIFFBadInput},
@@ -16414,6 +17005,8 @@ func runSelfTests() int {
 		{"resume from stack", testResumeFromStack},
 		{"plate solve post-only starless", testPlateSolvePostOnlyNoStars},
 		{"catalog annotation skip", testCatalogAnnotationSkip},
+		{"WCS catalog overlay", testWCSCatalogOverlay},
+		{"unassociated source flagging", testUnassociatedSourceFlagging},
 		{"pipeline starless", testPipelineStarless},
 		{"remove stars basic", testRemoveStarsBasic},
 		{"remove stars empty", testRemoveStarsEmpty},
@@ -16455,6 +17048,7 @@ func runSelfTests() int {
 		{"single-pass sigma clip equivalence", testSinglePassSigmaClipEquivalence},
 		{"external AI sidecar", testExternalAISidecar},
 		{"resample SIP order 2", testResampleSIP},
+		{"self-flat gamma report note", testSelfFlatGammaNote},
 		{"sigma clip all same", testSigmaClipAllSame},
 		{"sigma clip reduce weighted", testSigmaClipReduceWeighted},
 		{"weighted median", testWeightedMedian},
@@ -16480,6 +17074,7 @@ func runSelfTests() int {
 		{"multiscale background", testMultiscaleBackground},
 		{"config file", testConfigFile},
 		{"richardson lucy", testRichardsonLucy},
+		{"gridded richardson lucy", testRichardsonLucyGrid},
 		{"narrowband mapping", testNarrowband},
 		{"drizzle upsample", testDrizzleUpsample},
 		{"wavesharp", testWaveSharpen},
@@ -16840,6 +17435,164 @@ func testXISFWrite() error {
 		if math.Abs(float64(got[i]-pix[i]/2)) > 1e-6 {
 			return fmt.Errorf("XISF pixel[%d] = %g, want %g", i, got[i], pix[i]/2)
 		}
+	}
+	return nil
+}
+
+func testXISFRev2RoundTrip() error {
+	const w, h = 4, 3
+	pix := make([]float32, w*h*3)
+	for i := range pix {
+		pix[i] = float32(i%7) / 7
+	}
+	dir, err := os.MkdirTemp("", "skystacker-xisf-rev2-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "stacked.xisf")
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := writeFloat32RGBXISF(f, w, h, pix, 1, true); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !bytes.Contains(raw, []byte("XISF:ChecksumAlgorithm")) || !bytes.Contains(raw, []byte("SHA3-256")) ||
+		!bytes.Contains(raw, []byte("XISF:SampleValidation")) {
+		return errors.New("XISF Rev 2 properties missing")
+	}
+	rw, rh, got, err := readFloat32RGBXISF(path, true)
+	if err != nil {
+		return err
+	}
+	if rw != w || rh != h || len(got) != len(pix) {
+		return fmt.Errorf("XISF Rev 2 geometry %dx%d/%d", rw, rh, len(got))
+	}
+	for i := range pix {
+		if got[i] != pix[i] {
+			return fmt.Errorf("XISF Rev 2 pixel %d = %g, want %g", i, got[i], pix[i])
+		}
+	}
+	loc := bytes.Index(raw, []byte("attachment:"))
+	if loc < 0 {
+		return errors.New("missing attachment")
+	}
+	colon := bytes.IndexByte(raw[loc:], '"')
+	parts := strings.Split(string(raw[loc:loc+colon]), ":")
+	if len(parts) != 3 {
+		return fmt.Errorf("bad Rev 2 location %q", string(raw[loc:loc+colon]))
+	}
+	dataPos, _ := strconv.Atoi(parts[1])
+	corrupt := append([]byte(nil), raw...)
+	corrupt[dataPos] ^= 0xff
+	if err := os.WriteFile(path, corrupt, 0o644); err != nil {
+		return err
+	}
+	if _, _, _, err := readFloat32RGBXISF(path, true); err == nil {
+		return errors.New("corrupt XISF block was accepted")
+	}
+	if _, _, _, err := readFloat32RGBXISF(path, false); err != nil {
+		return fmt.Errorf("legacy read should not verify checksums: %v", err)
+	}
+	opts, err := parseArgs([]string{"--xisf", "--xisf-rev2"})
+	if err != nil || !opts.CreateXISF || !opts.XISFRev2 {
+		return fmt.Errorf("XISF Rev 2 flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testProvenanceDM() error {
+	rep := &processingReport{
+		Version:          version,
+		Timestamp:        time.Unix(1763462400, 0),
+		InputDir:         "/tmp/lights",
+		Method:           "sigma",
+		Workers:          4,
+		RegistrationOn:   true,
+		SelfFlatModel:    "grid",
+		SelfFlatDegree:   4,
+		SelfFlatCellSize: 64,
+		Duration:         3 * time.Second,
+		ResolvedFlags:    []string{"--method sigma"},
+		PlateSolution: &plateSolution{
+			Method: "seeded", RMSArcsec: 0.4, NMatches: 42,
+		},
+	}
+	opts := runOptions{SigmaClipThreshold: 3, SigmaClipIters: 2, GaiaNside: 64, GaiaMagLimit: 14}
+	doc := buildProvenanceDocument(rep, opts)
+	if len(doc.Entities) < 3 || len(doc.Activities) != 1 || len(doc.Agents) != 1 ||
+		len(doc.GeneratedBy) < 2 || len(doc.AttributedTo) != 1 || len(doc.Used) < 1 || len(doc.ConfiguredBy) != 1 {
+		return fmt.Errorf("incomplete provenance graph: %+v", doc)
+	}
+	if doc.Activities[0].Configuration["method"] != "sigma" || doc.Activities[0].Configuration["plateSolveMatches"] != 42 {
+		return fmt.Errorf("provenance configuration missing values: %+v", doc.Activities[0].Configuration)
+	}
+	if _, err := json.Marshal(doc); err != nil {
+		return err
+	}
+	cli, err := parseArgs([]string{"--provenance"})
+	if err != nil || !cli.Provenance {
+		return fmt.Errorf("--provenance parse: %+v err=%v", cli, err)
+	}
+	return nil
+}
+
+func testBigTIFFRoundTrip() error {
+	const w, h = 5, 4
+	pix := make([]float32, w*h*3)
+	for i := range pix {
+		pix[i] = float32(i) / 11
+	}
+	var buf bytes.Buffer
+	if err := writeFloat32RGBBigTIFF(&buf, w, h, pix); err != nil {
+		return err
+	}
+	data := buf.Bytes()
+	if len(data) < 16 || string(data[:2]) != "II" || binary.LittleEndian.Uint16(data[2:4]) != 43 ||
+		binary.LittleEndian.Uint16(data[4:6]) != 8 {
+		return errors.New("bad BigTIFF header")
+	}
+	dir, err := os.MkdirTemp("", "skystacker-bigtiff-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "stacked.bigtif")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	rw, rh, got, err := readFloat32RGBBigTIFF(path)
+	if err != nil {
+		return err
+	}
+	if rw != w || rh != h || len(got) != len(pix) {
+		return fmt.Errorf("BigTIFF geometry %dx%d/%d", rw, rh, len(got))
+	}
+	for i := range pix {
+		if got[i] != pix[i] {
+			return fmt.Errorf("BigTIFF pixel %d = %g, want %g", i, got[i], pix[i])
+		}
+	}
+	corrupt := append([]byte(nil), data...)
+	corrupt[3] = 44
+	if err := os.WriteFile(path, corrupt, 0o644); err != nil {
+		return err
+	}
+	if _, _, _, err := readFloat32RGBBigTIFF(path); err == nil {
+		return errors.New("corrupt BigTIFF magic accepted")
+	}
+	opts, err := parseArgs([]string{"--bigtiff"})
+	if err != nil || !opts.CreateBigTIFF {
+		return fmt.Errorf("--bigtiff parse: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -17768,6 +18521,57 @@ func testPipelineStarless() error {
 	opts, err := parseArgs([]string{"--starless"})
 	if err != nil || !opts.Starless {
 		return fmt.Errorf("--starless parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testWCSCatalogOverlay() error {
+	w := &wcsTan{
+		CRVAL1: 1.0,
+		CRVAL2: 0.5,
+		CRPIX1: 100,
+		CRPIX2: 80,
+		CD:     [2][2]float64{{-2e-5, 1e-6}, {-1e-6, -2e-5}},
+		SIP:    []float64{1e-5, 0, 5e-6, 0, -2e-6, 3e-6},
+	}
+	for _, p := range []struct{ ra, dec float64 }{{1.0, 0.5}, {1.001, 0.501}, {0.998, 0.499}} {
+		x, y := wcsTanForward(w, p.ra, p.dec)
+		ra, dec := wcsTanInverseSIP(w, x, y)
+		rx, ry := wcsTanForward(w, ra, dec)
+		if math.Abs(rx-x) > 0.05 || math.Abs(ry-y) > 0.05 {
+			return fmt.Errorf("WCS overlay round trip at %.4f,%.4f: %.4f,%.4f -> %.4f,%.4f", p.ra, p.dec, x, y, rx, ry)
+		}
+	}
+	return nil
+}
+
+func testUnassociatedSourceFlagging() error {
+	if !flagUnassociated(5.1) || flagUnassociated(5.0) || flagUnassociated(3.0) {
+		return errors.New("SNR>5 anomaly gate is wrong")
+	}
+	dir, err := os.MkdirTemp("", "skystacker-annotation-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "catalog.json")
+	data := `[{"name":"NGC 5078","type":"galaxy","ra":10.5,"dec":-5.2,"mag":11.2,"major":12,"minor":6,"pa":35}]`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		return err
+	}
+	entries, err := loadAnnotationCatalogs(path)
+	if err != nil || len(entries) != 1 || entries[0].Name != "NGC 5078" || entries[0].Major != 12 {
+		return fmt.Errorf("annotation catalog load: %+v err=%v", entries, err)
+	}
+	entries, err = loadAnnotationCatalogs("")
+	if err != nil || len(entries) != 0 {
+		return fmt.Errorf("empty catalog list: %+v err=%v", entries, err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	drawEllipseOutline(img, 20, 20, 8, 4, 35, color.RGBA{0, 255, 0, 255})
+	opts, err := parseArgs([]string{"--annotation-catalogs", path})
+	if err != nil || opts.AnnotationCatalogs != path {
+		return fmt.Errorf("--annotation-catalogs parse: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -20070,6 +20874,58 @@ func testNarrowband() error {
 	return nil
 }
 
+func testRichardsonLucyGrid() error {
+	const w, h = 96, 96
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	addStar := func(cx, cy, sig float64) {
+		for y := max(0, int(cy-4*sig)); y < min(h, int(cy+4*sig)+1); y++ {
+			for x := max(0, int(cx-4*sig)); x < min(w, int(cx+4*sig)+1); x++ {
+				dx, dy := float64(x)-cx, float64(y)-cy
+				v := float32(0.9 * math.Exp(-(dx*dx+dy*dy)/(2*sig*sig)))
+				p := (y*w + x) * 3
+				f.Pix[p], f.Pix[p+1], f.Pix[p+2] = v, v, v
+			}
+		}
+	}
+	addStar(24, 24, 1.2)
+	addStar(72, 72, 2.6)
+	sigmas := deconvGridSigmas(f, 1.5, 3)
+	distinct := false
+	for _, row := range sigmas {
+		for _, s := range row {
+			if math.Abs(s-1.5) > 0.01 {
+				distinct = true
+			}
+		}
+	}
+	if !distinct {
+		return errors.New("grid PSF map did not pick up differing star HFRs")
+	}
+	out := richardsonLucyGrid(f, 1.5, 2, 3)
+	if out.Width != w || out.Height != h || len(out.Pix) != len(f.Pix) {
+		return errors.New("gridded RL changed dimensions")
+	}
+	changed := false
+	for p := range f.Pix {
+		if math.IsNaN(float64(out.Pix[p])) || math.IsInf(float64(out.Pix[p]), 0) || out.Pix[p] < 0 {
+			return fmt.Errorf("gridded RL produced invalid sample %d = %g", p, out.Pix[p])
+		}
+		if out.Pix[p] != f.Pix[p] {
+			changed = true
+		}
+	}
+	if !changed {
+		return errors.New("gridded RL was a no-op")
+	}
+	if _, err := parseArgs([]string{"--deconvolve", "--deconvolve-grid", "--deconv-grid-size", "4"}); err != nil {
+		return err
+	}
+	if _, err := parseArgs([]string{"--deconv-grid-size", "5"}); err == nil {
+		return errors.New("invalid grid size accepted")
+	}
+	return nil
+}
+
 func testRichardsonLucy() error {
 	const w, h = 64, 64
 	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
@@ -21467,6 +22323,138 @@ func richardsonLucy(f *frame, sigma float64, iters int) *frame {
 		}
 		for p := range n {
 			out.Pix[p*3+c] = est[p]
+		}
+	}
+	return out
+}
+
+func deconvGridSigmas(f *frame, base float64, n int) [][]float64 {
+	sigmas := make([][]float64, n)
+	for y := range sigmas {
+		sigmas[y] = make([]float64, n)
+		for x := range sigmas[y] {
+			sigmas[y][x] = base
+		}
+	}
+	if f == nil || f.Width <= 0 || f.Height <= 0 {
+		return sigmas
+	}
+	sums := make([][]float64, n)
+	counts := make([][]int, n)
+	for y := range sums {
+		sums[y] = make([]float64, n)
+		counts[y] = make([]int, n)
+	}
+	for _, st := range detectStars(f, 500) {
+		if st.HFR <= 0 {
+			continue
+		}
+		gx := min(n-1, max(0, int(st.X*float64(n)/float64(f.Width))))
+		gy := min(n-1, max(0, int(st.Y*float64(n)/float64(f.Height))))
+		sums[gy][gx] += st.HFR / 1.18
+		counts[gy][gx]++
+	}
+	for y := range sigmas {
+		for x := range sigmas[y] {
+			if counts[y][x] > 0 {
+				s := sums[y][x] / float64(counts[y][x])
+				sigmas[y][x] = min(max(s, base/2), base*3)
+			}
+		}
+	}
+	return sigmas
+}
+
+func cropFrame(f *frame, x0, y0, x1, y1 int) *frame {
+	w, h := x1-x0, y1-y0
+	out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := range h {
+		src := ((y0+y)*f.Width + x0) * 3
+		copy(out.Pix[y*w*3:(y+1)*w*3], f.Pix[src:src+w*3])
+	}
+	return out
+}
+
+func richardsonLucyGrid(f *frame, base float64, iters, n int) *frame {
+	if f == nil || base <= 0 || iters < 1 || f.Width < 16 || f.Height < 16 {
+		return f
+	}
+	if n != 3 && n != 4 {
+		n = 3
+	}
+	sigmas := deconvGridSigmas(f, base, n)
+	maxSig := 0.0
+	for _, row := range sigmas {
+		for _, s := range row {
+			maxSig = max(maxSig, s)
+		}
+	}
+	pad := min(int(math.Ceil(3*maxSig))+2, min(f.Width, f.Height)/4)
+	acc := make([]float32, len(f.Pix))
+	wsum := make([]float32, f.Width*f.Height)
+	starMask := make([]bool, f.Width*f.Height)
+	for _, st := range detectStars(f, 500) {
+		r := int(math.Ceil(2 * base))
+		for dy := -r; dy <= r; dy++ {
+			for dx := -r; dx <= r; dx++ {
+				if dx*dx+dy*dy > r*r {
+					continue
+				}
+				x, y := int(math.Round(st.X))+dx, int(math.Round(st.Y))+dy
+				if x >= 0 && y >= 0 && x < f.Width && y < f.Height {
+					starMask[y*f.Width+x] = true
+				}
+			}
+		}
+	}
+	weight := func(v, lo, hi int) float64 {
+		if pad <= 0 {
+			return 1
+		}
+		d := min(v-lo, hi-1-v)
+		if d >= pad {
+			return 1
+		}
+		t := float64(d) / float64(pad)
+		return t * t * (3 - 2*t)
+	}
+	for gy := range n {
+		for gx := range n {
+			x0, x1 := gx*f.Width/n, (gx+1)*f.Width/n
+			y0, y1 := gy*f.Height/n, (gy+1)*f.Height/n
+			ex0, ex1 := max(0, x0-pad), min(f.Width, x1+pad)
+			ey0, ey1 := max(0, y0-pad), min(f.Height, y1+pad)
+			tile := cropFrame(f, ex0, ey0, ex1, ey1)
+			res := richardsonLucy(tile, sigmas[gy][gx], iters)
+			tw := tile.Width
+			for y := ey0; y < ey1; y++ {
+				wy := weight(y, ey0, ey1)
+				for x := ex0; x < ex1; x++ {
+					wt := wy * weight(x, ex0, ex1)
+					if wt <= 0 {
+						continue
+					}
+					p := y*f.Width + x
+					tp := (y-ey0)*tw + (x - ex0)
+					for c := range 3 {
+						v := res.Pix[tp*3+c]
+						if starMask[p] {
+							v = 0.5*f.Pix[p*3+c] + 0.5*v
+						}
+						acc[p*3+c] += float32(wt) * v
+					}
+					wsum[p] += float32(wt)
+				}
+			}
+		}
+	}
+	out := &frame{Width: f.Width, Height: f.Height, Pix: append([]float32(nil), f.Pix...)}
+	for p := range wsum {
+		if wsum[p] <= 0 {
+			continue
+		}
+		for c := range 3 {
+			out.Pix[p*3+c] = acc[p*3+c] / wsum[p]
 		}
 	}
 	return out
@@ -23170,8 +24158,14 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	}
 
 	if opts.Deconvolve {
-		logf("  post: Richardson-Lucy deconvolution (sigma=%g, iters=%d)", opts.DeconvSigma, opts.DeconvIters)
-		cur = richardsonLucy(cur, opts.DeconvSigma, opts.DeconvIters)
+		if opts.DeconvolveGrid {
+			logf("  post: gridded Richardson-Lucy deconvolution (base sigma=%g, grid=%dx%d, iters=%d)",
+				opts.DeconvSigma, opts.DeconvGridSize, opts.DeconvGridSize, opts.DeconvIters)
+			cur = richardsonLucyGrid(cur, opts.DeconvSigma, opts.DeconvIters, opts.DeconvGridSize)
+		} else {
+			logf("  post: Richardson-Lucy deconvolution (sigma=%g, iters=%d)", opts.DeconvSigma, opts.DeconvIters)
+			cur = richardsonLucy(cur, opts.DeconvSigma, opts.DeconvIters)
+		}
 		step1Frame = cur
 	}
 	if opts.WaveSharpen {
@@ -24496,14 +25490,20 @@ func main() {
 		CreateTIFF:             opts.CreateTIFF,
 		CreateFITS:             opts.CreateFITS,
 		CreateXISF:             opts.CreateXISF,
+		XISFRev2:               opts.XISFRev2,
+		CreateBigTIFF:          opts.CreateBigTIFF,
 		HFRQuality:             opts.HFRQuality,
 		Annotate:               opts.Annotate,
+		AnnotationCatalogs:     opts.AnnotationCatalogs,
 		Starless:               opts.Starless,
 		JSONReport:             opts.JSONReport,
+		Provenance:             opts.Provenance,
 		BGMultiscale:           opts.BGMultiscale,
 		Deconvolve:             opts.Deconvolve,
 		DeconvSigma:            opts.DeconvSigma,
 		DeconvIters:            opts.DeconvIters,
+		DeconvolveGrid:         opts.DeconvolveGrid,
+		DeconvGridSize:         opts.DeconvGridSize,
 		Narrowband:             opts.Narrowband,
 		NBChannelA:             opts.NBChannelA,
 		NBChannelB:             opts.NBChannelB,
@@ -24531,6 +25531,9 @@ func main() {
 		KeepCache:              opts.KeepCache,
 		PlateSolve:             opts.PlateSolve,
 		GaiaOffline:            opts.GaiaOffline,
+		GaiaMirror:             opts.GaiaMirror,
+		GaiaNside:              opts.GaiaNside,
+		GaiaMagLimit:           opts.GaiaMagLimit,
 		PlateCenter:            opts.PlateCenter,
 		WritePNG:               opts.WritePNG,
 		WriteBMP:               opts.WriteBMP,

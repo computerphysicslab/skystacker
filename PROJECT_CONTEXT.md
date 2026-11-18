@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 212 passing.** Update this number after any test change.
+**Self-test count: 219 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,

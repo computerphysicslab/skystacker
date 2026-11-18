@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Roadmap pass 2026-11-18: encoded/EOTF self-flat report note, extended benchmarks, `--xisf-rev2` (SHA3-256 + strict sample validation), `--bigtiff`, multi-catalog annotation with SNR>5 anomalies, `--deconvolve-grid` local PSF, `--provenance` (ProvenanceDM-style graph); self-tests 219. Items 1/9/10 blocked and 12 not accepted are documented in `ROADMAP.md`.
 - Added `--resample-sip`: order-2 SIP distortion from `plate_solution.json` is applied in the stacking resampler (undistort reference, similarity/affine warp, redistort source), with `testResampleSIP`; self-tests 212.
 - External AI CLI sidecars: `--external-bge/-denoise/-deconv/-starless` run user CLIs via private 32-bit float FITS temp files (no shell), with WCS round-trip, linear-stage guards, `--external-timeout`, cleanup and a self-executing mock test; self-tests 211.
 - Fused sigma-clip passes: the final (weighted/unweighted) mean is accumulated in the last clipping pass, the survivor list is carried into the next iteration, and tile sums are accumulated during the gather. `testSinglePassSigmaClipEquivalence` proves bit-identical results against the old two-pass references; self-tests 210. `go test -bench` shows ~0.76–0.92 µs/op vs ~0.96–1.17 µs/op for the references (N=16, 2 iterations).

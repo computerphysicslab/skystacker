@@ -29,6 +29,11 @@ cost for each stage; **they are not a comparison of output quality**.
   around `skystacker --output <dir> --resume ...`, which detects the existing
   `_work/stacked_mean.f32raw` and goes straight to post-processing.
 - Command lines are quoted verbatim so the flags that affect cost are visible.
+- **Kernel benchmarks:** `go test -run '^$' -bench 'Benchmark(SigmaClip|ReduceTilesStack|NativeCR2Decode)' -benchtime=2s -count=3 ./...`.
+  `go test` reports ns/op per run; compute the mean and coefficient of variation
+  (CV = σ/mean) across the three samples and record both. Pin the CPU governor
+  where possible and keep the machine otherwise idle; on this 15 W ULV laptop
+  thermal variance is otherwise several seconds even for end-to-end runs.
 
 ## 3. SkyStacker stacking measurements
 
@@ -188,7 +193,7 @@ The earlier 4-frame row (2m 02s) used Go 1.20.3 and the external dcraw path; it 
 
 Commands: `/home/jips/.local/bin/skystacker --output /tmp/bench_go127 --overwrite --stack-only --limit 4 --dark assets/OrionNebula/darks --bias assets/OrionNebula/biases assets/OrionNebula/lights` and the same output dir with `--resume --starless`. Same data and flags as the Go 1.26.11 rows above; the 59.937 s → 39.031 s delta includes Go 1.27 runtime improvements and normal run-to-run variance on this thermally throttled laptop, not a controlled A/B.
 
-All 212 self-tests, `go vet`, `go test`, PureRaw CGO=0/race tests, race build, and six cross-compilation targets are green on go1.27.4.
+All 219 self-tests, `go vet`, `go test`, PureRaw CGO=0/race tests, race build, and six cross-compilation targets are green on go1.27.4.
 
 ### Sigma-clip kernel microbenchmark (fused vs two-pass, 2026-11-17)
 

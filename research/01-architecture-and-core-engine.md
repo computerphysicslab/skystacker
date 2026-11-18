@@ -637,11 +637,12 @@ Statuses reflect §1/§17 appendix. Effort S/M/L/XL/∞ per the survey and [READ
 
 ## 18. Status appendix — CURRENT and historical snapshots
 
-### 18.1 CURRENT (2026-11-17)
+### 18.1 CURRENT (2026-11-18)
 
 * **Version:** v0.6.1 (binary `--version` prints 0.6.1); tag exists, main advanced beyond it.
-* **Self-tests:** **212 registered** (`./skystacker --selftest`); plus a Go 1.26 `testing/synctest` rate-limiter test via `go test ./...`.
-* **Toolchain:** **Go 1.27.4** at `/home/jips/.local/go1.27.4/bin`; `go 1.27` + `toolchain go1.27.4` in both modules; `go.work` (gitignored) links both; CI/release pinned; `go fix` modernizers applied; `main_test.go` uses `testing/synctest`. Full matrix green: gofmt, vet, build, 212 self-tests, `go test ./...`, PureRaw CGO=0 + race, race build, six static cross-build targets.
+* **Self-tests:** **219 registered** (`./skystacker --selftest`); plus a Go 1.26 `testing/synctest` rate-limiter test via `go test ./...`.
+* **Toolchain:** **Go 1.27.4** at `/home/jips/.local/go1.27.4/bin`; `go 1.27` + `toolchain go1.27.4` in both modules; `go.work` (gitignored) links both; CI/release pinned; `go fix` modernizers applied; `main_test.go` uses `testing/synctest`. Full matrix green: gofmt, vet, build, 219 self-tests, `go test ./...`, PureRaw CGO=0 + race, race build, six static cross-build targets.
+* **Roadmap pass 2026-11-18:** encoded/EOTF self-flat report note; extended Go benchmarks (tile reduction, native CR2 decode, mean/CV); `--xisf-rev2` (SHA3-256 checksum, strict sample validation, corrupt-block rejection); `--bigtiff` (64-bit offsets); multi-catalog annotation (`--annotation-catalogs`, elliptical apertures, `catalog_matches.json`, SNR>5 gate); `--deconvolve-grid` (HFR-derived local PSF, 3×3/4×4 blended tiles); `--provenance` (ProvenanceDM-style entity/activity/agent graph). Blocked/deferred: ASTAP adapter (none in code), FITS Rice + `fitsio/` tag, CR2 oracle dumps, per-frame reprojection, CFA drizzle, CR3, PCC/SPCC, observatory sidecar.
 * **`--resample-sip` implemented:** order-2 SIP from `plate_solution.json` applied in stacking resampler (undistort reference → similarity/affine warp → redistort source → bilinear sample); `testResampleSIP` verifies distort/undistort round-trip, composed mapping, synthetic star relocation, no-op with nil WCS, flag parsing. Shared-distortion assumption; per-frame reprojection open.
 * **Sigma-clip fused:** final mean folded into last clip pass, survivor list carried, tile sums gathered in one pass; bit-identical to two-pass reference; median/MAD deliberately retained.
 * **External AI sidecars implemented:** `--external-bge`, `--external-denoise`, `--external-deconv`, `--external-starless`; private 32-bit float FITS temp dir (no shell), WCS round-trip, linear-stage guard + override, `--external-timeout`, cleanup, self-executing mock test (`--internal-ai-sidecar-mock`). No ML runtime/weights embedded; tools user-supplied/licensed → [06](06-external-ai-sidecars.md).

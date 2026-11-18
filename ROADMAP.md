@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-18 · **Current state:** v0.6.1, 212 registered self-tests,
+**Updated:** 2026-11-18 · **Current state:** v0.6.1, 219 registered self-tests,
 Go 1.27.4, PureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Take the first pending item unless a
@@ -17,6 +17,24 @@ evidence; acceptance criteria there are authoritative.
 5. Order-2 SIP in the stacking resampler (`--resample-sip`).
 6. Research folder consolidated into flat thematic files plus the ingestion
    script `scripts/consolidate-research.py`.
+
+### Status of this pass (2026-11-18)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | ASTAP interoperability hardening | **Blocked** — no ASTAP adapter exists in the code; research-only spec |
+| 2 | Encoded-space self-flat warning | **Done** — report states encoded vs EOTF path |
+| 3 | Benchmark methodology extension | **Done** — tile-reduction and native-CR2 benchmarks + CV methodology |
+| 4 | XISF Rev 2 conformance | **Done** — `--xisf-rev2`, SHA3-256 checksum, strict sample validation |
+| 5 | BigTIFF float32 export | **Done** — `--bigtiff`, 64-bit offsets, round-trip test |
+| 6 | Validate gamma-aware self-flat | **Done** — two real-data runs; default unchanged |
+| 7 | Catalog annotation / anomaly extension | **Done** — extra JSON catalogs, elliptical apertures, SNR>5 gate |
+| 8 | Spatially gridded PSF for RL | **Done** — `--deconvolve-grid`, HFR-derived 3×3/4×4 PSF grid |
+| 9 | FITS Rice + `fitsio/` module | **Blocked** — needs pushed submodule tag and cfitsio conformance validation |
+| 10 | CR2 bit-exact validation | **Blocked** — needs dedicated raw-Bayer oracle dumps |
+| 11 | IVOA ProvenanceDM emission | **Done** — `--provenance` writes `provenance.json` |
+| 12 | Real-flat validation gate | **Executed, not accepted** — bundled flats are not matched to the lights |
+| 13–17 | Large L/XL items | **Deferred** — beyond this pass; see "Deferred" below |
 
 ## Pending — easy to hard
 

@@ -522,10 +522,10 @@ Kernel-level profilers **Parca** and **Pyroscope** use **eBPF** (extended Berkel
 | Format | Key structure / limits | SkyStacker relevance | Refs |
 | :--- | :--- | :--- | :--- |
 | **TIFF 6.0** | 8/16/32-bit samples, `SampleFormat=3` = IEEE float; IFD tags/offsets; strips & tiles; little/big endian; GeoTIFF extension | float32 TIFF read/write baseline; `SampleFormat=3` required | 29, 44, 51–53, 60–62; G90, G92 |
-| **BigTIFF (`LONG8`)** | 64-bit offsets break the classic 4 GB ceiling; `LONG8` tag types | Large mosaics / drizzled outputs >4 GiB (interop target) | 51, 63; G91 |
+| **BigTIFF (`LONG8`)** | 64-bit offsets break the classic 4 GB ceiling; `LONG8` tag types | `--bigtiff` shipped 2026-11-18 (`stacked_sum/mean.bigtif`, 64-bit ready, round-trip tested); >4 GiB file not yet exercised | 51, 63; G91 |
 | **FITS** | NASA/IAU standard; **2880-byte** header blocks; WCS keywords; HDU structure | Plate-solution WCS, sidecar transport, catalogues | 63, 69, 124; G93, G46 |
 | **FITS Rice (`.fits.fz`)** | Tile-based lossless Golomb–Rice compression; ASTAP chose it over GZIP FITS (July 2026) | Pure-Go codec is an **open** item (`--fits-rice`) | 63, 97; G94 |
-| **XISF 1.0 / Revision 2** | XML metadata + compressed memory streams; Rev 2 adds strict sample-mapping checks, corrupt-block rejection, SHA3-256/512 checksums, parallel I/O (1.5–4.6× writes, 1.8–4× reads, 3.3–4× checksummed) | Round-trip parity with PixInsight 1.9.6; Rev 2 hardening is **open**; verify stdlib SHA-3 first | 40, 64, 102, 103; G95 |
+| **XISF 1.0 / Revision 2** | XML metadata + compressed memory streams; Rev 2 adds strict sample-mapping checks, corrupt-block rejection, SHA3-256/512 checksums, parallel I/O (1.5–4.6× writes, 1.8–4× reads, 3.3–4× checksummed) | `--xisf-rev2` shipped 2026-11-18: SHA3-256 checksum, strict sample-mapping and corrupt-block rejection; full PixInsight parallel-I/O parity remains open | 40, 64, 102, 103; G95 |
 | **`.f32raw`** | Raw little-endian float32 RGB, 8-byte width/height header; no metadata | Swap format between pipeline stages; produced byte-identically by single-pass sigma-clip test | G89 |
 | **IEEE 754 float32** | 32-bit binary floating point; preserves scientific dynamic range without clipping | Universal sample type across TIFF/FITS/XISF/sidecars | G89, G90 |
 | **Metadata (EXIF/IPTC/XMP)** | Embedded header tags; zero-allocation readers `bep/imagemeta`, `evanoberholster/imagemeta` | Ingestion metadata without heap churn | 33, 61; G22, G96 |

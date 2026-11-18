@@ -436,10 +436,13 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--self-flat-linear-srgb` | Experimental: apply grid self-flat in linear light via sRGB EOTF (approximation; off by default) | off |
 | `--hfr-quality` | Use median star HFR (`FWHM ≈ 1.995·HFR`) instead of blob size for advanced frame-quality weighting | `false` |
 | `--annotate` | Project cached Gaia stars through the plate solution into `stacked_annotated.jpg`; write unmatched detections to `anomalies.json` (offline) | `false` |
+| `--annotation-catalogs LIST` | Comma-separated JSON catalogs (RA/Dec degrees; optional name/type/mag/major/minor/pa) for multi-catalog cross-match | — |
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 | `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
+| `--provenance` | Write `provenance.json` with an IVOA ProvenanceDM-style entity/activity/agent graph | `false` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
+| `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |
 | `--deconv-sigma float` / `--deconv-iters int` | PSF sigma (px) and RL iterations | `1.5` / `3` |
 | `--narrowband M` + `--nb-a/--nb-b/--nb-c` | HOO/SHO mapping from three mono `.f32raw` stacks (`_work/stacked_narrowband.f32raw` written) | — |
 | `--wavesharp` / `--wave-gains` | Classical multi-scale Gaussian detail enhancement (coarse-to-fine gains, BXT-like baseline) | `false` / `0.25,0.15,0.08` |
@@ -567,6 +570,8 @@ frames unless `--external-allow-nonlinear` is given.
 | `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
 | `--fits` | Write `stacked_sum.fits` + `stacked_mean.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3; TAN WCS when plate-solved) | `false` |
 | `--xisf` | Write `stacked_sum.xisf` + `stacked_mean.xisf` (monolithic XISF 1.0, planar Float32) | `false` |
+| `--xisf-rev2` | With `--xisf`: SHA3-256 block checksum, strict sample-mapping checks, corrupt-block rejection | `false` |
+| `--bigtiff` | Write `stacked_sum.bigtif` + `stacked_mean.bigtif` with 64-bit offsets (>4 GiB) | `false` |
 | `--png` | Write lossless `stacked_mean.png` alongside JPEGs (same gamma `0.5` LUT) | `false` |
 | `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
 | `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query diagnostic; prints `nside`, `ipix`, first 5 stars, and exits | — |
@@ -710,10 +715,10 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 
 ### Tier 3 — Large, multi-day (`L`)
 
-- **Astrometric catalog annotation & unassociated-source flagging (extended)**: a basic offline version is shipped via `--annotate` (cached Gaia stars, SIP projection, annotated JPEG, `anomalies.json`). Remaining work: bundled NGC/IC/PGC/Messier/HD tables, elliptical apertures/leader lines/labels, and richer anomaly classes. Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`.
+- **Astrometric catalog annotation & unassociated-source flagging (extended)**: a basic offline version is shipped via `--annotate` (cached Gaia stars, SIP projection, annotated JPEG, `anomalies.json`). Extended with `--annotation-catalogs` JSON catalogs, elliptical apertures, `catalog_matches.json` and an SNR>5 unassociated-source gate. Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`. Bundled NGC/IC/PGC tables remain future work.
 - **Drizzle & Bayer drizzle integration**: `drizzleUpsample` + `--drizzle-upsample/--drizzle-pixfrac` write a diagnostic drizzled upsample of the final stack (`testDrizzleUpsample`). True per-frame drizzle resampling (weight/coverage accumulator replacing `resampleToReference`) and Bayer drizzle remain.
 - **Multiscale background modelling**: `--bg-multiscale` removes a coarse, object-protected 20th-percentile background grid before the polynomial fit (a first step; wavelet-scale processing remains). Test: `testMultiscaleBackground`.
-- **PSF-based deconvolution**: `--deconvolve` provides Gaussian-PSF Richardson–Lucy (tested on a synthetic star); Wiener/regularized variants remain.
+- **PSF-based deconvolution**: `--deconvolve` provides Gaussian-PSF Richardson–Lucy (tested on a synthetic star); `--deconvolve-grid` estimates a local PSF from star HFR over a 3×3/4×4 grid with blended tiles. Wiener/regularized variants remain.
 - **Star separation (PSF-based)**: `--starless` provides a crude annulus-median baseline; a proper star mask / PSF-based separation remains.
 - **Advanced noise reduction**: Multiscale noise estimation and spatially adaptive denoising (the current guided filter + two-scale chroma pass is the baseline).
 - **Advanced photometric & colour calibration (PCC / SPCC)**: Use stellar spectral information from Gaia DR3 plus camera sensor response and filter transmission to derive true colour. Depends on plate solving (Tier 2) and the Gaia layer.

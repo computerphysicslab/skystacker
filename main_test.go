@@ -1,7 +1,10 @@
 package main
 
 import (
+	"image"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -45,6 +48,53 @@ func BenchmarkSigmaClipTwoPassReference(b *testing.B) {
 			twoPassSigmaClipReduceWeightedReference(vals, weights, 3, 2)
 		}
 	})
+}
+
+func benchmarkSpillFrames(b *testing.B, n, w, h int) []string {
+	b.Helper()
+	dir := b.TempDir()
+	paths := make([]string, 0, n)
+	for i := range n {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for j := range f.Pix {
+			f.Pix[j] = float32(100+i) / 1000
+		}
+		path := filepath.Join(dir, "frame_"+string(rune('a'+i))+".f32raw")
+		if err := writeSpillFrame(path, f); err != nil {
+			b.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func BenchmarkReduceTilesStack(b *testing.B) {
+	const w, h = 64, 64
+	paths := benchmarkSpillFrames(b, 4, w, h)
+	crop := image.Rect(0, 0, w, h)
+	for _, method := range []string{"sigma", "median"} {
+		b.Run(method, func(b *testing.B) {
+			for range b.N {
+				_, _, _, _, err := reduceTilesStack(paths, w, h, crop, method, 3, 2, 64, 1, nil, nil, nil)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkNativeCR2Decode(b *testing.B) {
+	path := filepath.Join("assets", "OrionNebula", "lights", "IMG_7005.CR2")
+	if _, err := os.Stat(path); err != nil {
+		b.Skipf("CR2 fixture unavailable: %v", err)
+	}
+	b.ResetTimer()
+	for range b.N {
+		if _, err := decodeCR2Native(path); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 // TestGaiaRateLimitSynctest uses Go 1.26's synctest bubble to verify the
