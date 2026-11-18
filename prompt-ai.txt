@@ -79,6 +79,18 @@ Research-to-roadmap protocol (mandatory after every knowledge-base update)
   PROJECT_CONTEXT.md so the next session repeats the habit automatically.
 - Commit/push only when explicitly asked.
 
+Donation footer (roadmap item 47, user request 2026-11-18)
+-----------------------------------------------------------
+- Public ERC-20 address for the optional $1 USDT/USDC donation message:
+  `0xf737b85b2f5e409394e6617c2c7578e9fc2d11df`. It is public data, not a secret,
+  but store it once in `const donationAddress` in `main.go` when item 47 is
+  implemented. Never repeat the address inside individual message strings;
+  each message uses a `%s` placeholder filled from that constant.
+- The rotating footer must be English, one line, printed only as the final
+  stdout line after `Done -> ...`; it must never enter `report.txt`, JSON,
+  provenance or diagnostics files. Provide `--no-donation` opt-out and avoid
+  printing it from `--batch` child processes.
+
 Local AI tools (myTools)
 -------------------------
 Root: /home/jips/datos/datos-juan/proyectos/myTools/AI

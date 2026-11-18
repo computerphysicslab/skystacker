@@ -7,15 +7,15 @@ Ordered by ascending estimated effort. Work the first item marked **Open**;
 items marked **Blocked** or **Deferred** are skipped until unblocked. Effort
 scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item lists the
 canonical research file that owns the evidence; acceptance criteria there are
-authoritative.
+authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-18):** 19 Done · 15 Open · 5 Blocked · 1 Executed/not accepted
+**Summary (2026-11-18):** 19 Done · 16 Open · 5 Blocked · 1 Executed/not accepted
 · 6 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18
 (the portable diagnostic module) was delivered afterwards. Items 19–28 were
 promoted from the feature comparison of mature stacking tools and delivered
 except item 27, which remains blocked by item 13. Items 29–46 were
-promoted from the canonical research knowledge base; the status column below
-is the authoritative view.
+promoted from the canonical research knowledge base; item 47 was added by
+user request. The status column below is the authoritative view.
 
 ## Completed (2026-11-17)
 
@@ -27,7 +27,7 @@ is the authoritative view.
 6. Research folder consolidated into flat thematic files plus the ingestion
    script `scripts/consolidate-research.py`.
 
-## Issue tracker — 46 items (ordered by effort)
+## Issue tracker — 47 items (ordered by effort)
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
@@ -64,6 +64,7 @@ is the authoritative view.
 | 31 | **Sidecar argv with quoted arguments** | S (~1 h) | **Open** | [06](research/06-external-ai-sidecars.md) §5 | Replace `strings.Fields` with a small shell-free tokenizer supporting quoted paths/arguments; keep `exec.CommandContext` and add a tokenizer selftest. |
 | 32 | **`--post-preset` stage ordering** | S (~1 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §8/§17 | Allow detail enhancement after denoise instead of before it; preserve existing step-output meanings and default unchanged. |
 | 33 | **GHS parameter-mapping validation** | S (~1 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §8 | Validate the GHS formula parameters against Siril/GHS documentation and add a round-trip test against the documented reference curve. |
+| 47 | **Rotating thank-you / USDT-USDC donation footer** | S (~1 h) | **Open** | User request 2026-11-18 (no research file) | Store the public ERC-20 address once as `const donationAddress = "0xf737b85b2f5e409394e6617c2c7578e9fc2d11df"` in `main.go`; keep 20 (extensible to 100) original English one-liners with a `%s` placeholder instead of repeating the address; pick one per run from a time/PID-derived seed; print exactly once as the final stdout line after `Done -> ...`, never in `report.txt`/JSON/diagnostics; add `--no-donation` opt-out and suppress in `--batch` children; no network calls; selftest checks constant, message uniqueness and rendering. |
 | 34 | **Self-flat × local-normalise double-correction validation** | S–M (~1 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §15 item 5 | Controlled synthetic gradient-free run to quantify double correction and add a warning or guard if both paths are active. |
 | 35 | **WCS/SIP fixture cross-validated against Astropy** | S–M (~1–2 h) | **Open** | [02](research/02-astrometry-and-identification.md) §2.3 | Mirror the healpy fixture approach with an Astropy-generated WCS/SIP reference JSON and test forward/inverse round-trips within 0.05 px. |
 | 36 | **Gaia DR4 / Archive v3.15 TAP adaptation** | M (~2–4 h) | **Open** | [02](research/02-astrometry-and-identification.md) §11 | Add pagination, queue/backoff handling, renamed DataLink IDs, <=4 active requests and persistent HEALPix cache fallback during the 25 Nov-2 Dec 2026 blackout. |
