@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 219 passing.** Update this number after any test change.
+**Self-test count: 220 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -1679,17 +1679,17 @@ rejection and disk spill. `--scale N` downsamples.
 
 - Gaia TAP hardening (Gemini survey proposal 3, partial): HTTP 429 is now retryable with `Retry-After` capped at 30 s; existing 1 req/s rate limit and 2000-row MAXREC already satisfy DR4 quota guidance. `testGaiaQueryTile429Retry`; selftests 207.
 
-- SkyStacker now decodes CR2 natively (pure Go, stdlib only): locates the SOF3 stream, Huffman/entropy decodes two 14-bit planes, interleaves RGGB Bayer, applies black/white levels and bilinear demosaic. `--no-native-cr2` restores dcraw fallback. E2E: 1 CR2 stack in 6.5 s, 100 stars detected; selftests 208. Built-in implementation mirrors the PureRaw subproject decoder.
+- SkyStacker now decodes CR2 natively (pure Go, stdlib only): locates the SOF3 stream, Huffman/entropy decodes two 14-bit planes, interleaves RGGB Bayer, applies black/white levels and bilinear demosaic. `--no-native-cr2` restores dcraw fallback. E2E: 1 CR2 stack in 6.5 s, 100 stars detected; selftests 208. Built-in implementation mirrors the goPureRaw subproject decoder.
 
-- Native CR2 validation status: decoded EOS 40D CR2 (3944x2622, 14-bit, mean 1181.8) matches dcraw -D -4 mean (1181.0) and supports E2E stacking (100 stars, 6.5 s). Per-pixel/geometric agreement with dcraw is NOT yet established (downsampled cross-correlation across all 8 dihedral+crop variants < 0.1); flagged as open validation item in PureRaw ROADMAP Phase 1b. Treat native output as usable but not yet bit-exact-equivalent.
+- Native CR2 validation status: decoded EOS 40D CR2 (3944x2622, 14-bit, mean 1181.8) matches dcraw -D -4 mean (1181.0) and supports E2E stacking (100 stars, 6.5 s). Per-pixel/geometric agreement with dcraw is NOT yet established (downsampled cross-correlation across all 8 dihedral+crop variants < 0.1); flagged as open validation item in goPureRaw ROADMAP Phase 1b. Treat native output as usable but not yet bit-exact-equivalent.
 
 - Finite-sample MAD correction: sigma-clip now uses calibrated small-N factors (Monte Carlo, 40k trials/N, seed 20261117) instead of asymptotic 1.4826 for N<30; unweighted and weighted reducers updated; `testFiniteSampleMAD`; selftests 209.
 - Roadmap reordered by ascending effort in NEXT_SESSION_PROMPT.md; first item (finite-sample MAD) completed.
 - myTools/AI folder names standardised to `AI-Detect`, `Gemini-Deep-Research`, `Gemini-Transcribe`, `Voice-Typing`; invocation paths recorded in prompt-ai.txt.
 
-- Modularisation step 1–2 done: PureRaw module path is now `github.com/computerphysicslab/skystacker/PureRaw` (all imports updated, README includes `go get`); root `go.work` links both modules and is gitignored. SkyStacker still embeds its own `pr*` CR2 copy; importing the library and adding subdir tag remain.
+- Modularisation step 1–2 done: goPureRaw module path is now `github.com/computerphysicslab/skystacker/goPureRaw` (all imports updated, README includes `go get`); root `go.work` links both modules and is gitignored. SkyStacker still embeds its own `pr*` CR2 copy; importing the library and adding subdir tag remain.
 
-- Modularisation steps 3–4 done: `PureRaw/v0.1.1` tagged (fix: CR2 Probe signature at offset 8), root `go.mod` requires PureRaw v0.1.1, SkyStacker imports `raw` + `formats/cr2` and the duplicated `pr*` decoder was deleted from main.go. E2E 1-light CR2 stack 7.5 s; `GOWORK=off` build/test green; selftests 209.
+- Modularisation steps 3–4 done: `goPureRaw/v0.1.1` tagged (fix: CR2 Probe signature at offset 8), root `go.mod` requires goPureRaw v0.1.1, SkyStacker imports `raw` + `formats/cr2` and the duplicated `pr*` decoder was deleted from main.go. E2E 1-light CR2 stack 7.5 s; `GOWORK=off` build/test green; selftests 209.
 
 ### Crawler-based source discovery (2026-11-17)
 
@@ -1701,7 +1701,7 @@ rejection and disk spill. `--scale N` downsamples.
 ### Go 1.27.4 toolchain upgrade (2026-11-17)
 
 - Toolchain installed at `/home/jips/.local/go1.27.4/bin` (symlink to the module-cache download); both `go.mod` files now declare `go 1.27` + `toolchain go1.27.4`; local `go.work` bumped to 1.27.4; CI and release workflows pinned to 1.27.4.
-- All checks green on 1.27.4: gofmt, vet, build, 209 self-tests, `go test ./...`, PureRaw CGO=0 + race, race build + selftests, six static cross-build targets. No source changes or exact-string report drift.
+- All checks green on 1.27.4: gofmt, vet, build, 209 self-tests, `go test ./...`, goPureRaw CGO=0 + race, race build + selftests, six static cross-build targets. No source changes or exact-string report drift.
 - Canonical binary and `./skystacker` rebuilt with the new toolchain; `/home/jips/go/bin/skystacker` symlink points at the repo copy.
 - BENCHMARKS.md has a new Go 1.27.4 re-baseline section: 4-frame native-CR2 sigma stack 39.031 s, `--resume --starless` 21.11 s (not a controlled A/B).
 - Docs synced: README, TECHNICAL_SPEC, CHANGELOG, prompt-ai.txt, NEXT_SESSION_PROMPT; research/ updated by appending status sections only.
@@ -1735,3 +1735,17 @@ rejection and disk spill. `--scale N` downsamples.
 
 - `cr2_slice[]` hypothesis refuted: dcraw v9.28 only resets it to zero; no maker-note tag assigns it. The EOS 40D `0x0009` maker tag is an all-zero ASCII artist field, not a slice table.
 - Next experiment is a raw-Bayer-plane comparison against `dcraw -D -4 -t 1` with margins cropped and black/white normalised; `curve[]` is identity for this camera, so linearization is not the cause. See `research/07-native-cr2-decoding.md`.
+
+### Portable diagnostic module (2026-11-18)
+
+- Added root `goDiagnostics/` as an independent stdlib-only Go module (`github.com/computerphysicslab/skystacker/goDiagnostics`, `go 1.22`, no toolchain pin, no dependencies). SkyStacker imports it through a `require v0.0.0` + local `replace`; `go.work` includes the folder.
+- Public API: `Options`, `Collect(ctx, Options) Report`, `Report.JSON()/WriteJSON()/Text()`. OS-specific collectors sit behind a `platform` interface with `//go:build` files for linux (`/proc`, cgroup, dpkg/rpm/apk/pacman), darwin (`sysctl`, `vm_stat`, `sw_vers`, brew) and windows (PowerShell/CIM, Get-HotFix); unknown OS degrades with `ErrUnsupported`.
+- Collectors cover host/OS, Go build info and `runtime/metrics`, CPU/load, memory/swap/cgroup, filesystems, top processes, tools, whitelisted+redacted env, program dir walk with file/byte counts and binary SHA-256, network interfaces and local package inventory. Every collector has a timeout and a 64 KiB command-output cap; failures go to `Report.Errors`.
+- CLI: `--diagnose`, `--diagnose-json`, `--diagnose-quick`, `--diagnose-integrated`, `--diagnose-timeout`, `--diagnose-top`, `--diagnose-updates`. Standalone mode exits early in `main()`; integrated mode writes `diagnostics.txt`/`.json` next to a normal report. E2E `--diagnose --diagnose-json --diagnose-updates` produced a 17 kB JSON and a readable text report on this host.
+- CI has a `goDiagnostics` job (vet, CGO=0 test, cross-build linux/darwin/windows); `goDiagnostics/README.md` documents the copy-paste `require`+`replace` protocol for other projects. Selftests 220.
+
+### Module naming convention (2026-11-18, mandatory)
+
+- Both nested modules were renamed to Go style: `PureRaw/` → `goPureRaw/` (`github.com/computerphysicslab/skystacker/goPureRaw` v0.1.1) and `diagnostics/` → `goDiagnostics/` (`github.com/computerphysicslab/skystacker/goDiagnostics` v0.0.0). The old paths are intentionally retired; nobody consumed them externally, so the former compatibility promise was explicitly lifted.
+- Root `go.mod` now carries a local `replace` for **both** modules, so a clean checkout builds without published tags. `go.work` lists `.`, `./goPureRaw`, `./goDiagnostics`.
+- Rule for every future module: directory and module path use `go<Name>` (e.g. future `goFitsio/`, `goPhotometry/` → `github.com/computerphysicslab/skystacker/go<Name>`). Never reintroduce `PureRaw/`, `diagnostics/` or hyphenated `go-*` module names. Once a module is published with a semver tag, its path becomes a compatibility promise and is frozen.

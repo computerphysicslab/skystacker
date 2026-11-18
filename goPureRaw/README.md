@@ -40,10 +40,10 @@ worth building even though LibRaw exists.
 ## Install
 
 ```bash
-go get github.com/computerphysicslab/skystacker/PureRaw@latest
+go get github.com/computerphysicslab/skystacker/goPureRaw@latest
 ```
 
-After the first `PureRaw/vX.Y.Z` tag is published, pin a version instead of
+After the first `goPureRaw/vX.Y.Z` tag is published, pin a version instead of
 `@latest` for reproducible builds.
 
 ## Quick Start
@@ -52,11 +52,11 @@ After the first `PureRaw/vX.Y.Z` tag is published, pin a version instead of
 import (
     "os"
 
-    "github.com/computerphysicslab/skystacker/PureRaw/raw"
-    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/raf"
-    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/arw"
-    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/cr2"
-    _ "github.com/computerphysicslab/skystacker/PureRaw/formats/cr3"
+    "github.com/computerphysicslab/skystacker/goPureRaw/raw"
+    _ "github.com/computerphysicslab/skystacker/goPureRaw/formats/raf"
+    _ "github.com/computerphysicslab/skystacker/goPureRaw/formats/arw"
+    _ "github.com/computerphysicslab/skystacker/goPureRaw/formats/cr2"
+    _ "github.com/computerphysicslab/skystacker/goPureRaw/formats/cr3"
 )
 
 f, _ := os.Open("DSCF0001.RAF")

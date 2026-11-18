@@ -105,7 +105,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 
 ## Scope & Architecture
 
-- **Single-binary, stdlib-only Go CLI**: the executable is built from `main.go` plus one first-party module (`PureRaw/`, pure-Go CR2 decoding). No third-party dependencies; `CGO_ENABLED=0` static cross-platform builds.
+- **Single-binary, stdlib-only Go CLI**: the executable is built from `main.go` plus one first-party module (`goPureRaw/`, pure-Go CR2 decoding). No third-party dependencies; `CGO_ENABLED=0` static cross-platform builds.
 - **Linear float32 pipeline**: Accumulates and processes image data in IEEE 754 `float32` precision end-to-end.
 - **Current boundaries**:
   - **CLI-only**: No GUI is included.
@@ -440,6 +440,12 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 | `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
 | `--provenance` | Write `provenance.json` with an IVOA ProvenanceDM-style entity/activity/agent graph | `false` |
+| `--diagnose` | Collect a host/runtime diagnostic snapshot (`diagnostics.txt`) and exit | `false` |
+| `--diagnose-json` | Also write `diagnostics.json` | `false` |
+| `--diagnose-quick` | Faster subset: no package inventory, smaller directory walk | `false` |
+| `--diagnose-integrated` | During a normal run, write diagnostics next to the report | `false` |
+| `--diagnose-timeout N` / `--diagnose-top N` | Collection timeout in seconds / number of top processes | `5` / `10` |
+| `--diagnose-updates` | Include installed packages/hotfixes (local inventory only, no network) | `false` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |
@@ -693,6 +699,7 @@ The following capabilities have been implemented through `0.6.1`:
 - **Comet tracking**: pixel mode `--comet-center X,Y --comet-rate dX,dY` (reference pixels/sec, EXIF `DateTimeOriginal`). RA/Dec mode `--comet-radec RA,DEC --comet-sky-rate-arcsec dRA*,dDec` (decimal degrees, arcsec/sec; requires `--plate-solve`, TAN WCS). Ephemeris mode `--comet-target PATH`: file with lines `ISO8601 RA_deg Dec_deg` (`#`/blank ignored), requires `--plate-solve`; position interpolated linearly by EXIF `DateTimeOriginal` (reference time as base). If a frame has no EXIF time, reference time is used with a warning. Outputs `stacked_comet.f32raw`/`.jpg` when used; star stack unchanged. Test: `testCometTranslation`.
 - **Bad-pixel map**: `--bpm PATH` loads a FITS or `x,y` text map and marks those pixels invalid before stacking. `--bpm-auto` derives a map from the master dark (or bias) using `median + N*sigma*MAD` (`--bpm-auto-sigma`, default 5). Tests: `testBPMMasksPixels`, `testBPMAuto`.
 - **Scientific output formats**: `--fits` (`stacked_sum.fits`, big-endian BITPIX=-32 with TAN WCS keywords when plate-solved) and `--xisf` (minimal monolithic XISF 1.0). Tests: `testFITSWriterRoundTrip`, `testXISFWrite`.
+- **Portable diagnostics**: the root `goDiagnostics/` folder is an independent stdlib-only Go module (`goDiagnostics`, Go 1.22 baseline) that collects OS/runtime/CPU/memory/disk/process/tool/update data with redaction and timeouts. SkyStacker uses it via `--diagnose`; it can be copied into other Go projects with the `require`+`replace` lines documented in `goDiagnostics/README.md`. Test: `testDiagnosticsCollect`.
 - **Catalog annotation (offline, basic)**: `--annotate` projects cached Gaia stars through `plate_solution.json` into `stacked_annotated.jpg` and lists unmatched detections in `anomalies.json`. Test: `testCatalogAnnotationSkip`.
 - **Star/starless layers (basic)**: `--starless` writes `stacked_starless`/`stacked_stars` float32 + JPEG from the post-processing star-removal step. Test: `testPipelineStarless`.
 - **Extended controls**: `--comet-ephem-strict-exif`, `--plate-solve` in `--post-only`, `--hfr-quality`, `--sigma-clip-low/high`, and SIP order-2 in WCS forward/inverse helpers. Tests: `testCometEphemerisParse`, `testPlateSolvePostOnlyNoStars`, `testHFRQuality`, `testSigmaClipAsymmetric`, `testWCSSIP`.

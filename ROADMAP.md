@@ -1,7 +1,7 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-18 · **Current state:** v0.6.1, 219 registered self-tests,
-Go 1.27.4, PureRaw v0.1.1.
+**Updated:** 2026-11-18 · **Current state:** v0.6.1, 220 registered self-tests,
+Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
 items marked **Blocked** or **Deferred** are skipped until unblocked. Effort
@@ -9,9 +9,10 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative.
 
-**Summary (2026-11-18):** 8 Done · 3 Blocked · 1 Executed/not accepted ·
-5 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; the status
-column below is the authoritative view.
+**Summary (2026-11-18):** 9 Done · 3 Blocked · 1 Executed/not accepted ·
+5 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18 (the
+portable diagnostic module) was delivered afterwards. The status column below
+is the authoritative view.
 
 ## Completed (2026-11-17)
 
@@ -23,7 +24,7 @@ column below is the authoritative view.
 6. Research folder consolidated into flat thematic files plus the ingestion
    script `scripts/consolidate-research.py`.
 
-## Issue tracker — all 17 items (ordered by effort)
+## Issue tracker — 18 items (ordered by effort)
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
@@ -35,7 +36,7 @@ column below is the authoritative view.
 | 6 | **Validate gamma-aware self-flat** | M (~2 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §15 | `--self-flat-linear-srgb` exists but is unvalidated; compare encoded vs EOTF-corrected division on a real dataset, keep default unchanged, document the result. |
 | 7 | **Catalog annotation / anomaly extension** | M (~3–4 h) | **Done** 2026-11-18 | [02](research/02-astrometry-and-identification.md) §4 | Complete the existing `--annotate` baseline: elliptical apertures, multi-catalog cross-match, `SNR > 5` unassociated-source flag; register `testWCSCatalogOverlay` and `testUnassociatedSourceFlagging` (round-trip ≤ 0.05 px). |
 | 8 | **Spatially gridded PSF for Richardson–Lucy (`--deconvolve-grid`)** | M (~3–4 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §15.3 | Local-star PSF over a 3×3/4×4 grid with bilinear interpolation, opt-in, star-masked; synthetic wide-field test showing reduced corner degradation. |
-| 9 | **Pure-Go FITS Rice (`.fits.fz`) + `fitsio/` module** | M–L (~4–5 h) | **Blocked** — needs pushed module tag + cfitsio validation | [05](research/05-toolchain-and-modularity.md) §11 | Golomb–Rice tile codec, bit-exact integer/quantized round-trip; extract into a tagged sibling `fitsio/` module following the PureRaw pattern. |
+| 9 | **Pure-Go FITS Rice (`.fits.fz`) + `fitsio/` module** | M–L (~4–5 h) | **Blocked** — needs pushed module tag + cfitsio validation | [05](research/05-toolchain-and-modularity.md) §11 | Golomb–Rice tile codec, bit-exact integer/quantized round-trip; extract into a tagged sibling `fitsio/` module following the goPureRaw pattern. |
 | 10 | **CR2 bit-exact validation vs dcraw** | M–L (~3–4 h) | **Blocked** — needs raw-Bayer oracle dumps | [07](research/07-native-cr2-decoding.md) §6 | Compare raw Bayer planes after cropping margins and black/white normalisation; explain 16372/1181.84 vs 16011/1180.96 and the old NCC < 0.1. `cr2_slice` is refuted; do not repeat that search. |
 | 11 | **IVOA ProvenanceDM emission** | M–L (~3–4 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §16 | Per-run/per-stage provenance graph (binary version, plate-solve tolerances, tile/rejection/stretch parameters, exact catalogue/cache version) in `report.json`/VOTable under `skystacker_results/`. |
 | 12 | **Real-flat validation gate for grid self-flat** | M–L (~3–4 h) | **Executed, not accepted** — flats not matched to lights | [04](research/04-calibration-and-self-flat.md) §15 | Single-process ablation toggling only the illumination source; require a dataset with ≥ 15 lights and a real flat; publish the numeric comparison, no dataset modification. |
@@ -44,6 +45,7 @@ column below is the authoritative view.
 | 15 | **CR3 native decoding** | L–XL (~8 h) | **Deferred** — L–XL scope | [07](research/07-native-cr2-decoding.md) §0 | Remove the external-decoder dependency for CR3 input; pure-Go HEVC/HEIF container + lossless payload path, gated behind a flag until oracle-validated. |
 | 16 | **PCC/SPCC + PSF-fitting photometry** | L–XL (~8 h) | **Deferred** — L–XL scope | [01](research/01-architecture-and-core-engine.md) §13 | Linear-data colour calibration against Gaia, PSF-fitting ensemble photometry with MAD rejection; opt-in, provenance-tagged. |
 | 17 | **Observatory automation sidecar** | L–XL (~8 h) | **Deferred** — design only | [01](research/01-architecture-and-core-engine.md) §16 | External daemon writing an Alpaca-property → FITS-keyword mapping before header sealing; metadata ingestion only, interactive control out of scope. |
+| 18 | **Standalone diagnostic module (`goDiagnostics/`)** | S–L (~1–6 h, phased) | **Done** 2026-11-18 | [goDiagnostics/README.md](goDiagnostics/README.md) | Self-contained Go module with OS/runtime/CPU/memory/disk/process/update/tool collectors, `--diagnose` flag, text/JSON output, redaction, timeouts and copy-paste portability to other Go projects. |
 
 ## Deferred / explicitly rejected
 
@@ -69,3 +71,8 @@ After each milestone: rebuild the canonical binary, rerun `--selftest`,
 `PROJECT_CONTEXT.md` and `TECHNICAL_SPEC.md`, and record new evidence in the
 owning canonical research file (never in a new partial file). Use
 `scripts/consolidate-research.py` for incoming research contributions.
+
+New Go modules must follow the `go<Name>` convention for directory and module
+path (`goPureRaw`, `goDiagnostics`, future `goFitsio` →
+`github.com/computerphysicslab/skystacker/go<Name>`); see `prompt-ai.txt` and
+`PROJECT_CONTEXT.md`. A published semver tag freezes the module path.

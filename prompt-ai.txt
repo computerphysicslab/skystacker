@@ -10,15 +10,16 @@ touching code. Documentation in English. Final user reports in Spanish.
 Version and tests
 -----------------
 - Source version is v0.6.1 (`var version` in main.go).
-- Registered self-tests: 219. Count entries in `runSelfTests`, not every
+- Registered self-tests: 220. Count entries in `runSelfTests`, not every
   function whose name starts with `test`. Expect:
-      all 219 self-tests passed
+      all 220 self-tests passed
   Update this number only when a case is added or removed.
 
 Build and install
 -----------------
-- Toolchain: Go 1.27.4 at /home/jips/.local/go1.27.4/bin (already installed); root go.mod pins `toolchain go1.27.4` (`go 1.27`), PureRaw too.
-- Local multi-module workspace: root `go.work` (gitignored) lists `.` and `./PureRaw`. SkyStacker imports `github.com/computerphysicslab/skystacker/PureRaw v0.1.1` (tag `PureRaw/v0.1.1`) for native CR2 decoding; `main.go` no longer contains the duplicated `pr*` decoder. Keep that module path stable — it is a compatibility promise.
+- Toolchain: Go 1.27.4 at /home/jips/.local/go1.27.4/bin (already installed); root go.mod pins `toolchain go1.27.4` (`go 1.27`), goPureRaw too.
+- Local multi-module workspace: root `go.work` (gitignored) lists `.`, `./goPureRaw` and `./goDiagnostics`. SkyStacker imports `github.com/computerphysicslab/skystacker/goPureRaw v0.1.1` and `github.com/computerphysicslab/skystacker/goDiagnostics v0.0.0`, both resolved through local `replace` directives in root `go.mod`. The old `PureRaw` and `go-diagnostics` paths are intentionally retired.
+- Module naming rule (mandatory for every new module): use Go-style `go<Name>` for both the directory and the module path, e.g. `goPureRaw/`, `goDiagnostics/`, future `goFitsio/` → `github.com/computerphysicslab/skystacker/go<Name>`. Never introduce bare `PureRaw/`, `diagnostics/` or hyphenated `go-*` module names again. Once a module is published with a semver tag its path becomes a compatibility promise and must not be renamed.
 - Canonical executable: /home/jips/.local/bin/skystacker.
 - A repository-local ./skystacker is allowed and should be kept current.
   It is gitignored (`/skystacker`). Do not commit it.

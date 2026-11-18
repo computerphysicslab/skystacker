@@ -1,11 +1,12 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Added portable `goDiagnostics/` Go module (`goDiagnostics`, stdlib-only, Go 1.22 baseline) with OS/runtime/CPU/memory/disk/process/update/tool/network collectors, redaction, timeouts and text/JSON rendering; SkyStacker consumes it through `--diagnose`, `--diagnose-json`, `--diagnose-quick`, `--diagnose-integrated`, `--diagnose-timeout`, `--diagnose-top` and `--diagnose-updates`; self-tests 220.
 - Roadmap pass 2026-11-18: encoded/EOTF self-flat report note, extended benchmarks, `--xisf-rev2` (SHA3-256 + strict sample validation), `--bigtiff`, multi-catalog annotation with SNR>5 anomalies, `--deconvolve-grid` local PSF, `--provenance` (ProvenanceDM-style graph); self-tests 219. Items 1/9/10 blocked and 12 not accepted are documented in `ROADMAP.md`.
 - Added `--resample-sip`: order-2 SIP distortion from `plate_solution.json` is applied in the stacking resampler (undistort reference, similarity/affine warp, redistort source), with `testResampleSIP`; self-tests 212.
 - External AI CLI sidecars: `--external-bge/-denoise/-deconv/-starless` run user CLIs via private 32-bit float FITS temp files (no shell), with WCS round-trip, linear-stage guards, `--external-timeout`, cleanup and a self-executing mock test; self-tests 211.
 - Fused sigma-clip passes: the final (weighted/unweighted) mean is accumulated in the last clipping pass, the survivor list is carried into the next iteration, and tile sums are accumulated during the gather. `testSinglePassSigmaClipEquivalence` proves bit-identical results against the old two-pass references; self-tests 210. `go test -bench` shows ~0.76–0.92 µs/op vs ~0.96–1.17 µs/op for the references (N=16, 2 iterations).
-- Upgraded toolchain to go1.27.4 (`go 1.27` + pinned toolchain in both modules; CI/release updated). Full matrix green: gofmt, vet, 209 self-tests, `go test`, PureRaw CGO=0 + race, race build and six cross-build targets. BENCHMARKS re-baselined (4-frame native-CR2 sigma stack 39.031 s).
+- Upgraded toolchain to go1.27.4 (`go 1.27` + pinned toolchain in both modules; CI/release updated). Full matrix green: gofmt, vet, 209 self-tests, `go test`, goPureRaw CGO=0 + race, race build and six cross-build targets. BENCHMARKS re-baselined (4-frame native-CR2 sigma stack 39.031 s).
 - Added `--comet-target PATH` ephemeris mode (ISO8601 `RA_deg Dec_deg`, linear interpolation by EXIF time; requires `--plate-solve`). Validation of RA/Dec ranges and clearer errors.
 - Added `testCometEphemerisParse`; self-tests now 182.
 - SIP order-2: applied in WCS helpers (`wcsTanForward`, `wcsTanInverseSIP`); stacking resampler remains affine/similarity-based (documented).
@@ -39,9 +40,9 @@
 - Gemini outcome archived in `research/`; implemented scratch gradient-detrend retry for star detection (`testDetrendStarDetection`); self-tests 205.
 - Implemented dark-frame series QA (reject >3-sigma median/hot-pixel outliers before master dark); `testCalibrationQA`; self-tests 206.
 - Gaia TAP client retries HTTP 429 (queue full) with capped `Retry-After` instead of failing; `testGaiaQueryTile429Retry`; self-tests 207.
-- Modularisation steps 3–4: tagged `PureRaw/v0.1.1` (v0.1.0 had a CR2 Probe offset bug), SkyStacker now imports the library and its duplicated `pr*` decoder was removed; E2E 1-light stack 7.5 s, selftests 209.
-- Started modularisation: PureRaw module path changed to `github.com/computerphysicslab/skystacker/PureRaw`, root `go.work` added (gitignored); both modules green.
+- Modularisation steps 3–4: tagged `goPureRaw/v0.1.1` (v0.1.0 had a CR2 Probe offset bug), SkyStacker now imports the library and its duplicated `pr*` decoder was removed; E2E 1-light stack 7.5 s, selftests 209.
+- Started modularisation: goPureRaw module path changed to `github.com/computerphysicslab/skystacker/goPureRaw`, root `go.work` added (gitignored); both modules green.
 - Added finite-sample MAD scale correction for small stacks (N=3..30) with `testFiniteSampleMAD`; self-tests 209.
-- Applied `go fix` modernizers (Go 1.26) to SkyStacker and PureRaw; added `testing/synctest` Gaia rate-limiter test (`go test ./...`); self-tests remain 208.
-- Upgraded toolchain to go1.26.11 (go.mod `go 1.26`, pinned toolchain; CI/release workflows updated); SkyStacker and PureRaw test matrices green, baselines re-measured in BENCHMARKS.md.
+- Applied `go fix` modernizers (Go 1.26) to SkyStacker and goPureRaw; added `testing/synctest` Gaia rate-limiter test (`go test ./...`); self-tests remain 208.
+- Upgraded toolchain to go1.26.11 (go.mod `go 1.26`, pinned toolchain; CI/release workflows updated); SkyStacker and goPureRaw test matrices green, baselines re-measured in BENCHMARKS.md.
 - Built-in pure-Go CR2 decoder (lossless JPEG/SOF3 + bilinear Bayer demosaic); `--no-native-cr2` opts out; `testNativeCR2Decode`; self-tests 208.

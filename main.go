@@ -59,8 +59,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/computerphysicslab/skystacker/PureRaw/formats/cr2"
-	"github.com/computerphysicslab/skystacker/PureRaw/raw"
+	diagnostics "github.com/computerphysicslab/skystacker/goDiagnostics"
+	"github.com/computerphysicslab/skystacker/goPureRaw/formats/cr2"
+	"github.com/computerphysicslab/skystacker/goPureRaw/raw"
 	"hash"
 	"image"
 	"image/color"
@@ -226,6 +227,13 @@ type cliOptions struct {
 	Starless               bool
 	JSONReport             bool
 	Provenance             bool
+	Diagnose               bool
+	DiagnoseJSON           bool
+	DiagnoseQuick          bool
+	DiagnoseIntegrated     bool
+	DiagnoseTimeout        int
+	DiagnoseTop            int
+	DiagnoseUpdates        bool
 	BGMultiscale           bool
 	ConfigPath             string
 	Deconvolve             bool
@@ -480,6 +488,13 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
 	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
 	fs.BoolVar(&o.Provenance, "provenance", false, "write provenance.json (IVOA ProvenanceDM-style run graph)")
+	fs.BoolVar(&o.Diagnose, "diagnose", false, "collect a host/runtime diagnostic snapshot and exit")
+	fs.BoolVar(&o.DiagnoseJSON, "diagnose-json", false, "with --diagnose: also write diagnostics.json")
+	fs.BoolVar(&o.DiagnoseQuick, "diagnose-quick", false, "with --diagnose: fast subset (no updates, small walk)")
+	fs.BoolVar(&o.DiagnoseIntegrated, "diagnose-integrated", false, "with a normal run: write diagnostics files alongside the report")
+	fs.IntVar(&o.DiagnoseTimeout, "diagnose-timeout", 5, "diagnostic collection timeout in seconds")
+	fs.IntVar(&o.DiagnoseTop, "diagnose-top", 10, "number of top processes in the diagnostic report")
+	fs.BoolVar(&o.DiagnoseUpdates, "diagnose-updates", false, "include installed-package/hotfix inventory in diagnostics")
 	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
 	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
 	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
@@ -522,7 +537,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -652,6 +667,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.ExternalTimeoutSec < 0 {
 		return nil, fmt.Errorf("--external-timeout must be >= 0, got %d", o.ExternalTimeoutSec)
+	}
+	if o.DiagnoseTimeout < 1 || o.DiagnoseTimeout > 120 {
+		return nil, fmt.Errorf("--diagnose-timeout must be in [1, 120], got %d", o.DiagnoseTimeout)
+	}
+	if o.DiagnoseTop < 1 || o.DiagnoseTop > 100 {
+		return nil, fmt.Errorf("--diagnose-top must be in [1, 100], got %d", o.DiagnoseTop)
 	}
 	for _, ext := range []struct {
 		name  string
@@ -1057,6 +1078,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
 	fmt.Fprintln(w, "  --provenance       write provenance.json (IVOA ProvenanceDM-style run graph)")
+	fmt.Fprintln(w, "  --diagnose         host/runtime diagnostic snapshot; write diagnostics.txt and exit")
+	fmt.Fprintln(w, "  --diagnose-json    also write diagnostics.json")
+	fmt.Fprintln(w, "  --diagnose-quick   fast subset (no package inventory, small directory walk)")
+	fmt.Fprintln(w, "  --diagnose-integrated  write diagnostics files alongside a normal run report")
+	fmt.Fprintln(w, "  --diagnose-timeout N / --diagnose-top N / --diagnose-updates")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --deconvolve-grid  local PSF from star HFR over a 3x3/4x4 grid (--deconv-grid-size)")
@@ -1450,7 +1476,7 @@ func decodeCR2Config(path string) (image.Config, error) {
 	return image.Config{Width: w, Height: h}, nil
 }
 
-// decodeCR2Native uses the PureRaw library (nested Go module) to decode the
+// decodeCR2Native uses the goPureRaw library (nested Go module) to decode the
 // sensor data; demosaicing stays in SkyStacker because it is a downstream
 // colour-processing step, not a RAW decoder responsibility.
 func decodeCR2Native(path string) (*frame, error) {
@@ -4975,6 +5001,24 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Provenance {
 		add("--provenance")
 	}
+	if o.Diagnose {
+		add("--diagnose")
+	}
+	if o.DiagnoseJSON {
+		add("--diagnose-json")
+	}
+	if o.DiagnoseQuick {
+		add("--diagnose-quick")
+	}
+	if o.DiagnoseIntegrated {
+		add("--diagnose-integrated")
+	}
+	if o.DiagnoseUpdates {
+		add("--diagnose-updates")
+	}
+	if o.DiagnoseTimeout != 5 || o.DiagnoseTop != 10 {
+		add(fmt.Sprintf("--diagnose-timeout %d --diagnose-top %d", o.DiagnoseTimeout, o.DiagnoseTop))
+	}
 	if o.BGMultiscale {
 		add("--bg-multiscale")
 	}
@@ -5396,6 +5440,13 @@ type runOptions struct {
 	Starless               bool
 	JSONReport             bool
 	Provenance             bool
+	Diagnose               bool
+	DiagnoseJSON           bool
+	DiagnoseQuick          bool
+	DiagnoseIntegrated     bool
+	DiagnoseTimeout        int
+	DiagnoseTop            int
+	DiagnoseUpdates        bool
 	BGMultiscale           bool
 	Deconvolve             bool
 	DeconvSigma            float64
@@ -11227,6 +11278,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			rep.OutputFiles = append(rep.OutputFiles, provPath)
 		}
 	}
+	if opts.DiagnoseIntegrated {
+		drep := diagnostics.Collect(context.Background(), diagnosticsOptionsFromRun(opts, outputDir))
+		if err := writeDiagnosticsFiles(outputDir, drep, opts.DiagnoseJSON); err != nil {
+			logf("WARNING: could not write diagnostics files: %v", err)
+		} else {
+			rep.OutputFiles = append(rep.OutputFiles, filepath.Join(outputDir, "diagnostics.txt"))
+			if opts.DiagnoseJSON {
+				rep.OutputFiles = append(rep.OutputFiles, filepath.Join(outputDir, "diagnostics.json"))
+			}
+			logf("Diagnostics: wrote diagnostic files (%d collector errors)", len(drep.Errors))
+		}
+	}
 
 	logf("Actual processing time: %s", rep.Duration.Round(time.Millisecond))
 	if cacheDir != "" && !opts.KeepCache {
@@ -16965,6 +17028,7 @@ func runSelfTests() int {
 		{"xisf rev2 checksum", testXISFRev2RoundTrip},
 		{"bigtiff round trip", testBigTIFFRoundTrip},
 		{"provenance DM graph", testProvenanceDM},
+		{"goDiagnostics module", testDiagnosticsCollect},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
 		{"TIFF bad input", testTIFFBadInput},
@@ -17506,6 +17570,41 @@ func testXISFRev2RoundTrip() error {
 	opts, err := parseArgs([]string{"--xisf", "--xisf-rev2"})
 	if err != nil || !opts.CreateXISF || !opts.XISFRev2 {
 		return fmt.Errorf("XISF Rev 2 flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testDiagnosticsCollect() error {
+	dir, err := os.MkdirTemp("", "skystacker-diagnostics-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	o := diagnostics.DefaultOptions()
+	o.Timeout = 2 * time.Second
+	o.ProgramDir = dir
+	o.MaxWalkFiles = 100
+	r := diagnostics.Collect(context.Background(), o)
+	b, err := r.JSON()
+	if err != nil {
+		return err
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		return err
+	}
+	if _, ok := decoded["runtime"]; !ok {
+		return errors.New("diagnostics JSON missing runtime section")
+	}
+	if !strings.Contains(r.Text(), "SkyStacker diagnostics") {
+		return errors.New("diagnostics text header missing")
+	}
+	opts, err := parseArgs([]string{"--diagnose", "--diagnose-json", "--diagnose-quick", "--diagnose-timeout", "3", "--diagnose-top", "5"})
+	if err != nil || !opts.Diagnose || !opts.DiagnoseJSON || !opts.DiagnoseQuick || opts.DiagnoseTimeout != 3 || opts.DiagnoseTop != 5 {
+		return fmt.Errorf("diagnose flags: %+v err=%v", opts, err)
+	}
+	if _, err := parseArgs([]string{"--diagnose-timeout", "0"}); err == nil {
+		return errors.New("invalid diagnose timeout accepted")
 	}
 	return nil
 }
@@ -25355,6 +25454,68 @@ func runInternalAISidecarMock(args []string) int {
 	return 0
 }
 
+func diagnosticsOptionsFromCLI(opts *cliOptions, dir string) diagnostics.Options {
+	d := diagnostics.DefaultOptions()
+	d.Timeout = time.Duration(opts.DiagnoseTimeout) * time.Second
+	d.TopProcesses = opts.DiagnoseTop
+	d.IncludeUpdates = opts.DiagnoseUpdates
+	d.ProgramDir = dir
+	if opts.DiagnoseQuick {
+		d.MaxWalkFiles = 2000
+		d.TopProcesses = min(d.TopProcesses, 5)
+	}
+	return d
+}
+
+func diagnosticsOptionsFromRun(opts runOptions, dir string) diagnostics.Options {
+	d := diagnostics.DefaultOptions()
+	if opts.DiagnoseTimeout > 0 {
+		d.Timeout = time.Duration(opts.DiagnoseTimeout) * time.Second
+	}
+	if opts.DiagnoseTop > 0 {
+		d.TopProcesses = opts.DiagnoseTop
+	}
+	d.IncludeUpdates = opts.DiagnoseUpdates
+	d.ProgramDir = dir
+	if opts.DiagnoseQuick {
+		d.MaxWalkFiles = 2000
+		d.TopProcesses = min(d.TopProcesses, 5)
+	}
+	return d
+}
+
+func writeDiagnosticsFiles(dir string, rep diagnostics.Report, asJSON bool) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(filepath.Join(dir, "diagnostics.txt"), func(w io.Writer) error {
+		_, err := io.WriteString(w, rep.Text())
+		return err
+	}); err != nil {
+		return fmt.Errorf("write diagnostics.txt: %w", err)
+	}
+	if asJSON {
+		if err := writeFileAtomic(filepath.Join(dir, "diagnostics.json"), rep.WriteJSON); err != nil {
+			return fmt.Errorf("write diagnostics.json: %w", err)
+		}
+	}
+	return nil
+}
+
+func runDiagnosticsCommand(opts *cliOptions) error {
+	dir := opts.OutputDir
+	if dir == "" {
+		dir = "."
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	rep := diagnostics.Collect(context.Background(), diagnosticsOptionsFromCLI(opts, abs))
+	fmt.Print(rep.Text())
+	return writeDiagnosticsFiles(abs, rep, opts.DiagnoseJSON)
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == internalAISidecarFlag {
 		os.Exit(runInternalAISidecarMock(os.Args[2:]))
@@ -25372,6 +25533,13 @@ func main() {
 	}
 	if opts.Version {
 		fmt.Println(version)
+		return
+	}
+	if opts.Diagnose && !opts.DiagnoseIntegrated {
+		if err := runDiagnosticsCommand(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if opts.GaiaTest != "" {
@@ -25498,6 +25666,13 @@ func main() {
 		Starless:               opts.Starless,
 		JSONReport:             opts.JSONReport,
 		Provenance:             opts.Provenance,
+		Diagnose:               opts.Diagnose,
+		DiagnoseJSON:           opts.DiagnoseJSON,
+		DiagnoseQuick:          opts.DiagnoseQuick,
+		DiagnoseIntegrated:     opts.DiagnoseIntegrated,
+		DiagnoseTimeout:        opts.DiagnoseTimeout,
+		DiagnoseTop:            opts.DiagnoseTop,
+		DiagnoseUpdates:        opts.DiagnoseUpdates,
 		BGMultiscale:           opts.BGMultiscale,
 		Deconvolve:             opts.Deconvolve,
 		DeconvSigma:            opts.DeconvSigma,

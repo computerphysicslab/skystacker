@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/computerphysicslab/skystacker/PureRaw/raw"
+	"github.com/computerphysicslab/skystacker/goPureRaw/raw"
 )
 
 func TestProbe(t *testing.T) {

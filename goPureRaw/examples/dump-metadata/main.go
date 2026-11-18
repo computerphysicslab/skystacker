@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/computerphysicslab/skystacker/PureRaw/raw"
+	"github.com/computerphysicslab/skystacker/goPureRaw/raw"
 
-	_ "github.com/computerphysicslab/skystacker/PureRaw/formats/arw"
-	_ "github.com/computerphysicslab/skystacker/PureRaw/formats/cr3"
-	_ "github.com/computerphysicslab/skystacker/PureRaw/formats/raf"
+	_ "github.com/computerphysicslab/skystacker/goPureRaw/formats/arw"
+	_ "github.com/computerphysicslab/skystacker/goPureRaw/formats/cr3"
+	_ "github.com/computerphysicslab/skystacker/goPureRaw/formats/raf"
 )
 
 func main() {

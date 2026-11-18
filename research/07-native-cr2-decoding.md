@@ -2,9 +2,9 @@
 
 **Canonical file:** [`07-native-cr2-decoding.md`](07-native-cr2-decoding.md) · Part of the SkyStacker research corpus.
 
-**Scope.** This is the single canonical, deduplicated home for everything concerning Canon CR2 / lossless-JPEG (SOF3) decoding in SkyStacker and PureRaw: the file/stream facts for the EOS 40D test asset, the decoder algorithm, the measurements against `dcraw`, the authoritative `dcraw.c` v9.28 source findings, the refuted `cr2_slice` hypothesis, and the revised validation experiment. It absorbs the archived CR2 bit-exact prompt and its local outcome. It is **not** a history of the Go toolchain or modularisation, nor of external AI sidecars: those topics are cross-linked, not repeated.
+**Scope.** This is the single canonical, deduplicated home for everything concerning Canon CR2 / lossless-JPEG (SOF3) decoding in SkyStacker and goPureRaw: the file/stream facts for the EOS 40D test asset, the decoder algorithm, the measurements against `dcraw`, the authoritative `dcraw.c` v9.28 source findings, the refuted `cr2_slice` hypothesis, and the revised validation experiment. It absorbs the archived CR2 bit-exact prompt and its local outcome. It is **not** a history of the Go toolchain or modularisation, nor of external AI sidecars: those topics are cross-linked, not repeated.
 
-**Current status (stated once).** Native pure-Go CR2 decoding is **enabled by default**; `--no-native-cr2` restores the dcraw/ImageMagick fallback. The decoder is **usable but not bit-exact validated**. The empirical per-pixel/geometric agreement with `dcraw` is still unresolved, and the open validation item is tracked in the PureRaw roadmap (Phase 1b). CR3 input still needs an external decoder. (Implementation/flag details: [01](01-architecture-and-core-engine.md), [README.md](README.md).)
+**Current status (stated once).** Native pure-Go CR2 decoding is **enabled by default**; `--no-native-cr2` restores the dcraw/ImageMagick fallback. The decoder is **usable but not bit-exact validated**. The empirical per-pixel/geometric agreement with `dcraw` is still unresolved, and the open validation item is tracked in the goPureRaw roadmap (Phase 1b). CR3 input still needs an external decoder. (Implementation/flag details: [01](01-architecture-and-core-engine.md), [README.md](README.md).)
 
 ---
 
@@ -16,13 +16,13 @@
 | **C2** | [`02-astrometry-and-identification.md`](02-astrometry-and-identification.md) | Plate solving, WCS/SIP maths, catalogue cross-match |
 | **C3** | [`03-reference-and-literature.md`](03-reference-and-literature.md) | Bibliography, glossary, file-format reference table |
 | **C4** | [`04-calibration-and-self-flat.md`](04-calibration-and-self-flat.md) | Calibration masters and self-flat derivation |
-| **C5** | [`05-toolchain-and-modularity.md`](05-toolchain-and-modularity.md) | Go toolchain upgrade history, modularisation analysis, `PureRaw` module release history |
+| **C5** | [`05-toolchain-and-modularity.md`](05-toolchain-and-modularity.md) | Go toolchain upgrade history, modularisation analysis, `goPureRaw` module release history |
 | **C6** | [`06-external-ai-sidecars.md`](06-external-ai-sidecars.md) | External AI sidecar/CLI implementation and FITS sidecar runner |
 | **C7** | [`07-native-cr2-decoding.md`](07-native-cr2-decoding.md) | This file — native CR2 / lossless-JPEG / bit-exact investigation |
 | **C8** | [`08-crawler-source-discovery.md`](08-crawler-source-discovery.md) | goCrawler discovery cycles, curated corpus |
 | **R** | [`README.md`](README.md) | Project overview, capability tiers, CLI flag reference |
 
-Deliberate non-duplication: the `PureRaw` module path/tag/`go.work` history is in **C5**; the `--no-native-cr2` flag in the full shipped-flag list is in **C1/R**; demosaicing/Bayer-drizzle theory is in **C1** and the glossary in **C3**. Only the CR2-specific facts are developed here.
+Deliberate non-duplication: the `goPureRaw` module path/tag/`go.work` history is in **C5**; the `--no-native-cr2` flag in the full shipped-flag list is in **C1/R**; demosaicing/Bayer-drizzle theory is in **C1** and the glossary in **C3**. Only the CR2-specific facts are developed here.
 
 ---
 
@@ -33,7 +33,7 @@ Deliberate non-duplication: the `PureRaw` module path/tag/`go.work` history is i
 - Gemini Deep Research API docs: `https://ai.google.dev/gemini-api/docs/deep-research` (agents listed above; free tier observed at 0 input tokens/minute).
 - `GEMINI_DEEP_RESEARCH_PROMPT-outcome.md` was also reviewed for CR2/native-decoding content; it contains **none** (it covers Go toolchain gains, RC-Astro sidecars, SIP resampling and single-pass sigma-clip), so nothing from it is absorbed here. Its own topics are in **C3/C5/C6**.
 
-Historical code layout at the time of the investigation: SkyStacker was described as a single-file Go CLI (stdlib only, `CGO_ENABLED=0`) with a nested `PureRaw/` module (then declared `github.com/youruser/pureraw`). The relevant decoder files were `internal/ljpeg/ljpeg.go` (SOF3 lossless-JPEG decoder), `formats/cr2/decoder.go` (container probe, lossless-JPEG stream finder, two-plane → Bayer assembly), and `formats/cr2/decoder_test.go` (`TestDecodeOracle`, gated by the `PURERAW_CR2` env var). `main.go` held an equivalent embedded copy as `prDecodeLJPEG`, `prDemosaicBayer`, `prDecodeCR2Native`; that duplicate was later deleted when SkyStacker imported the module (see §7 and **C5**).
+Historical code layout at the time of the investigation: SkyStacker was described as a single-file Go CLI (stdlib only, `CGO_ENABLED=0`) with a nested `goPureRaw/` module (then declared `github.com/youruser/pureraw`). The relevant decoder files were `internal/ljpeg/ljpeg.go` (SOF3 lossless-JPEG decoder), `formats/cr2/decoder.go` (container probe, lossless-JPEG stream finder, two-plane → Bayer assembly), and `formats/cr2/decoder_test.go` (`TestDecodeOracle`, gated by the `PURERAW_CR2` env var). `main.go` held an equivalent embedded copy as `prDecodeLJPEG`, `prDemosaicBayer`, `prDecodeCR2Native`; that duplicate was later deleted when SkyStacker imported the module (see §7 and **C5**).
 
 ---
 
@@ -143,16 +143,16 @@ The same check also resolved the `curve[]` question: **`curve[]` is initialised 
 
 Perform an **oracle comparison at the raw Bayer plane level**: compare our decoder's output against `dcraw -D -4 -t 1` **after cropping the margins and normalising black/white** (i.e. map both to the same black=1018 / white=16224 scale and compare the 3944x2622 Bayer planes). This is explicitly **not another geometry search over dihedral transforms** — source inspection has already ruled out the geometry doubts that motivated those searches.
 
-Supporting validation work retained from the plan: build a **synthetic CR2 with known samples and a tiny maker note** so the expected mapping is known without dcraw, then, if rank correlation after normalisation approaches 1, add bit-exact unit tests to PureRaw (`TestDecodeOracle`) and SkyStacker. The concrete symptom to explain remains the pair **max 16372 / mean 1181.84 (ours)** vs **max 16011 / mean 1180.96 (dcraw)**, together with the previously low NCC (< 0.1) and Spearman (~0.14).
+Supporting validation work retained from the plan: build a **synthetic CR2 with known samples and a tiny maker note** so the expected mapping is known without dcraw, then, if rank correlation after normalisation approaches 1, add bit-exact unit tests to goPureRaw (`TestDecodeOracle`) and SkyStacker. The concrete symptom to explain remains the pair **max 16372 / mean 1181.84 (ours)** vs **max 16011 / mean 1180.96 (dcraw)**, together with the previously low NCC (< 0.1) and Spearman (~0.14).
 
 ---
 
-## 7. `CR2 Probe` byte-8 fix and PureRaw v0.1.1 (brief)
+## 7. `CR2 Probe` byte-8 fix and goPureRaw v0.1.1 (brief)
 
 For module path, tags, `go.work` and release mechanics see **C5**. CR2-specific highlights only:
 
-- Tagging `PureRaw/v0.1.0` exposed a **CR2 `Probe` offset bug**: the CR2 signature is at **bytes 8..9, not 4..5**. It was fixed and **PureRaw/v0.1.1** published.
-- SkyStacker then declared `require ...PureRaw v0.1.1`, imported `raw` + `formats/cr2`, and the duplicated `pr*` CR2 decoder was **deleted from `main.go`**. The `--no-native-cr2` fallback was deliberately kept until the oracle test passes.
+- Tagging `goPureRaw/v0.1.0` exposed a **CR2 `Probe` offset bug**: the CR2 signature is at **bytes 8..9, not 4..5**. It was fixed and **goPureRaw/v0.1.1** published.
+- SkyStacker then declared `require ...goPureRaw v0.1.1`, imported `raw` + `formats/cr2`, and the duplicated `pr*` CR2 decoder was **deleted from `main.go`**. The `--no-native-cr2` fallback was deliberately kept until the oracle test passes.
 - `GOWORK=off` build/test and E2E (1-light CR2 stack, **7.5 s**) were green (209 self-tests at that point). The binary is no longer "single source file" but remains a single stdlib-only executable plus one first-party module.
 - Current decoder implementation is the native pure-Go path described in §3, default-on, with `--no-native-cr2` restoring dcraw/ImageMagick (see **C1/R**); current self-test count and flag list are documented there, not here.
 
@@ -162,7 +162,7 @@ For module path, tags, `go.work` and release mechanics see **C5**. CR2-specific 
 
 - `GEMINI_CR2_BITEXACT_PROMPT.md` — archived Deep Research prompt (verified facts, 7 questions, deliverables, guardrails).
 - `GEMINI_CR2_BITEXACT_PROMPT-outcome.md` — local research substitute, dcraw source findings, unresolved alignment, append-only `cr2_slice` refutation, revised next step, source URLs.
-- `MODULARIZATION_ANALYSIS.md` — CR2-specific progress notes only: `Probe` byte-8 signature fix, PureRaw v0.1.0→v0.1.1, import of `raw` + `formats/cr2`, removal of duplicate `pr*` decoder, kept `--no-native-cr2` fallback (full modularisation history → **C5**).
+- `MODULARIZATION_ANALYSIS.md` — CR2-specific progress notes only: `Probe` byte-8 signature fix, goPureRaw v0.1.0→v0.1.1, import of `raw` + `formats/cr2`, removal of duplicate `pr*` decoder, kept `--no-native-cr2` fallback (full modularisation history → **C5**).
 - `GEMINI_DEEP_RESEARCH_PROMPT-outcome.md` — reviewed; no CR2/native-decoding facts to absorb.
 - `dcraw.c` v9.28 — `https://github.com/ncruces/dcraw/blob/master/dcraw.c` (source).
 - RawTherapee mirror — `https://github.com/Beep6581/RawTherapee/blob/dev/rtengine/dcraw.c`.

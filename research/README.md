@@ -16,7 +16,7 @@ the contribution files are then removed.
 | [02-astrometry-and-identification.md](02-astrometry-and-identification.md) | Plate solving, TAN/SIP, catalogues, annotation/anomalies, morphology, time domain, IVOA, HEALPix verification and implementation status |
 | [03-reference-and-literature.md](03-reference-and-literature.md) | One master bibliography, one glossary/index, microarchitecture reference, file formats and BXT/NXT/SXT analysis |
 | [04-calibration-and-self-flat.md](04-calibration-and-self-flat.md) | Master frames, physical models, recoverability table, self-flat v1/grid/IRLS, validation record, refusal policy, detector physics and open gaps |
-| [05-toolchain-and-modularity.md](05-toolchain-and-modularity.md) | Go toolchain chronology and final state, Go 1.24–1.27 gains, modularization decision, PureRaw module, file-format interoperability backlog |
+| [05-toolchain-and-modularity.md](05-toolchain-and-modularity.md) | Go toolchain chronology and final state, Go 1.24–1.27 gains, modularization decision, goPureRaw module, file-format interoperability backlog |
 | [06-external-ai-sidecars.md](06-external-ai-sidecars.md) | GraXpert / RC-Astro / StarNet2 ecosystem, linear-stage safety, shipped FITS sidecar runner and limits |
 | [07-native-cr2-decoding.md](07-native-cr2-decoding.md) | CR2 stream facts, decoder measurements, dcraw v9.28 source check, `cr2_slice` refutation and open validation |
 | [08-crawler-source-discovery.md](08-crawler-source-discovery.md) | goCrawler method, robots.txt policy, all run cycles, master source table and curated excerpts index |
@@ -28,7 +28,7 @@ original contribution files whose unique content it now owns. No other
 ## Current state
 
 SkyStacker v0.6.1, Go 1.27.4, 212 registered self-tests. Native CR2 decoding
-and the PureRaw library are in use; `--resample-sip`, fused sigma-clip,
+and the goPureRaw library are in use; `--resample-sip`, fused sigma-clip,
 external AI sidecars and FITS/XISF writers are shipped. Still open: CFA/Bayer
 drizzle, FITS Rice, BigTIFF, XISF Rev 2, per-frame astrometric reprojection
 and bit-exact CR2 validation. Authoritative code-facing docs are the root

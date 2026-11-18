@@ -4,8 +4,8 @@
 
 - **Toolchain:** Go **1.27.4** at `/home/jips/.local/go1.27.4/bin`; `go 1.27` + `toolchain go1.27.4` in **both** modules; CI/release pinned to 1.27.4; local `go.work` (gitignored) bumped to 1.27.4.
 - **Self-tests:** **212 registered** (`skystacker --selftest`); a Go 1.26 `testing/synctest` rate-limiter test also runs via `go test ./...`. Lower counts (203 → 208 → 209) in the absorbed records are historical snapshots, preserved once in §1.
-- **Full matrix green** on go1.27.4: `gofmt -l .` clean, `go vet ./...`, build, `go test ./...`, PureRaw `CGO_ENABLED=0` + `-race`, race build, and six static cross-build targets (linux/darwin/windows × amd64/arm64). No source changes were needed and no JSON/report drift was observed.
-- **Module layout:** a single stdlib-only executable plus **one first-party module**, `github.com/computerphysicslab/skystacker/PureRaw v0.1.1` — chosen **Option A (monorepo + subdirectory modules)**.
+- **Full matrix green** on go1.27.4: `gofmt -l .` clean, `go vet ./...`, build, `go test ./...`, goPureRaw `CGO_ENABLED=0` + `-race`, race build, and six static cross-build targets (linux/darwin/windows × amd64/arm64). No source changes were needed and no JSON/report drift was observed.
+- **Module layout:** a single stdlib-only executable plus **one first-party module**, `github.com/computerphysicslab/skystacker/goPureRaw v0.1.1` — chosen **Option A (monorepo + subdirectory modules)**.
 - **Benchmarks re-baselined:** 4-frame native-CR2 sigma stack **39.031 s** (was 59.937 s on 1.26.11); `--resume --starless` **21.11 s** (was 23.00 s). Not a controlled A/B; thermal variance applies.
 - **Architecture constraints held throughout:** `CGO_ENABLED=0`, standard library only at build time, static cross-platform CLI (Linux/macOS/Windows, amd64 + arm64), float32 RGB end-to-end, spill files + tiled out-of-core reduction.
 
@@ -18,7 +18,7 @@ This is the single canonical, deduplicated English record for the Go toolchain u
 - [`03-reference-and-literature.md`](03-reference-and-literature.md) — master bibliography and comprehensive technical glossary.
 - [`04-calibration-and-self-flat.md`](04-calibration-and-self-flat.md) — calibration, master frames, grid self-flat.
 - [`06-external-ai-sidecars.md`](06-external-ai-sidecars.md) — RC-Astro/GraXpert/StarNet2 CLI sidecar implementation (only the *rejection of embedded ML* is recorded here).
-- [`07-native-cr2-decoding.md`](07-native-cr2-decoding.md) — CR2/CHDK bit-exact decoding internals (only the PureRaw module packaging is recorded here).
+- [`07-native-cr2-decoding.md`](07-native-cr2-decoding.md) — CR2/CHDK bit-exact decoding internals (only the goPureRaw module packaging is recorded here).
 - [`08-crawler-source-discovery.md`](08-crawler-source-discovery.md) — crawler and source-discovery runs.
 - [`README.md`](README.md) — project overview and flag reference.
 
@@ -30,11 +30,11 @@ The absorbed files were written at different moments. The layers below fix each 
 
 | Layer | Date | Toolchain / layout | Self-tests | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **Survey baseline** (Gemini prompt ground truth) | pre-2026-11-17 | go1.20.3 linux/amd64; root `go 1.20`; PureRaw `go 1.22`; single `main.go` | **203** | Source version 0.6.1 (tag exists, main advanced beyond it); `dcraw`/`dcraw_emu`/ImageMagick allowed only for RAW decoding. |
-| **Baseline (analysis "Current state")** | 2026-11-17 pre-migration | go1.20.3; `go 1.20`; PureRaw `go 1.22` | — | README said "Go 1.20 or later"; `v0.6.1` was built with 1.20.3. |
+| **Survey baseline** (Gemini prompt ground truth) | pre-2026-11-17 | go1.20.3 linux/amd64; root `go 1.20`; goPureRaw `go 1.22`; single `main.go` | **203** | Source version 0.6.1 (tag exists, main advanced beyond it); `dcraw`/`dcraw_emu`/ImageMagick allowed only for RAW decoding. |
+| **Baseline (analysis "Current state")** | 2026-11-17 pre-migration | go1.20.3; `go 1.20`; goPureRaw `go 1.22` | — | README said "Go 1.20 or later"; `v0.6.1` was built with 1.20.3. |
 | **Conservative adoption (historical)** | 2026-11-17 | go1.26.11 at `/home/jips/.local/go1.26.11`; `go 1.26` + `toolchain go1.26.11` in both modules; CI/release pinned to 1.26.11 | **208** | First executed upgrade; `go fix` modernizers + `testing/synctest` added. |
 | **Final adoption (append-only status)** | 2026-11-17 | go1.27.4 at `/home/jips/.local/go1.27.4/bin`; `go 1.27` + `toolchain go1.27.4` in both modules; CI/release pinned to 1.27.4; `go.work` bumped | **209** (recorded at the time) | Full matrix green; benchmarks re-baselined. |
-| **Modularization progress snapshot** | 2026-11-17 | PureRaw v0.1.1 imported; `pr*` code deleted | (same as final-adoption row) | `GOWORK=off` green; 1-light CR2 E2E 7.5 s. |
+| **Modularization progress snapshot** | 2026-11-17 | goPureRaw v0.1.1 imported; `pr*` code deleted | (same as final-adoption row) | `GOWORK=off` green; 1-light CR2 E2E 7.5 s. |
 | **CURRENT (canonical)** | 2026-11-17 | Go 1.27.4, both modules `go 1.27` + `toolchain go1.27.4`, CI/release pinned, `go.work` gitignored | **212** | Single stdlib-only executable + one first-party module; full matrix green. |
 
 ### 1.1 Adopted state detail (final)
@@ -48,7 +48,7 @@ The absorbed files were written at different moments. The layers below fix each 
 ### 1.2 Pre-migration baseline detail (historical)
 
 - SkyStacker root `go.mod`: `go 1.20`; installed toolchain go1.20.3 linux/amd64.
-- PureRaw subproject `go.mod`: `go 1.22` (newer toolchains build older directives, so it could have been left as-is or bumped for consistency).
+- goPureRaw subproject `go.mod`: `go 1.22` (newer toolchains build older directives, so it could have been left as-is or bumped for consistency).
 - CI stages at baseline: gofmt, go vet, self-test, `-race`, cross-platform build, `go install`.
 - Constraints: single-file `main.go`, standard library only, `CGO_ENABLED=0`, static cross-platform binaries; no external Python/ML runtime, model weights, GPU/CUDA/OpenCL, or third-party Go modules; external runtime tools allowed only for RAW decoding.
 - Go 1.20 is far outside the support window (Go supports the last two major releases) and no longer receives security fixes.
@@ -56,7 +56,7 @@ The absorbed files were written at different moments. The layers below fix each 
 ### 1.3 Intermediate conservative state detail (historical)
 
 - The recommendation's conservative option was executed first: go1.26.11 (still security-patched, with Green Tea GC and cgo improvements, one less major-version jump) before the 1.27.4 step.
-- Full matrix green at that point: gofmt, vet, build, 208 self-tests, PureRaw `CGO_ENABLED=0` + race.
+- Full matrix green at that point: gofmt, vet, build, 208 self-tests, goPureRaw `CGO_ENABLED=0` + race.
 - **Code improvements adopted at that step:**
   - `go fix` (Go 1.26 modernizers: `newexpr`, `minmax`, `rangeint`, `mapsloop`, `slicescontains`, `slicessort`, `fmtappendf`, `omitzero`, `forvar`) applied to both modules; all tests remained green.
   - Added `main_test.go` using Go 1.26 `testing/synctest` to verify the **1 req/s** Gaia TAP rate limiter deterministically (no wall-clock sleeps in CI). (TAP client design and quota handling → [02](02-astrometry-and-identification.md).)
@@ -122,8 +122,8 @@ All gains below are stdlib/runtime/toolchain-level: **zero dependency changes**,
 | **Toolchain requirement for users** | Bumping the `go` directive to 1.27 means source builders need Go ≥ 1.27 (README previously said "Go 1.20 or later"). | CI uses `go-version-file: go.mod`; document in README. |
 | **Binary reproducibility** | `v0.6.1` was built with 1.20.3; a 1.27 build may differ in float formatting / JSON output. | Document the toolchain version in the banner / `report.json` if strict reproducibility matters. |
 | **`simd/archsimd` temptation** | Experimental, opt-in, amd64-only; would break arm64/macOS parity and the single-file portability promise. | **Do not adopt** (§7). |
-| **Migration effort** | Low (no external modules), but concrete work remains: install toolchain, run full matrix (gofmt, vet, race, cross-build, `go install`), repeat `BENCHMARKS.md` rows on the i7-8565U, and update README / TECHNICAL_SPEC / prompt-ai / PureRaw go.mod / CI. | Executed across the 1.26.11 and 1.27.4 steps (§5). |
-| **PureRaw `go 1.22` directive** | Left as-is or bumped for consistency; newer toolchains build older directives. | Ultimately bumped with the rest to `go 1.27` + `toolchain go1.27.4`. |
+| **Migration effort** | Low (no external modules), but concrete work remains: install toolchain, run full matrix (gofmt, vet, race, cross-build, `go install`), repeat `BENCHMARKS.md` rows on the i7-8565U, and update README / TECHNICAL_SPEC / prompt-ai / goPureRaw go.mod / CI. | Executed across the 1.26.11 and 1.27.4 steps (§5). |
+| **goPureRaw `go 1.22` directive** | Left as-is or bumped for consistency; newer toolchains build older directives. | Ultimately bumped with the rest to `go 1.27` + `toolchain go1.27.4`. |
 
 ---
 
@@ -167,19 +167,19 @@ All gains below are stdlib/runtime/toolchain-level: **zero dependency changes**,
 ### 8.1 Situation at analysis time
 
 - `github.com/computerphysicslab/skystacker` is a Go module whose CLI lived in a single `main.go`.
-- `PureRaw/` was a **nested module** with its own `go.mod`, originally declaring the placeholder path `github.com/youruser/pureraw`. It was **not imported** by the parent: SkyStacker embedded an equivalent CR2 decoder as `pr*` functions in `main.go`.
+- `goPureRaw/` was a **nested module** with its own `go.mod`, originally declaring the placeholder path `github.com/youruser/pureraw`. It was **not imported** by the parent: SkyStacker embedded an equivalent CR2 decoder as `pr*` functions in `main.go`.
 - Both modules are standard-library-only and build with `CGO_ENABLED=0`.
 
 ### 8.2 Option A — one repo, several subdirectory Go modules (chosen)
 
-A module at `PureRaw/` must declare `module github.com/computerphysicslab/skystacker/PureRaw` and be tagged `PureRaw/v0.1.0`, `PureRaw/v0.2.0`, etc.; consumers use:
+A module at `goPureRaw/` must declare `module github.com/computerphysicslab/skystacker/goPureRaw` and be tagged `goPureRaw/v0.1.0`, `goPureRaw/v0.2.0`, etc.; consumers use:
 
 ```bash
-go get github.com/computerphysicslab/skystacker/PureRaw@v0.1.0
+go get github.com/computerphysicslab/skystacker/goPureRaw@v0.1.0
 ```
 
 - **Benefits:** one CI, one issue tracker, one LICENSE, one release workflow (per-module tag patterns), one place for research/docs; lockstep evolution and easier version-skew control during rapid development; no extra repo secrets/permissions; Go module zip serving already handles subdirectory modules (consumers need not clone the whole repo).
-- **Costs:** lower discoverability than a dedicated repo named `pureraw`; per-module semver requires subdirectory tags (`PureRaw/vX.Y.Z`) and release-workflow discipline; local development needs `go.work` (or a temporary `replace` that **must NOT be committed** if `go install ...@latest` support is desired — replace directives in a dependency module are ignored by the Go proxy).
+- **Costs:** lower discoverability than a dedicated repo named `pureraw`; per-module semver requires subdirectory tags (`goPureRaw/vX.Y.Z`) and release-workflow discipline; local development needs `go.work` (or a temporary `replace` that **must NOT be committed** if `go install ...@latest` support is desired — replace directives in a dependency module are ignored by the Go proxy).
 
 ### 8.3 Option B — one independent GitHub repo per library (not chosen)
 
@@ -188,7 +188,7 @@ go get github.com/computerphysicslab/skystacker/PureRaw@v0.1.0
 
 ### 8.4 Decision
 
-**Start with Option A (monorepo + subdirectory modules).** It matches the existing single-repo workflow, keeps co-evolution cheap, and still makes `PureRaw` `go get`-able. Revisit Option B only if a library gains an external contributor base or needs a different release cadence or license.
+**Start with Option A (monorepo + subdirectory modules).** It matches the existing single-repo workflow, keeps co-evolution cheap, and still makes `goPureRaw` `go get`-able. Revisit Option B only if a library gains an external contributor base or needs a different release cadence or license.
 
 ---
 
@@ -196,10 +196,10 @@ go get github.com/computerphysicslab/skystacker/PureRaw@v0.1.0
 
 | # | Step | Effort | Status |
 | :--- | :--- | :--- | :--- |
-| 1 | Fix module path in `PureRaw/go.mod` → `module github.com/computerphysicslab/skystacker/PureRaw` (before any tag; changing a published path is breaking). | S, ~15 min | **Done** — path fixed, all imports updated. |
-| 2 | Add root `go.work` listing `.` and `./PureRaw`; add `go.work` to `.gitignore` (or commit it — ignored by `go install` either way). | S, ~10 min | **Done** — gitignored `go.work`; both modules build/test clean. Later bumped to 1.27.4 (§1.1). |
-| 3 | Publish `v0.1.0`: tag `PureRaw/v0.1.0`, update `PureRaw/README.md` with `go get` usage, add CI job testing the nested module alone. | S, ~20 min | **Done** — v0.1.0 tagged; a CR2 `Probe` offset bug was found and fixed, leading to v0.1.1 (§10). |
-| 4 | Use the library from SkyStacker: add `require ...PureRaw v0.1.1` (no committed `replace`), blank-import `formats/cr2`, call `raw.Decode`, delete duplicated `pr*` decoder from `main.go`; keep `--no-native-cr2` fallback until the oracle test passes. | M, ~1–2 h | **Done** — see §10. |
+| 1 | Fix module path in `goPureRaw/go.mod` → `module github.com/computerphysicslab/skystacker/goPureRaw` (before any tag; changing a published path is breaking). | S, ~15 min | **Done** — path fixed, all imports updated. |
+| 2 | Add root `go.work` listing `.` and `./goPureRaw`; add `go.work` to `.gitignore` (or commit it — ignored by `go install` either way). | S, ~10 min | **Done** — gitignored `go.work`; both modules build/test clean. Later bumped to 1.27.4 (§1.1). |
+| 3 | Publish `v0.1.0`: tag `goPureRaw/v0.1.0`, update `goPureRaw/README.md` with `go get` usage, add CI job testing the nested module alone. | S, ~20 min | **Done** — v0.1.0 tagged; a CR2 `Probe` offset bug was found and fixed, leading to v0.1.1 (§10). |
+| 4 | Use the library from SkyStacker: add `require ...goPureRaw v0.1.1` (no committed `replace`), blank-import `formats/cr2`, call `raw.Decode`, delete duplicated `pr*` decoder from `main.go`; keep `--no-native-cr2` fallback until the oracle test passes. | M, ~1–2 h | **Done** — see §10. |
 | 5 | Document the change: README/TECHNICAL_SPEC say "single executable, stdlib-only" rather than "single source file"; CI builds from a clean checkout without `go.work`. | S, ~30 min | Reflected in the canonical cross-links and `GOWORK=off` verification. |
 | 6 | Future sibling modules: `fitsio/` (FITS read/write + Rice), `photometry/` (HFR/PSF helpers), each with its own `go.mod` and `fitsio/vX.Y.Z`-style tags, following the same pattern. | M–L | **Planned / open** (§12 for file-format work). |
 
@@ -209,15 +209,15 @@ go get github.com/computerphysicslab/skystacker/PureRaw@v0.1.0
 
 ### 10.1 Risks / caveats
 
-- **`internal/` packages** inside PureRaw stay private to PureRaw by Go design; SkyStacker consumes only the exported packages **`raw`** and **`formats/cr2`**.
+- **`internal/` packages** inside goPureRaw stay private to goPureRaw by Go design; SkyStacker consumes only the exported packages **`raw`** and **`formats/cr2`**.
 - **`go install github.com/computerphysicslab/skystacker@latest`** needs the parent `go.mod` to resolve the nested module from the proxy: use a real **tagged version**, not a local `replace`.
 - **First-party dependency honesty:** adding a dependency (even our own module) changes the "zero external dependencies" claim. It remains stdlib-only at the code level, but source builders now need module resolution — **document it honestly**.
 - **API stability:** do not split until a library's API is stable — a published module path plus semver is a compatibility promise.
 
 ### 10.2 Final modularized state
 
-- Tagged `PureRaw/v0.1.0`, then found and fixed a CR2 `Probe` offset bug — **signature is at bytes 8..9, not 4..5** — and published **`PureRaw/v0.1.1`**. (Decoder internals → [07](07-native-cr2-decoding.md).)
-- SkyStacker declares `require github.com/computerphysicslab/skystacker/PureRaw v0.1.1`, imports **`raw` + `formats/cr2`**, and the duplicated **`pr*` CR2 decoder was deleted from `main.go`**.
+- Tagged `goPureRaw/v0.1.0`, then found and fixed a CR2 `Probe` offset bug — **signature is at bytes 8..9, not 4..5** — and published **`goPureRaw/v0.1.1`**. (Decoder internals → [07](07-native-cr2-decoding.md).)
+- SkyStacker declares `require github.com/computerphysicslab/skystacker/goPureRaw v0.1.1`, imports **`raw` + `formats/cr2`**, and the duplicated **`pr*` CR2 decoder was deleted from `main.go`**.
 - `GOWORK=off` build/test and E2E (**1-light CR2 stack, 7.5 s**) are green; the self-test count at this snapshot and the canonical current count are fixed in §1.
 - The binary is **no longer "single source file"** but remains a **single stdlib-only executable plus one first-party module**.
 - Future modules planned: `fitsio/`, `photometry/` (§9 step 6).
@@ -271,7 +271,7 @@ File formats / rejection rationale:
 ## Sources absorbed
 
 - `research/GO_TOOLCHAIN_UPGRADE_ANALYSIS.md` — baseline, verified stable versions and 2026-11-10 security fixes, advantages/disadvantages, two-step recommendation, "Decision implemented" (go1.26.11), "Current-state correction", "Code improvements adopted" (`go fix` modernizers + `testing/synctest`), and "Go 1.27.4 adopted" append-only status (toolchain scope only).
-- `research/MODULARIZATION_ANALYSIS.md` — current situation, Option A vs Option B with costs/benefits, decision, migration steps 1–6 with effort estimates, risks/caveats, "Progress" (steps 1–2) and "Progress update" (steps 3–4, PureRaw v0.1.1).
+- `research/MODULARIZATION_ANALYSIS.md` — current situation, Option A vs Option B with costs/benefits, decision, migration steps 1–6 with effort estimates, risks/caveats, "Progress" (steps 1–2) and "Progress update" (steps 3–4, goPureRaw v0.1.1).
 - `research/GEMINI_DEEP_RESEARCH_PROMPT-outcome.md` — Go 1.24–1.26 stdlib/runtime gains (Swiss Tables numbers, Green Tea GC numbers, `encoding/binary`/`io.ReadAll`, `testing/synctest`, `go fix`), Go 1.26 `simd/archsimd` limits, Seti Astro 32 GiB RAM note, reproducible benchmark methodology, feasibility matrix rows for toolchain/file formats, FITS Rice / BigTIFF / XISF Rev 2 proposals, embedded-ML infeasibility (284–456 MB) and the FITS/XISF still-open status (toolchain/engineering/file-format portions only).
 - `research/GEMINI_DEEP_RESEARCH_PROMPT.md` — §1 ground truth (0.6.1, single `main.go`, 203 self-tests, `CGO_ENABLED=0`, build/test constraints), §2 benchmark context (i7-8565U host), §4 F/G research questions (Go performance, reproducibility, file formats), §5 feasibility/roadmap guardrails.
 - Cross-document status framing: `research/01-architecture-and-core-engine.md` §18 (canonical 212 self-tests, current toolchain and open-items snapshots) — used to fix status layers; its engine/format content is not duplicated here.

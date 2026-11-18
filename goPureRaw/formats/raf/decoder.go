@@ -14,7 +14,7 @@ import (
 	"bytes"
 	"io"
 
-	"github.com/computerphysicslab/skystacker/PureRaw/raw"
+	"github.com/computerphysicslab/skystacker/goPureRaw/raw"
 )
 
 const magic = "FUJIFILMCCD-RAW "
