@@ -10,9 +10,9 @@ touching code. Documentation in English. Final user reports in Spanish.
 Version and tests
 -----------------
 - Source version is v0.6.1 (`var version` in main.go).
-- Registered self-tests: 220. Count entries in `runSelfTests`, not every
+- Registered self-tests: 229. Count entries in `runSelfTests`, not every
   function whose name starts with `test`. Expect:
-      all 220 self-tests passed
+      all 229 self-tests passed
   Update this number only when a case is added or removed.
 
 Build and install
@@ -61,6 +61,24 @@ Current product state (do not re-implement)
 - `--fits` writes `stacked_sum.fits` (big-endian BITPIX=-32, NAXIS=3); `--xisf` writes `stacked_sum.xisf` (monolithic XISF 1.0, planar Float32); writer round-trip selftests cover both.
 - `--bpm-auto` derives a bad-pixel map from master dark/bias (median + N*sigma*MAD, `--bpm-auto-sigma`, default 5); `testBPMAuto` verifies detection and masking.
 - Self-flat Phase 4 done: grid model is the default (v1 `registered` kept for compatibility). Validated on Orion limit 20 with mean/median/sigma and `--no-register`; extrapolation+min<0.45 guard added; gamma-aware correction documented as out of scope for sRGB. Real flat validation deferred.
+Research-to-roadmap protocol (mandatory after every knowledge-base update)
+-------------------------------------------------------------------------
+- Whenever research/ changes (new source ingested, section appended, partial
+  file consolidated), run a gap analysis: scan the canonical thematic files
+  01-08 for "open", "not implemented", "future", "gap", "deferred" and
+  quantitative findings that imply actionable work.
+- Compare the findings with ROADMAP.md. Do not re-propose an existing item or
+  anything in "Deferred / explicitly rejected". For each genuinely new
+  challenge add a row with: short title, ascending-effort order, S/M/L/XL
+  estimate, status (Open/Blocked/Deferred), canonical research owner link and
+  a falsifiable acceptance scope. Update the summary counts.
+- The same routine applies after changes to COMPARISON.md: promote mature-tool
+  features that are feasible under the stdlib-only static CLI constraints and
+  record the comparative rationale there, not duplicated in ROADMAP.md.
+- Record the outcome in prompt-ai.txt, NEXT_SESSION_PROMPT.md and
+  PROJECT_CONTEXT.md so the next session repeats the habit automatically.
+- Commit/push only when explicitly asked.
+
 Local AI tools (myTools)
 -------------------------
 Root: /home/jips/datos/datos-juan/proyectos/myTools/AI

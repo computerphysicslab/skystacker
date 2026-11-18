@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 220 passing.** Update this number after any test change.
+**Self-test count: 229 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -1742,10 +1742,23 @@ rejection and disk spill. `--scale N` downsamples.
 - Public API: `Options`, `Collect(ctx, Options) Report`, `Report.JSON()/WriteJSON()/Text()`. OS-specific collectors sit behind a `platform` interface with `//go:build` files for linux (`/proc`, cgroup, dpkg/rpm/apk/pacman), darwin (`sysctl`, `vm_stat`, `sw_vers`, brew) and windows (PowerShell/CIM, Get-HotFix); unknown OS degrades with `ErrUnsupported`.
 - Collectors cover host/OS, Go build info and `runtime/metrics`, CPU/load, memory/swap/cgroup, filesystems, top processes, tools, whitelisted+redacted env, program dir walk with file/byte counts and binary SHA-256, network interfaces and local package inventory. Every collector has a timeout and a 64 KiB command-output cap; failures go to `Report.Errors`.
 - CLI: `--diagnose`, `--diagnose-json`, `--diagnose-quick`, `--diagnose-integrated`, `--diagnose-timeout`, `--diagnose-top`, `--diagnose-updates`. Standalone mode exits early in `main()`; integrated mode writes `diagnostics.txt`/`.json` next to a normal report. E2E `--diagnose --diagnose-json --diagnose-updates` produced a 17 kB JSON and a readable text report on this host.
-- CI has a `goDiagnostics` job (vet, CGO=0 test, cross-build linux/darwin/windows); `goDiagnostics/README.md` documents the copy-paste `require`+`replace` protocol for other projects. Selftests 220.
+- CI has a `goDiagnostics` job (vet, CGO=0 test, cross-build linux/darwin/windows); `goDiagnostics/README.md` documents the copy-paste `require`+`replace` protocol for other projects. Selftests 229.
 
 ### Module naming convention (2026-11-18, mandatory)
 
 - Both nested modules were renamed to Go style: `PureRaw/` → `goPureRaw/` (`github.com/computerphysicslab/skystacker/goPureRaw` v0.1.1) and `diagnostics/` → `goDiagnostics/` (`github.com/computerphysicslab/skystacker/goDiagnostics` v0.0.0). The old paths are intentionally retired; nobody consumed them externally, so the former compatibility promise was explicitly lifted.
 - Root `go.mod` now carries a local `replace` for **both** modules, so a clean checkout builds without published tags. `go.work` lists `.`, `./goPureRaw`, `./goDiagnostics`.
 - Rule for every future module: directory and module path use `go<Name>` (e.g. future `goFitsio/`, `goPhotometry/` → `github.com/computerphysicslab/skystacker/go<Name>`). Never reintroduce `PureRaw/`, `diagnostics/` or hyphenated `go-*` module names. Once a module is published with a semver tag, its path becomes a compatibility promise and is frozen.
+
+### Roadmap items 19–28 (2026-11-18)
+
+- Delivered: frame metrics CSV + include-list culling, `--keep-sharpest` HFR selection (applied to pass-2 inputs), metadata-matched calibration library, comet+stars recombination, `--batch` JSON queue (self-exec, no shell), PSF-based starless radii, stdlib à trous wavelet denoise, FFT Wiener deconvolution with tiled overlap-add, and Gaia ensemble photometry (`photometry.csv/.json`).
+- Each feature has a registered selftest; total **229**. E2E checks covered the batch queue, include-list + sharpest selection + metrics CSV, and post-only wavelets/Wiener/photometry.
+- Item 27 (mosaic) remains blocked by item 13 (per-frame WCS). All other former *Open* items are now *Done*; `ROADMAP.md` is the authoritative tracker.
+
+### Research-to-roadmap routine (mandatory)
+
+- After every change to the research knowledge base (ingestion, appended section or consolidated contribution) and after every `COMPARISON.md` update, scan canonical files `research/01-...08-*.md` for *open / not implemented / future / gap* statements and quantitative findings that imply work.
+- Compare against `ROADMAP.md`, skip existing or explicitly rejected items, then add genuinely new challenges with ascending-effort order, S/M/L/XL estimate, status (Open/Blocked/Deferred), canonical research owner and a falsifiable acceptance scope; update the summary counts.
+- Repeat the routine after comparison-matrix changes, promoting only features feasible under the stdlib-only static CLI constraints. Keep the comparative rationale in `COMPARISON.md`, not duplicated in `ROADMAP.md`.
+- The habit is recorded in `prompt-ai.txt` and `NEXT_SESSION_PROMPT.md` so future sessions apply it automatically.

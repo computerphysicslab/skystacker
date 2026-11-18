@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Roadmap extended to 46 items: 18 new challenges (29-46) promoted from the canonical research knowledge base, plus a mandatory research-to-roadmap gap-analysis routine recorded in the AI context files.
+- Roadmap items 19–28 delivered: `--frame-metrics/--include-list`, `--keep-sharpest`, `--calib-library`, `--comet-combine`, `--batch`, `--starless-psf`, `--wavelets`, `--deconvolve-wiener` and `--photometry`; self-tests 229.
 - Added portable `goDiagnostics/` Go module (`goDiagnostics`, stdlib-only, Go 1.22 baseline) with OS/runtime/CPU/memory/disk/process/update/tool/network collectors, redaction, timeouts and text/JSON rendering; SkyStacker consumes it through `--diagnose`, `--diagnose-json`, `--diagnose-quick`, `--diagnose-integrated`, `--diagnose-timeout`, `--diagnose-top` and `--diagnose-updates`; self-tests 220.
 - Roadmap pass 2026-11-18: encoded/EOTF self-flat report note, extended benchmarks, `--xisf-rev2` (SHA3-256 + strict sample validation), `--bigtiff`, multi-catalog annotation with SNR>5 anomalies, `--deconvolve-grid` local PSF, `--provenance` (ProvenanceDM-style graph); self-tests 219. Items 1/9/10 blocked and 12 not accepted are documented in `ROADMAP.md`.
 - Added `--resample-sip`: order-2 SIP distortion from `plate_solution.json` is applied in the stacking resampler (undistort reference, similarity/affine warp, redistort source), with `testResampleSIP`; self-tests 212.

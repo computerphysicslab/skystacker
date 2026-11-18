@@ -53,6 +53,7 @@ import (
 	"crypto/sha3"
 	"crypto/sha512"
 	"encoding/binary"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -234,6 +235,18 @@ type cliOptions struct {
 	DiagnoseTimeout        int
 	DiagnoseTop            int
 	DiagnoseUpdates        bool
+	FrameMetrics           string
+	IncludeList            string
+	KeepSharpest           int
+	CalibLibrary           string
+	CometCombine           bool
+	Batch                  string
+	StarlessPSF            bool
+	Wavelets               bool
+	WaveletScales          int
+	WaveletSigma           float64
+	DeconvolveWiener       bool
+	Photometry             bool
 	BGMultiscale           bool
 	ConfigPath             string
 	Deconvolve             bool
@@ -495,6 +508,18 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.IntVar(&o.DiagnoseTimeout, "diagnose-timeout", 5, "diagnostic collection timeout in seconds")
 	fs.IntVar(&o.DiagnoseTop, "diagnose-top", 10, "number of top processes in the diagnostic report")
 	fs.BoolVar(&o.DiagnoseUpdates, "diagnose-updates", false, "include installed-package/hotfix inventory in diagnostics")
+	fs.StringVar(&o.FrameMetrics, "frame-metrics", "", "write per-frame HFR/FWHM/eccentricity/SNR/background/weight CSV")
+	fs.StringVar(&o.IncludeList, "include-list", "", "file listing frame paths/names to keep (one per line, # comments)")
+	fs.IntVar(&o.KeepSharpest, "keep-sharpest", 0, "keep only the sharpest N% of frames by median star HFR (0 = all)")
+	fs.StringVar(&o.CalibLibrary, "calib-library", "", "folder with calibration_library.json for metadata-based master matching")
+	fs.BoolVar(&o.CometCombine, "comet-combine", false, "with a comet stack: recombine stars and comet into stacked_comet_combined")
+	fs.StringVar(&o.Batch, "batch", "", "JSON file with a queue of CLI argument lists to run sequentially")
+	fs.BoolVar(&o.StarlessPSF, "starless-psf", false, "use per-star HFR/eccentricity PSF radii for star removal")
+	fs.BoolVar(&o.Wavelets, "wavelets", false, "stdlib à trous wavelet denoise on linear data")
+	fs.IntVar(&o.WaveletScales, "wavelet-scales", 3, "number of à trous scales (1-5)")
+	fs.Float64Var(&o.WaveletSigma, "wavelet-sigma", 3.0, "soft-threshold in MAD sigma units for wavelet details")
+	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
+	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
 	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
 	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
 	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
@@ -537,7 +562,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -673,6 +698,15 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DiagnoseTop < 1 || o.DiagnoseTop > 100 {
 		return nil, fmt.Errorf("--diagnose-top must be in [1, 100], got %d", o.DiagnoseTop)
+	}
+	if o.KeepSharpest < 0 || o.KeepSharpest > 100 {
+		return nil, fmt.Errorf("--keep-sharpest must be in [0, 100], got %d", o.KeepSharpest)
+	}
+	if o.WaveletScales < 1 || o.WaveletScales > 5 {
+		return nil, fmt.Errorf("--wavelet-scales must be in [1, 5], got %d", o.WaveletScales)
+	}
+	if o.WaveletSigma <= 0 || o.WaveletSigma > 20 {
+		return nil, fmt.Errorf("--wavelet-sigma must be in (0, 20], got %g", o.WaveletSigma)
 	}
 	for _, ext := range []struct {
 		name  string
@@ -1083,6 +1117,16 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --diagnose-quick   fast subset (no package inventory, small directory walk)")
 	fmt.Fprintln(w, "  --diagnose-integrated  write diagnostics files alongside a normal run report")
 	fmt.Fprintln(w, "  --diagnose-timeout N / --diagnose-top N / --diagnose-updates")
+	fmt.Fprintln(w, "  --frame-metrics PATH   write per-frame quality CSV (SubframeSelector-style)")
+	fmt.Fprintln(w, "  --include-list PATH    keep only frames listed in PATH (one path per line)")
+	fmt.Fprintln(w, "  --keep-sharpest N      keep the sharpest N% of frames by median star HFR (0 = all)")
+	fmt.Fprintln(w, "  --calib-library PATH   match masters by exposure/temperature/ISO/gain metadata")
+	fmt.Fprintln(w, "  --comet-combine        recombine the comet stack with the stars stack (max/blend)")
+	fmt.Fprintln(w, "  --batch FILE           run a JSON queue of CLI invocations sequentially")
+	fmt.Fprintln(w, "  --starless-psf         per-star PSF radius (HFR/eccentricity) for star removal")
+	fmt.Fprintln(w, "  --wavelets             à trous wavelet denoise (--wavelet-scales/--wavelet-sigma)")
+	fmt.Fprintln(w, "  --deconvolve-wiener    FFT Wiener deconvolution (uses --deconv-sigma)")
+	fmt.Fprintln(w, "  --photometry           ensemble Gaia photometry -> photometry.csv/.json")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --deconvolve-grid  local PSF from star HFR over a 3x3/4x4 grid (--deconv-grid-size)")
@@ -5016,6 +5060,27 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.DiagnoseUpdates {
 		add("--diagnose-updates")
 	}
+	if o.KeepSharpest > 0 {
+		add(fmt.Sprintf("--keep-sharpest %d", o.KeepSharpest))
+	}
+	if o.CalibLibrary != "" {
+		add("--calib-library " + quoteReportArg(o.CalibLibrary))
+	}
+	if o.CometCombine {
+		add("--comet-combine")
+	}
+	if o.StarlessPSF {
+		add("--starless-psf")
+	}
+	if o.Wavelets {
+		add(fmt.Sprintf("--wavelets --wavelet-scales %d --wavelet-sigma %g", o.WaveletScales, o.WaveletSigma))
+	}
+	if o.DeconvolveWiener {
+		add("--deconvolve-wiener")
+	}
+	if o.Photometry {
+		add("--photometry")
+	}
 	if o.DiagnoseTimeout != 5 || o.DiagnoseTop != 10 {
 		add(fmt.Sprintf("--diagnose-timeout %d --diagnose-top %d", o.DiagnoseTimeout, o.DiagnoseTop))
 	}
@@ -5447,6 +5512,17 @@ type runOptions struct {
 	DiagnoseTimeout        int
 	DiagnoseTop            int
 	DiagnoseUpdates        bool
+	FrameMetrics           string
+	IncludeList            string
+	KeepSharpest           int
+	CalibLibrary           string
+	CometCombine           bool
+	StarlessPSF            bool
+	Wavelets               bool
+	WaveletScales          int
+	WaveletSigma           float64
+	DeconvolveWiener       bool
+	Photometry             bool
 	BGMultiscale           bool
 	Deconvolve             bool
 	DeconvSigma            float64
@@ -6485,6 +6561,10 @@ type frameDiag struct {
 	FootprintPct float64 // 100 * actual transformed parallelogram area / reference area
 	BgSigma      float64
 	MedianBlob   float64
+	HFR          float64
+	FWHM         float64
+	Ecc          float64
+	SNR          float64
 	IntrinsicQ   float64
 	Weight       float64
 	Note         string
@@ -6570,6 +6650,23 @@ func computeFrameSNR(stars []star, bgNoise float64) float64 {
 // Eccentricity is computed per star during detection (0 = circular,
 // 1 = line-shaped). Larger values indicate tracking errors, coma, or
 // astigmatism; lower is better.
+func medianStarHFR(stars []star) float64 {
+	vals := make([]float64, 0, len(stars))
+	for _, s := range stars {
+		if s.HFR > 0 {
+			vals = append(vals, s.HFR)
+		}
+	}
+	if len(vals) == 0 {
+		return 0
+	}
+	sort.Float64s(vals)
+	if len(vals)%2 == 1 {
+		return vals[len(vals)/2]
+	}
+	return (vals[len(vals)/2-1] + vals[len(vals)/2]) / 2
+}
+
 func medianStarEcc(stars []star) float64 {
 	if len(stars) == 0 {
 		return 0
@@ -9144,6 +9241,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return fmt.Errorf("post-processing: %w", err)
 		}
 		logf("Post-processing complete: %d files", len(postOutputs))
+		if opts.Photometry {
+			var sol *plateSolution
+			if data, jerr := os.ReadFile(filepath.Join(outputDir, "plate_solution.json")); jerr == nil {
+				var s plateSolution
+				if jerr := json.Unmarshal(data, &s); jerr == nil {
+					sol = &s
+				}
+			}
+			if perr := runEnsemblePhotometry(outputDir, sol, opts); perr != nil {
+				logf("WARNING: photometry: %v", perr)
+			}
+		}
 		return nil
 	}
 
@@ -9209,6 +9318,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if err != nil {
 		return err
 	}
+	if opts.IncludeList != "" {
+		listPath := opts.IncludeList
+		if !filepath.IsAbs(listPath) {
+			listPath = filepath.Join(outputDir, listPath)
+		}
+		filtered, ferr := filterFilesByIncludeList(files, listPath)
+		if ferr != nil {
+			return ferr
+		}
+		logf("Include list: kept %d of %d discovered frames", len(filtered), len(files))
+		files = filtered
+	}
 	if len(files) == 0 {
 		return fmt.Errorf("no image files (JPG/PNG/RAW/FITS) found in %s", lightInputDir)
 	}
@@ -9219,6 +9340,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		bgNoise       float64
 		medianBlob    float64
 		medianEcc     float64
+		medianHFR     float64
 		blackLevel    float64
 		hasBlackLevel bool
 	}
@@ -9564,6 +9686,35 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	var starHits, xfHits int
 
+	if opts.CalibLibrary != "" && len(candidates) > 0 {
+		entries, lerr := loadCalibrationLibrary(opts.CalibLibrary)
+		if lerr != nil {
+			return lerr
+		}
+		ref := candidates[0].path
+		ex := readJPEGExif(ref)
+		exposure := ex.ExposureTime
+		if exposure <= 0 {
+			if v, ok := fitsHeaderFloat(ref, "EXPTIME", "EXPOSURE"); ok {
+				exposure = v
+			}
+		}
+		temp, hasTemp := fitsHeaderFloat(ref, "TEMPERAT", "TEMP")
+		for _, kind := range []struct {
+			name string
+			dst  *string
+		}{{"dark", &opts.DarkFile}, {"flat", &opts.FlatFile}, {"bias", &opts.BiasFile}} {
+			if *kind.dst != "" {
+				continue
+			}
+			if path, ok := matchCalibrationEntry(entries, kind.name, exposure, ex.ISO, temp, hasTemp); ok {
+				*kind.dst = path
+				logf("Calibration library: matched %s -> %s (exp=%g s, ISO=%d, temp=%.1f)",
+					kind.name, filepath.Base(path), exposure, ex.ISO, temp)
+			}
+		}
+	}
+
 	var darkFrame, flatFrame, biasFrame *frame
 	if opts.DarkFile != "" {
 		darkFrame, err = stackCalibrationFolder(opts.DarkFile, inW, inH, true)
@@ -9702,6 +9853,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.Register {
 			var wasHit bool
 			frameStars, c.medianBlob, c.medianEcc, c.bgNoise, wasHit = loadOrDetectStars(c.path, f, cacheDir, opts.Scale)
+			c.medianHFR = medianStarHFR(frameStars)
 			if wasHit {
 				starHits++
 				logf("  [cache hit] %s", filepath.Base(c.path))
@@ -9728,6 +9880,27 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			c.exif = readJPEGExif(c.path)
 		}
 		accepted = append(accepted, c)
+	}
+	if opts.KeepSharpest > 0 && len(accepted) > 1 {
+		hfrs := make([]float64, len(accepted))
+		for i := range accepted {
+			hfrs[i] = accepted[i].medianHFR
+		}
+		before := len(accepted)
+		keep := keepSharpestIndices(hfrs, opts.KeepSharpest)
+		if len(keep) < before {
+			newAccepted := make([]candidate, len(keep))
+			newStarLists := make([][]star, len(keep))
+			for j, idx := range keep {
+				newAccepted[j] = accepted[idx]
+				if idx < len(starLists) {
+					newStarLists[j] = starLists[idx]
+				}
+			}
+			accepted, starLists = newAccepted, newStarLists
+			logf("Sharpest selection: kept %d/%d frames (--keep-sharpest %d%%, median HFR ranking)",
+				len(accepted), before, opts.KeepSharpest)
+		}
 	}
 	if unregAcc.Count == 0 && len(spillPaths1) == 0 {
 		return fmt.Errorf("no frames accumulated")
@@ -10340,11 +10513,15 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			td.Quality = computeFrameQuality(td.Inliers, td.Stars, len(refStars), td.Scale, td.RotationDeg)
 			td.BgSigma = accepted[i].bgNoise
 			td.MedianBlob = accepted[i].medianBlob
+			td.HFR = accepted[i].medianHFR
+			td.Ecc = accepted[i].medianEcc
+			td.SNR = computeFrameSNR(starLists[i], td.BgSigma)
+			td.FWHM = qualityFWHM(starLists[i], td.MedianBlob, opts.HFRQuality)
 			td.IntrinsicQ = computeAdvancedQuality(frameImageStats{
 				StarCount: td.Stars,
-				SNR:       computeFrameSNR(starLists[i], td.BgSigma),
-				FWHM:      qualityFWHM(starLists[i], td.MedianBlob, opts.HFRQuality),
-				Ecc:       accepted[i].medianEcc,
+				SNR:       td.SNR,
+				FWHM:      td.FWHM,
+				Ecc:       td.Ecc,
 				BgNoise:   td.BgSigma,
 			})
 			if frameWeights != nil && i < len(frameWeights) {
@@ -10645,6 +10822,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	meanXisf := filepath.Join(outputDir, "stacked_mean.xisf")
 	meanBigTiff := filepath.Join(outputDir, "stacked_mean.bigtif")
 	meanWorkPath := filepath.Join(workDir, "stacked_mean.f32raw")
+	var finalMeanPix []float32
 	meanJPG := filepath.Join(outputDir, "stacked_mean.jpg")
 	noCorrJPG := filepath.Join(outputDir, "stacked_no_correction_mean.jpg")
 	reportTxt := filepath.Join(outputDir, "report.txt")
@@ -10740,6 +10918,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 
 		logf("Writing work file (stacked result, float32 raw)")
+		finalMeanPix = meanPix
 		if err := writeFileAtomic(meanWorkPath, func(w io.Writer) error {
 			return writeRawFloat32RGB(w, outW, outH, meanPix)
 		}); err != nil {
@@ -10904,6 +11083,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 
 		logf("Writing work file (stacked result, float32 raw)")
+		finalMeanPix = meanPix
 		if err := writeFileAtomic(meanWorkPath, func(w io.Writer) error {
 			return writeRawFloat32RGB(w, outW, outH, meanPix)
 		}); err != nil {
@@ -10983,6 +11163,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	cometRawPath := ""
 	cometJPGPath := ""
+	cometCombinedRawPath := ""
+	cometCombinedJPGPath := ""
 	if cometAcc != nil && cometFrames > 0 {
 		cometAcc.divideByCount(cometValid)
 		cometRawPath = filepath.Join(outputDir, "stacked_comet.f32raw")
@@ -10997,6 +11179,25 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			return writePreviewJPEG(w, refW, refH, cometAcc.Pix)
 		}); err != nil {
 			return fmt.Errorf("write comet preview: %w", err)
+		}
+		if opts.CometCombine && len(finalMeanPix) == refW*refH*3 {
+			combined := combineStarComet(finalMeanPix, cometAcc.Pix)
+			if combined == nil {
+				return errors.New("comet combine: star and comet stacks have different sizes")
+			}
+			cometCombinedRawPath = filepath.Join(outputDir, "stacked_comet_combined.f32raw")
+			cometCombinedJPGPath = filepath.Join(outputDir, "stacked_comet_combined.jpg")
+			if err := writeFileAtomic(cometCombinedRawPath, func(w io.Writer) error {
+				return writeRawFloat32RGB(w, refW, refH, combined)
+			}); err != nil {
+				return fmt.Errorf("write combined comet stack: %w", err)
+			}
+			if err := writeFileAtomic(cometCombinedJPGPath, func(w io.Writer) error {
+				return writePreviewJPEG(w, refW, refH, combined)
+			}); err != nil {
+				return fmt.Errorf("write combined comet preview: %w", err)
+			}
+			logf("Comet combine: wrote %s", filepath.Base(cometCombinedRawPath))
 		}
 	}
 
@@ -11184,6 +11385,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	if cometRawPath != "" {
 		outputFiles = append(outputFiles, cometRawPath, cometJPGPath)
+		if cometCombinedRawPath != "" {
+			outputFiles = append(outputFiles, cometCombinedRawPath, cometCombinedJPGPath)
+		}
 		notes = append(notes, fmt.Sprintf("Comet stack: %d frames aligned so the reference comet pixel (%.1f, %.1f) stays fixed. Rate is (%.4f, %.4f) reference pixels per second from EXIF DateTimeOriginal. Stars trail in stacked_comet; the star stack is unchanged.",
 			cometFrames, opts.CometX, opts.CometY, opts.CometRatePxX, opts.CometRatePxY))
 	}
@@ -11252,12 +11456,32 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		RefExif:               refExif,
 		PlateSolution:         plateSolutionOut,
 	}
+	if opts.FrameMetrics != "" {
+		metricsPath := opts.FrameMetrics
+		if !filepath.IsAbs(metricsPath) {
+			metricsPath = filepath.Join(outputDir, metricsPath)
+		}
+		if err := writeFrameMetricsCSV(metricsPath, frameDiags); err != nil {
+			logf("WARNING: could not write frame metrics: %v", err)
+		} else {
+			rep.OutputFiles = append(rep.OutputFiles, metricsPath)
+			logf("Frame metrics: wrote %s", metricsPath)
+		}
+	}
 	if plateSolutionOut != nil {
 		plateJSON := filepath.Join(outputDir, "plate_solution.json")
 		if err := writeJSON(plateJSON, plateSolutionOut); err != nil {
 			logf("WARNING: could not write plate_solution.json: %v", err)
 		} else {
 			rep.OutputFiles = append(rep.OutputFiles, plateJSON)
+		}
+	}
+	if opts.Photometry {
+		if perr := runEnsemblePhotometry(outputDir, plateSolutionOut, opts); perr != nil {
+			logf("WARNING: photometry: %v", perr)
+		} else {
+			rep.OutputFiles = append(rep.OutputFiles,
+				filepath.Join(outputDir, "photometry.csv"), filepath.Join(outputDir, "photometry.json"))
 		}
 	}
 	if err := writeFileAtomic(reportTxt, func(w io.Writer) error {
@@ -17029,6 +17253,15 @@ func runSelfTests() int {
 		{"bigtiff round trip", testBigTIFFRoundTrip},
 		{"provenance DM graph", testProvenanceDM},
 		{"goDiagnostics module", testDiagnosticsCollect},
+		{"frame metrics and culling", testFrameMetricsCulling},
+		{"keep sharpest frames", testKeepSharpestSelection},
+		{"calibration library matching", testCalibrationLibrary},
+		{"comet + stars recombination", testCometCombine},
+		{"batch queue", testBatchQueue},
+		{"PSF starless mask", testStarlessPSF},
+		{"à trous wavelets", testWaveletDenoise},
+		{"Wiener deconvolution", testWienerDeconvolution},
+		{"ensemble photometry", testEnsemblePhotometry},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
 		{"TIFF bad input", testTIFFBadInput},
@@ -17570,6 +17803,281 @@ func testXISFRev2RoundTrip() error {
 	opts, err := parseArgs([]string{"--xisf", "--xisf-rev2"})
 	if err != nil || !opts.CreateXISF || !opts.XISFRev2 {
 		return fmt.Errorf("XISF Rev 2 flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testEnsemblePhotometry() error {
+	recs := []photometryRecord{
+		{InstMag: 10, Mag: 12, Matched: true, Flux: 100},
+		{InstMag: 11, Mag: 13, Matched: true, Flux: 50},
+		{InstMag: 12, Mag: 14, Matched: true, Flux: 25},
+		{InstMag: 9, Mag: 20, Matched: true, Flux: 200},
+		{InstMag: 8, Matched: false, Flux: 400},
+	}
+	zp := photometryZeroPoint(recs)
+	if math.Abs(zp-2) > 1e-9 {
+		return fmt.Errorf("ensemble zero point = %g, want 2", zp)
+	}
+	if !math.IsNaN(photometryZeroPoint(nil)) {
+		return errors.New("empty photometry catalog should yield NaN zero point")
+	}
+	opts, err := parseArgs([]string{"--photometry"})
+	if err != nil || !opts.Photometry {
+		return fmt.Errorf("--photometry parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testWienerDeconvolution() error {
+	orig := make([]complex128, 16)
+	for i := range orig {
+		orig[i] = complex(float64(i%5), float64(i%3))
+	}
+	copyOrig := append([]complex128(nil), orig...)
+	fft1D(orig, false)
+	fft1D(orig, true)
+	for i := range orig {
+		if math.Abs(real(orig[i])-real(copyOrig[i])) > 1e-9 || math.Abs(imag(orig[i])-imag(copyOrig[i])) > 1e-9 {
+			return fmt.Errorf("FFT round trip failed at %d: %v != %v", i, orig[i], copyOrig[i])
+		}
+	}
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := range h {
+		for x := range w {
+			dx, dy := float64(x-32), float64(y-32)
+			v := float32(0.2 + 0.8*math.Exp(-(dx*dx+dy*dy)/(2*2*2)))
+			p := (y*w + x) * 3
+			f.Pix[p], f.Pix[p+1], f.Pix[p+2] = v, v, v
+		}
+	}
+	out := deconvolveWiener(f, 2)
+	center := (32*w + 32) * 3
+	if out.Pix[center] <= f.Pix[center] {
+		return fmt.Errorf("Wiener deconvolution did not sharpen peak: %g -> %g", f.Pix[center], out.Pix[center])
+	}
+	opts, err := parseArgs([]string{"--deconvolve", "--deconvolve-wiener", "--deconv-sigma", "2"})
+	if err != nil || !opts.DeconvolveWiener {
+		return fmt.Errorf("--deconvolve-wiener parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testWaveletDenoise() error {
+	const w, h = 64, 64
+	rng := rand.New(rand.NewSource(20261118))
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := range h {
+		for x := range w {
+			dx, dy := float64(x-32), float64(y-32)
+			v := float32(0.5 + 0.4*math.Exp(-(dx*dx+dy*dy)/4))
+			v += float32(rng.NormFloat64() * 0.02)
+			p := (y*w + x) * 3
+			f.Pix[p], f.Pix[p+1], f.Pix[p+2] = v, v, v
+		}
+	}
+	out := waveletDenoise(f, 3, 3)
+	std := func(fr *frame) float64 {
+		var sum, sum2 float64
+		n := 0
+		for y := range 16 {
+			for x := range 16 {
+				v := float64(fr.Pix[(y*w+x)*3])
+				sum += v
+				sum2 += v * v
+				n++
+			}
+		}
+		return math.Sqrt(sum2/float64(n) - (sum/float64(n))*(sum/float64(n)))
+	}
+	before, after := std(f), std(out)
+	if after >= before*0.8 {
+		return fmt.Errorf("wavelet denoise did not reduce noise: %.4f -> %.4f", before, after)
+	}
+	center := (32*w + 32) * 3
+	if out.Pix[center] < 0.6 {
+		return fmt.Errorf("wavelet denoise suppressed the star: %g", out.Pix[center])
+	}
+	opts, err := parseArgs([]string{"--wavelets", "--wavelet-scales", "4", "--wavelet-sigma", "2.5"})
+	if err != nil || !opts.Wavelets || opts.WaveletScales != 4 || opts.WaveletSigma != 2.5 {
+		return fmt.Errorf("wavelet flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testStarlessPSF() error {
+	const w, h = 48, 48
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := range h {
+		for x := range w {
+			dx, dy := float64(x-24), float64(y-24)
+			v := float32(0.1 + 0.8*math.Exp(-(dx*dx+dy*dy)/(2*1.4*1.4)))
+			p := (y*w + x) * 3
+			f.Pix[p], f.Pix[p+1], f.Pix[p+2] = v, v, v
+		}
+	}
+	out := removeStarsPSF(f, 4, 8)
+	center := (24*w + 24) * 3
+	if out.Pix[center] >= f.Pix[center] {
+		return fmt.Errorf("PSF star removal did not reduce center: %g -> %g", f.Pix[center], out.Pix[center])
+	}
+	if math.Abs(float64(out.Pix[0])-0.1) > 0.02 {
+		return fmt.Errorf("background changed: %g", out.Pix[0])
+	}
+	opts, err := parseArgs([]string{"--starless-psf"})
+	if err != nil || !opts.StarlessPSF {
+		return fmt.Errorf("--starless-psf parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testBatchQueue() error {
+	dir, err := os.MkdirTemp("", "skystacker-batch-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "batch.json")
+	data := `[{"name":"version","args":["--version"],"timeout_sec":5},{"args":["--selftest"]}]`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		return err
+	}
+	entries, err := loadBatchEntries(path)
+	if err != nil || len(entries) != 2 || entries[0].Name != "version" || entries[0].TimeoutSec != 5 {
+		return fmt.Errorf("batch load: %+v err=%v", entries, err)
+	}
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte(`[{"args":["--batch","x"]}]`), 0o644); err != nil {
+		return err
+	}
+	if _, err := loadBatchEntries(bad); err == nil {
+		return errors.New("recursive batch accepted")
+	}
+	opts, err := parseArgs([]string{"--batch", path})
+	if err != nil || opts.Batch != path {
+		return fmt.Errorf("--batch parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testCometCombine() error {
+	star := []float32{0.2, 0.5, -1, 0.9}
+	comet := []float32{0.8, 0.1, 0.3, -1}
+	got := combineStarComet(star, comet)
+	want := []float32{0.8, 0.5, 0.3, 0.9}
+	if len(got) != len(want) {
+		return fmt.Errorf("combined length %d", len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return fmt.Errorf("combined[%d] = %g, want %g", i, got[i], want[i])
+		}
+	}
+	if combineStarComet(star, comet[:2]) != nil {
+		return errors.New("size mismatch accepted")
+	}
+	opts, err := parseArgs([]string{"--comet-combine"})
+	if err != nil || !opts.CometCombine {
+		return fmt.Errorf("--comet-combine parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testCalibrationLibrary() error {
+	dir, err := os.MkdirTemp("", "skystacker-calib-lib-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	jsonData := `[
+		{"kind":"dark","path":"dark_20c_10s.f32raw","temperature_c":20,"exposure_s":10,"iso":800},
+		{"kind":"dark","path":"dark_30c_10s.f32raw","temperature_c":30,"exposure_s":10,"iso":800},
+		{"kind":"flat","path":"flat.f32raw","exposure_s":1,"iso":800}
+	]`
+	if err := os.WriteFile(filepath.Join(dir, "calibration_library.json"), []byte(jsonData), 0o644); err != nil {
+		return err
+	}
+	entries, err := loadCalibrationLibrary(dir)
+	if err != nil || len(entries) != 3 {
+		return fmt.Errorf("library load: %+v err=%v", entries, err)
+	}
+	path, ok := matchCalibrationEntry(entries, "dark", 10, 800, 30, true)
+	if !ok || filepath.Base(path) != "dark_30c_10s.f32raw" {
+		return fmt.Errorf("temperature match = %s ok=%v", path, ok)
+	}
+	if _, ok := matchCalibrationEntry(entries, "dark", 120, 800, 30, true); ok {
+		return errors.New("mismatched exposure accepted")
+	}
+	if _, ok := matchCalibrationEntry(entries, "bias", 10, 800, 30, true); ok {
+		return errors.New("missing kind accepted")
+	}
+	opts, err := parseArgs([]string{"--calib-library", dir})
+	if err != nil || opts.CalibLibrary != dir {
+		return fmt.Errorf("--calib-library parse: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testKeepSharpestSelection() error {
+	idx := keepSharpestIndices([]float64{3.0, 1.2, 2.0, 5.0}, 50)
+	if len(idx) != 2 || idx[0] != 1 || idx[1] != 2 {
+		return fmt.Errorf("sharpest 50%% = %v, want [1 2]", idx)
+	}
+	all := keepSharpestIndices([]float64{3.0, 1.2}, 0)
+	if len(all) != 2 || all[0] != 0 || all[1] != 1 {
+		return fmt.Errorf("disabled selection changed frames: %v", all)
+	}
+	one := keepSharpestIndices([]float64{0, 0, 0}, 1)
+	if len(one) != 1 || one[0] != 0 {
+		return fmt.Errorf("degenerate HFR selection = %v", one)
+	}
+	opts, err := parseArgs([]string{"--keep-sharpest", "40"})
+	if err != nil || opts.KeepSharpest != 40 {
+		return fmt.Errorf("--keep-sharpest parse: %+v err=%v", opts, err)
+	}
+	if _, err := parseArgs([]string{"--keep-sharpest", "101"}); err == nil {
+		return errors.New("invalid --keep-sharpest accepted")
+	}
+	return nil
+}
+
+func testFrameMetricsCulling() error {
+	dir, err := os.MkdirTemp("", "skystacker-frame-metrics-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	a := filepath.Join(dir, "a.jpg")
+	b := filepath.Join(dir, "b.jpg")
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			return err
+		}
+	}
+	list := filepath.Join(dir, "include.txt")
+	if err := os.WriteFile(list, []byte("# keep only a\na.jpg\n"), 0o644); err != nil {
+		return err
+	}
+	kept, err := filterFilesByIncludeList([]string{a, b}, list)
+	if err != nil || len(kept) != 1 || filepath.Base(kept[0]) != "a.jpg" {
+		return fmt.Errorf("include list: %v err=%v", kept, err)
+	}
+	csvPath := filepath.Join(dir, "metrics.csv")
+	diags := []frameDiag{{Path: a, Stars: 30, Inliers: 25, HFR: 1.8, FWHM: 2.1, Ecc: 0.1, SNR: 42, BgSigma: 0.01, IntrinsicQ: 70, Weight: 0.9}}
+	if err := writeFrameMetricsCSV(csvPath, diags); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(csvPath)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(data), "hfr_px") || !strings.Contains(string(data), "a.jpg") || strings.Contains(string(data), "b.jpg") {
+		return fmt.Errorf("unexpected metrics CSV: %s", data)
+	}
+	opts, err := parseArgs([]string{"--frame-metrics", "metrics.csv", "--include-list", "include.txt"})
+	if err != nil || opts.FrameMetrics != "metrics.csv" || opts.IncludeList != "include.txt" {
+		return fmt.Errorf("frame metric flags: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -22427,6 +22935,223 @@ func richardsonLucy(f *frame, sigma float64, iters int) *frame {
 	return out
 }
 
+func fft1D(a []complex128, inverse bool) {
+	n := len(a)
+	for i, j := 0, 0; i < n; i++ {
+		if i < j {
+			a[i], a[j] = a[j], a[i]
+		}
+		bit := n >> 1
+		for ; bit != 0 && j&bit != 0; bit >>= 1 {
+			j ^= bit
+		}
+		j ^= bit
+	}
+	for size := 2; size <= n; size <<= 1 {
+		ang := 2 * math.Pi / float64(size)
+		if inverse {
+			ang = -ang
+		}
+		wlen := complex(math.Cos(ang), math.Sin(ang))
+		for i := 0; i < n; i += size {
+			w := complex(1, 0)
+			for j := 0; j < size/2; j++ {
+				u, v := a[i+j], a[i+j+size/2]*w
+				a[i+j] = u + v
+				a[i+j+size/2] = u - v
+				w *= wlen
+			}
+		}
+	}
+	if inverse {
+		for i := range a {
+			a[i] /= complex(float64(n), 0)
+		}
+	}
+}
+
+func fft2D(a []complex128, n int, inverse bool) {
+	row := make([]complex128, n)
+	for y := range n {
+		copy(row, a[y*n:(y+1)*n])
+		fft1D(row, inverse)
+		copy(a[y*n:(y+1)*n], row)
+	}
+	for x := range n {
+		for y := range n {
+			row[y] = a[y*n+x]
+		}
+		fft1D(row, inverse)
+		for y := range n {
+			a[y*n+x] = row[y]
+		}
+	}
+}
+
+func nextPowerOfTwo(v int) int {
+	n := 1
+	for n < v {
+		n <<= 1
+	}
+	return n
+}
+
+func deconvolveWiener(f *frame, sigma float64) *frame {
+	if f == nil || sigma <= 0 || f.Width < 8 || f.Height < 8 {
+		return f
+	}
+	const tileSize, overlap = 128, 32
+	n := nextPowerOfTwo(2 * tileSize)
+	noise := 1e-6
+	step := tileSize - 2*overlap
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	npix := f.Width * f.Height
+	for c := range 3 {
+		acc := make([]float64, npix)
+		wsum := make([]float64, npix)
+		for ty := 0; ty < f.Height; ty += step {
+			for tx := 0; tx < f.Width; tx += step {
+				ex0, ey0 := max(0, tx-overlap), max(0, ty-overlap)
+				ex1, ey1 := min(f.Width, tx+tileSize+overlap), min(f.Height, ty+tileSize+overlap)
+				tw, th := ex1-ex0, ey1-ey0
+				buf := make([]complex128, n*n)
+				for y := 0; y < th; y++ {
+					for x := 0; x < tw; x++ {
+						wx, wy := 1.0, 1.0
+						gx, gy := ex0+x, ey0+y
+						if gx < tx {
+							wx = math.Cos(math.Pi * float64(tx-gx) / (2 * overlap))
+						} else if gx >= tx+tileSize {
+							wx = math.Cos(math.Pi * float64(gx-tx-tileSize+1) / (2 * overlap))
+						}
+						if gy < ty {
+							wy = math.Cos(math.Pi * float64(ty-gy) / (2 * overlap))
+						} else if gy >= ty+tileSize {
+							wy = math.Cos(math.Pi * float64(gy-ty-tileSize+1) / (2 * overlap))
+						}
+						w := wx * wx * wy * wy
+						buf[y*n+x] = complex(float64(f.Pix[(gy*f.Width+gx)*3+c])*w, 0)
+					}
+				}
+				fft2D(buf, n, false)
+				for y := range n {
+					fy := float64(y)
+					if fy > float64(n/2) {
+						fy -= float64(n)
+					}
+					for x := range n {
+						fx := float64(x)
+						if fx > float64(n/2) {
+							fx -= float64(n)
+						}
+						f2 := (fx*fx + fy*fy) / float64(n*n)
+						h := math.Exp(-2 * math.Pi * math.Pi * sigma * sigma * f2)
+						gain := h / (h*h + noise)
+						buf[y*n+x] *= complex(gain, 0)
+					}
+				}
+				fft2D(buf, n, true)
+				for y := 0; y < th; y++ {
+					for x := 0; x < tw; x++ {
+						gx, gy := ex0+x, ey0+y
+						v := real(buf[y*n+x])
+						if v < 0 {
+							v = 0
+						}
+						acc[gy*f.Width+gx] += v
+						wsum[gy*f.Width+gx]++
+					}
+				}
+			}
+		}
+		for i := range npix {
+			if wsum[i] > 0 {
+				out.Pix[i*3+c] = float32(acc[i] / wsum[i])
+			}
+		}
+	}
+	return out
+}
+
+func blurATrous(src []float32, w, h, step int) []float32 {
+	dst := make([]float32, len(src))
+	weights := [5]float32{1.0 / 16, 4.0 / 16, 6.0 / 16, 4.0 / 16, 1.0 / 16}
+	for y := range h {
+		for x := range w {
+			var sum float32
+			for ky := -2; ky <= 2; ky++ {
+				yy := y + ky*step
+				if yy < 0 {
+					yy = 0
+				} else if yy >= h {
+					yy = h - 1
+				}
+				for kx := -2; kx <= 2; kx++ {
+					xx := x + kx*step
+					if xx < 0 {
+						xx = 0
+					} else if xx >= w {
+						xx = w - 1
+					}
+					sum += weights[ky+2] * weights[kx+2] * src[yy*w+xx]
+				}
+			}
+			dst[y*w+x] = sum
+		}
+	}
+	return dst
+}
+
+func waveletDenoise(f *frame, scales int, k float64) *frame {
+	if f == nil || scales < 1 {
+		return f
+	}
+	scales = min(scales, 5)
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	n := f.Width * f.Height
+	for c := range 3 {
+		coarse := make([]float32, n)
+		copy(coarse, f.Pix[c*n:(c+1)*n])
+		details := make([][]float32, scales)
+		for s := range scales {
+			next := blurATrous(coarse, f.Width, f.Height, 1<<s)
+			d := make([]float32, n)
+			for i := range d {
+				d[i] = coarse[i] - next[i]
+			}
+			details[s] = d
+			sample := append([]float32(nil), d...)
+			slices.Sort(sample)
+			med := sample[len(sample)/2]
+			for i := range sample {
+				sample[i] = float32(math.Abs(float64(sample[i] - med)))
+			}
+			slices.Sort(sample)
+			mad := sample[len(sample)/2]
+			thr := float32(k) * 1.4826 * mad
+			for i, v := range d {
+				if v > thr {
+					v -= thr
+				} else if v < -thr {
+					v += thr
+				} else {
+					v = 0
+				}
+				details[s][i] = v
+			}
+			coarse = next
+		}
+		for i := range n {
+			v := coarse[i]
+			for s := range details {
+				v += details[s][i]
+			}
+			out.Pix[c*n+i] = v
+		}
+	}
+	return out
+}
+
 func deconvGridSigmas(f *frame, base float64, n int) [][]float64 {
 	sigmas := make([][]float64, n)
 	for y := range sigmas {
@@ -23047,6 +23772,42 @@ func applyHDR(f *frame, amount float64) *frame {
 // annulus around it. The star is completely erased, revealing the diffuse
 // nebula/galaxy signal behind it.
 func removeStars(f *frame, sigma float64, radius int) *frame {
+	return removeStarsWithRadius(f, sigma, radius, func(s star, base int) int {
+		switch {
+		case s.Size <= 2:
+			return 2
+		case s.Size <= 5:
+			return max(base/2, 3)
+		case s.Size <= 20:
+			return max((base*2)/3, 4)
+		default:
+			return base
+		}
+	})
+}
+
+func removeStarsPSF(f *frame, sigma float64, radius int) *frame {
+	return removeStarsWithRadius(f, sigma, radius, func(s star, base int) int {
+		hfr := s.HFR
+		if hfr <= 0 {
+			hfr = float64(max(s.Size, 2)) / 2
+		}
+		r := int(math.Ceil(hfr * 1.5))
+		if s.Ecc > 0.5 {
+			r = int(math.Ceil(float64(r) * (1 + s.Ecc)))
+		}
+		return min(max(r, 2), base*2)
+	})
+}
+
+func removeStarsForOptions(f *frame, opts runOptions) *frame {
+	if opts.StarlessPSF {
+		return removeStarsPSF(f, opts.StarSigma, opts.StarRadius)
+	}
+	return removeStars(f, opts.StarSigma, opts.StarRadius)
+}
+
+func removeStarsWithRadius(f *frame, sigma float64, radius int, radiusFn func(star, int) int) *frame {
 	if radius <= 0 {
 		radius = max((f.Width+f.Height)/400, 8)
 	}
@@ -23063,15 +23824,7 @@ func removeStars(f *frame, sigma float64, radius int) *frame {
 	for _, s := range stars {
 		cx, cy := int(s.X+0.5), int(s.Y+0.5)
 
-		starRadius := radius
-		switch {
-		case s.Size <= 2:
-			starRadius = 2
-		case s.Size <= 5:
-			starRadius = max(radius/2, 3)
-		case s.Size <= 20:
-			starRadius = max((radius*2)/3, 4)
-		}
+		starRadius := radiusFn(s, radius)
 		rInner := starRadius
 		rOuter := min(starRadius*2, radius*2)
 
@@ -24224,6 +24977,10 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 		logf("  post: multiscale background removal")
 		cur = multiscaleBackground(cur, 256)
 	}
+	if opts.Wavelets {
+		logf("  post: à trous wavelet denoise (%d scales, %.1f sigma)", opts.WaveletScales, opts.WaveletSigma)
+		cur = waveletDenoise(cur, opts.WaveletScales, opts.WaveletSigma)
+	}
 	// Step 1: background removal (ALWAYS)
 	logf("  post: background removal (degree %d)", opts.BGDegree)
 	cur = removeBackground(cur, opts.BGDegree, opts.MaskBG)
@@ -24257,7 +25014,10 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	}
 
 	if opts.Deconvolve {
-		if opts.DeconvolveGrid {
+		if opts.DeconvolveWiener {
+			logf("  post: Wiener deconvolution (sigma=%g, FFT tile 128)", opts.DeconvSigma)
+			cur = deconvolveWiener(cur, opts.DeconvSigma)
+		} else if opts.DeconvolveGrid {
 			logf("  post: gridded Richardson-Lucy deconvolution (base sigma=%g, grid=%dx%d, iters=%d)",
 				opts.DeconvSigma, opts.DeconvGridSize, opts.DeconvGridSize, opts.DeconvIters)
 			cur = richardsonLucyGrid(cur, opts.DeconvSigma, opts.DeconvIters, opts.DeconvGridSize)
@@ -24339,7 +25099,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 			}
 			cur = starless
 		} else {
-			cur = removeStars(cur, opts.StarSigma, opts.StarRadius)
+			cur = removeStarsForOptions(cur, opts)
 		}
 		starLayer := &frame{Width: cur.Width, Height: cur.Height, Pix: make([]float32, len(cur.Pix))}
 		for i, v := range beforeStars.Pix {
@@ -24368,7 +25128,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 			}
 		}
 	} else {
-		cur = removeStars(cur, opts.StarSigma, opts.StarRadius)
+		cur = removeStarsForOptions(cur, opts)
 	}
 	p = filepath.Join(outputDir, "post_step2_star_removed.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
@@ -25454,6 +26214,451 @@ func runInternalAISidecarMock(args []string) int {
 	return 0
 }
 
+func filterFilesByIncludeList(files []string, path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("include list %s: %w", path, err)
+	}
+	keep := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		keep[line] = true
+		keep[filepath.Base(line)] = true
+	}
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		if keep[f] || keep[filepath.Base(f)] {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+
+type calibrationLibraryEntry struct {
+	Kind        string  `json:"kind"`
+	Path        string  `json:"path"`
+	Temperature float64 `json:"temperature_c"`
+	Exposure    float64 `json:"exposure_s"`
+	ISO         int     `json:"iso"`
+	Gain        float64 `json:"gain"`
+}
+
+func fitsHeaderFloat(path string, keys ...string) (float64, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) < 2880 || string(data[:6]) != "SIMPLE" {
+		return 0, false
+	}
+	for off := 0; off+80 <= 2880; off += 80 {
+		card := strings.TrimSpace(string(data[off : off+80]))
+		if card == "END" {
+			break
+		}
+		eq := strings.IndexByte(card, '=')
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(card[:eq])
+		for _, want := range keys {
+			if key == want {
+				v := strings.TrimSpace(card[eq+1:])
+				if i := strings.Index(v, " /"); i >= 0 {
+					v = strings.TrimSpace(v[:i])
+				}
+				f, err := strconv.ParseFloat(v, 64)
+				return f, err == nil
+			}
+		}
+	}
+	return 0, false
+}
+
+func loadCalibrationLibrary(dir string) ([]calibrationLibraryEntry, error) {
+	path := filepath.Join(dir, "calibration_library.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("calibration library %s: %w", path, err)
+	}
+	var entries []calibrationLibraryEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("calibration library %s: %w", path, err)
+	}
+	for i := range entries {
+		if !filepath.IsAbs(entries[i].Path) {
+			entries[i].Path = filepath.Join(dir, entries[i].Path)
+		}
+	}
+	return entries, nil
+}
+
+func matchCalibrationEntry(entries []calibrationLibraryEntry, kind string, exp float64, iso int, temp float64, hasTemp bool) (string, bool) {
+	best, bestScore := "", math.Inf(1)
+	for _, e := range entries {
+		if e.Kind != kind || e.Path == "" {
+			continue
+		}
+		if exp > 0 && e.Exposure > 0 && math.Abs(e.Exposure-exp) > 0.2*exp {
+			continue
+		}
+		if iso > 0 && e.ISO > 0 && absInt(e.ISO-iso) > iso/5 {
+			continue
+		}
+		score := 0.0
+		if exp > 0 && e.Exposure > 0 {
+			score += math.Abs(e.Exposure-exp) / exp * 100
+		}
+		if iso > 0 && e.ISO > 0 {
+			score += float64(absInt(e.ISO-iso)) / float64(iso) * 20
+		}
+		if hasTemp {
+			score += math.Abs(e.Temperature-temp) * 2
+		}
+		if score < bestScore {
+			best, bestScore = e.Path, score
+		}
+	}
+	return best, bestScore < math.Inf(1)
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func combineStarComet(star, comet []float32) []float32 {
+	if len(star) != len(comet) {
+		return nil
+	}
+	out := make([]float32, len(star))
+	for i := range star {
+		switch {
+		case star[i] < 0 && comet[i] < 0:
+			out[i] = -1
+		case star[i] < 0:
+			out[i] = comet[i]
+		case comet[i] < 0:
+			out[i] = star[i]
+		default:
+			out[i] = max(star[i], comet[i])
+		}
+	}
+	return out
+}
+
+func keepSharpestIndices(hfrs []float64, pct int) []int {
+	if pct <= 0 || len(hfrs) <= 1 {
+		out := make([]int, len(hfrs))
+		for i := range out {
+			out[i] = i
+		}
+		return out
+	}
+	type ranked struct {
+		idx int
+		hfr float64
+	}
+	rs := make([]ranked, len(hfrs))
+	for i, h := range hfrs {
+		if h <= 0 || math.IsNaN(h) {
+			h = math.Inf(1)
+		}
+		rs[i] = ranked{idx: i, hfr: h}
+	}
+	sort.Slice(rs, func(i, j int) bool {
+		if rs[i].hfr == rs[j].hfr {
+			return rs[i].idx < rs[j].idx
+		}
+		return rs[i].hfr < rs[j].hfr
+	})
+	keep := int(math.Ceil(float64(len(rs)) * float64(pct) / 100))
+	if keep < 1 {
+		keep = 1
+	}
+	if keep > len(rs) {
+		keep = len(rs)
+	}
+	chosen := append([]ranked(nil), rs[:keep]...)
+	sort.Slice(chosen, func(i, j int) bool { return chosen[i].idx < chosen[j].idx })
+	out := make([]int, len(chosen))
+	for i, r := range chosen {
+		out[i] = r.idx
+	}
+	return out
+}
+
+func writeFrameMetricsCSV(path string, diags []frameDiag) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"frame", "stars", "inliers", "hfr_px", "fwhm_px", "eccentricity", "snr", "bg_sigma", "intrinsic_quality", "weight", "note"}); err != nil {
+		f.Close()
+		return err
+	}
+	for _, d := range diags {
+		rec := []string{
+			filepath.Base(d.Path),
+			strconv.Itoa(d.Stars), strconv.Itoa(d.Inliers),
+			strconv.FormatFloat(d.HFR, 'f', 4, 64),
+			strconv.FormatFloat(d.FWHM, 'f', 4, 64),
+			strconv.FormatFloat(d.Ecc, 'f', 4, 64),
+			strconv.FormatFloat(d.SNR, 'f', 4, 64),
+			strconv.FormatFloat(d.BgSigma, 'f', 6, 64),
+			strconv.FormatFloat(d.IntrinsicQ, 'f', 2, 64),
+			strconv.FormatFloat(d.Weight, 'f', 4, 64),
+			d.Note,
+		}
+		if err := w.Write(rec); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	w.Flush()
+	err = w.Error()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+type photometryRecord struct {
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	RA       float64 `json:"ra_deg"`
+	Dec      float64 `json:"dec_deg"`
+	Flux     float64 `json:"flux"`
+	InstMag  float64 `json:"inst_mag"`
+	Mag      float64 `json:"mag"`
+	Residual float64 `json:"residual"`
+	Matched  bool    `json:"matched"`
+	Catalog  string  `json:"catalog,omitempty"`
+}
+
+func photometryZeroPoint(recs []photometryRecord) float64 {
+	vals := make([]float64, 0, len(recs))
+	for _, r := range recs {
+		if r.Matched && r.Mag > 0 && r.Flux > 0 && !math.IsNaN(r.InstMag) && !math.IsInf(r.InstMag, 0) {
+			vals = append(vals, r.Mag-r.InstMag)
+		}
+	}
+	if len(vals) == 0 {
+		return math.NaN()
+	}
+	slices.Sort(vals)
+	med := vals[len(vals)/2]
+	devs := make([]float64, len(vals))
+	for i, v := range vals {
+		devs[i] = math.Abs(v - med)
+	}
+	slices.Sort(devs)
+	mad := devs[len(devs)/2]
+	var sum float64
+	n := 0
+	for _, v := range vals {
+		if math.Abs(v-med) <= 3*1.4826*mad {
+			sum += v
+			n++
+		}
+	}
+	if n == 0 {
+		return med
+	}
+	return sum / float64(n)
+}
+
+func runEnsemblePhotometry(outputDir string, sol *plateSolution, opts runOptions) error {
+	if sol == nil {
+		return errors.New("photometry requires a plate solution (run with --plate-solve)")
+	}
+	w, ih, pix, err := readRawFloat32RGB(filepath.Join(outputDir, "_work", "stacked_mean.f32raw"))
+	if err != nil {
+		return err
+	}
+	stars := detectStars(&frame{Width: w, Height: ih, Pix: pix}, 500)
+	ipix := healpixAng2PixNested(opts.GaiaNside, sol.WCS.CRVAL1, sol.WCS.CRVAL2)
+	tile, ok := gaiaLoadTileCache(gaiaDefaultCacheDir(), opts.GaiaNside, ipix)
+	if !ok {
+		logf("Photometry: no cached Gaia tile for nside=%d ipix=%d; skipping", opts.GaiaNside, ipix)
+		return nil
+	}
+	wcs := sol.WCS
+	wcs.SIP = sol.SIP
+	type catStar struct {
+		x, y float64
+		name string
+		mag  float64
+	}
+	cat := make([]catStar, 0, len(tile.Stars))
+	for _, g := range tile.Stars {
+		x, y := wcsTanForward(&wcs, g.RA, g.Dec)
+		if x >= 0 && y >= 0 && x < float64(w) && y < float64(ih) {
+			cat = append(cat, catStar{x: x, y: y, mag: g.MagG, name: "Gaia"})
+		}
+	}
+	recs := make([]photometryRecord, 0, len(stars))
+	for _, s := range stars {
+		r := photometryRecord{X: s.X, Y: s.Y, Flux: s.Flux}
+		r.RA, r.Dec = wcsTanInverseSIP(&wcs, s.X, s.Y)
+		for r.RA < 0 {
+			r.RA += 2 * math.Pi
+		}
+		for r.RA >= 2*math.Pi {
+			r.RA -= 2 * math.Pi
+		}
+		r.RA *= 180 / math.Pi
+		r.Dec *= 180 / math.Pi
+		if s.Flux > 0 {
+			r.InstMag = -2.5 * math.Log10(s.Flux)
+		}
+		best, bestD := 3.0, -1.0
+		var match catStar
+		for _, c := range cat {
+			d := math.Hypot(c.x-s.X, c.y-s.Y)
+			if d < best {
+				best, bestD, match = d, d, c
+			}
+		}
+		if bestD >= 0 {
+			r.Matched, r.Mag, r.Catalog = true, match.mag, match.name
+		}
+		recs = append(recs, r)
+	}
+	zp := photometryZeroPoint(recs)
+	if !math.IsNaN(zp) && !math.IsInf(zp, 0) {
+		for i := range recs {
+			if recs[i].Matched && recs[i].Mag > 0 {
+				recs[i].Mag = recs[i].InstMag + zp
+				recs[i].Residual = recs[i].Mag - recs[i].Mag
+			}
+		}
+		// Recompute residual against the catalog value stored before the shift.
+		for i := range recs {
+			if recs[i].Matched && recs[i].Catalog != "" {
+				for _, c := range cat {
+					if math.Hypot(c.x-recs[i].X, c.y-recs[i].Y) < 3 {
+						recs[i].Residual = recs[i].Mag - c.mag
+						break
+					}
+				}
+			}
+		}
+		matched := 0
+		for _, r := range recs {
+			if r.Matched {
+				matched++
+			}
+		}
+		logf("Photometry: %d sources, %d matched, zero point %.3f mag", len(recs), matched, zp)
+	}
+	csvPath := filepath.Join(outputDir, "photometry.csv")
+	f, err := os.Create(csvPath)
+	if err != nil {
+		return err
+	}
+	cw := csv.NewWriter(f)
+	if err := cw.Write([]string{"x", "y", "ra_deg", "dec_deg", "flux", "inst_mag", "mag", "residual", "matched", "catalog"}); err != nil {
+		f.Close()
+		return err
+	}
+	for _, r := range recs {
+		if err := cw.Write([]string{
+			fmt.Sprintf("%.3f", r.X), fmt.Sprintf("%.3f", r.Y),
+			fmt.Sprintf("%.6f", r.RA), fmt.Sprintf("%.6f", r.Dec),
+			fmt.Sprintf("%.3f", r.Flux), fmt.Sprintf("%.4f", r.InstMag),
+			fmt.Sprintf("%.4f", r.Mag), fmt.Sprintf("%.4f", r.Residual),
+			strconv.FormatBool(r.Matched), r.Catalog,
+		}); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	cw.Flush()
+	err = cw.Error()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(outputDir, "photometry.json"), recs); err != nil {
+		return err
+	}
+	logf("Photometry: wrote %s and photometry.json", filepath.Base(csvPath))
+	return nil
+}
+
+type batchEntry struct {
+	Name       string   `json:"name"`
+	Args       []string `json:"args"`
+	TimeoutSec int      `json:"timeout_sec"`
+}
+
+func loadBatchEntries(path string) ([]batchEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("batch file %s: %w", path, err)
+	}
+	var entries []batchEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("batch file %s: %w", path, err)
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("batch file %s is empty", path)
+	}
+	for i, e := range entries {
+		if len(e.Args) == 0 {
+			return nil, fmt.Errorf("batch entry %d has no args", i+1)
+		}
+		for _, a := range e.Args {
+			if strings.HasPrefix(a, "--batch") {
+				return nil, fmt.Errorf("batch entry %d would recurse (--batch in args)", i+1)
+			}
+		}
+	}
+	return entries, nil
+}
+
+func runBatchQueue(path string) error {
+	entries, err := loadBatchEntries(path)
+	if err != nil {
+		return err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	for i, e := range entries {
+		label := e.Name
+		if label == "" {
+			label = fmt.Sprintf("run %d/%d", i+1, len(entries))
+		}
+		fmt.Printf("\n=== batch: %s ===\n", label)
+		ctx := context.Background()
+		if e.TimeoutSec > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(e.TimeoutSec)*time.Second)
+			cmd := exec.CommandContext(ctx, self, e.Args...)
+			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+			err = cmd.Run()
+			cancel()
+		} else {
+			cmd := exec.CommandContext(ctx, self, e.Args...)
+			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+			err = cmd.Run()
+		}
+		if err != nil {
+			return fmt.Errorf("batch %s failed: %w", label, err)
+		}
+	}
+	fmt.Printf("\nBatch complete: %d run(s).\n", len(entries))
+	return nil
+}
+
 func diagnosticsOptionsFromCLI(opts *cliOptions, dir string) diagnostics.Options {
 	d := diagnostics.DefaultOptions()
 	d.Timeout = time.Duration(opts.DiagnoseTimeout) * time.Second
@@ -25533,6 +26738,13 @@ func main() {
 	}
 	if opts.Version {
 		fmt.Println(version)
+		return
+	}
+	if opts.Batch != "" {
+		if err := runBatchQueue(opts.Batch); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if opts.Diagnose && !opts.DiagnoseIntegrated {
@@ -25673,6 +26885,17 @@ func main() {
 		DiagnoseTimeout:        opts.DiagnoseTimeout,
 		DiagnoseTop:            opts.DiagnoseTop,
 		DiagnoseUpdates:        opts.DiagnoseUpdates,
+		FrameMetrics:           opts.FrameMetrics,
+		IncludeList:            opts.IncludeList,
+		KeepSharpest:           opts.KeepSharpest,
+		CalibLibrary:           opts.CalibLibrary,
+		CometCombine:           opts.CometCombine,
+		StarlessPSF:            opts.StarlessPSF,
+		Wavelets:               opts.Wavelets,
+		WaveletScales:          opts.WaveletScales,
+		WaveletSigma:           opts.WaveletSigma,
+		DeconvolveWiener:       opts.DeconvolveWiener,
+		Photometry:             opts.Photometry,
 		BGMultiscale:           opts.BGMultiscale,
 		Deconvolve:             opts.Deconvolve,
 		DeconvSigma:            opts.DeconvSigma,

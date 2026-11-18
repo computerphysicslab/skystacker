@@ -14,7 +14,7 @@ the contribution files are then removed.
 | [README.md](README.md) | This index, current status and the consolidation protocol |
 | [01-architecture-and-core-engine.md](01-architecture-and-core-engine.md) | Pipeline workflows, memory model, star detection/registration, stacking math, post-processing, diagnostics, formats, CLI reference, ASTAP interop, roadmap and status |
 | [02-astrometry-and-identification.md](02-astrometry-and-identification.md) | Plate solving, TAN/SIP, catalogues, annotation/anomalies, morphology, time domain, IVOA, HEALPix verification and implementation status |
-| [03-reference-and-literature.md](03-reference-and-literature.md) | One master bibliography, one glossary/index, microarchitecture reference, file formats and BXT/NXT/SXT analysis |
+| [03-reference-and-literature.md](03-reference-and-literature.md) | One master bibliography, one glossary/index, microarchitecture reference, file formats, BXT/NXT/SXT analysis and the 76-source advanced reference survey (§6) |
 | [04-calibration-and-self-flat.md](04-calibration-and-self-flat.md) | Master frames, physical models, recoverability table, self-flat v1/grid/IRLS, validation record, refusal policy, detector physics and open gaps |
 | [05-toolchain-and-modularity.md](05-toolchain-and-modularity.md) | Go toolchain chronology and final state, Go 1.24–1.27 gains, modularization decision, goPureRaw module, file-format interoperability backlog |
 | [06-external-ai-sidecars.md](06-external-ai-sidecars.md) | GraXpert / RC-Astro / StarNet2 ecosystem, linear-stage safety, shipped FITS sidecar runner and limits |
@@ -27,7 +27,7 @@ original contribution files whose unique content it now owns. No other
 
 ## Current state
 
-SkyStacker v0.6.1, Go 1.27.4, 212 registered self-tests. Native CR2 decoding
+SkyStacker v0.6.1, Go 1.27.4, 229 registered self-tests. Native CR2 decoding
 and the goPureRaw library are in use; `--resample-sip`, fused sigma-clip,
 external AI sidecars and FITS/XISF writers are shipped. Still open: CFA/Bayer
 drizzle, FITS Rice, BigTIFF, XISF Rev 2, per-frame astrometric reprojection

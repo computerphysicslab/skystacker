@@ -2,7 +2,7 @@
 
 **CURRENT STATUS (canonical, 2026-11-17):**
 
-- Source version **v0.6.1**; **212 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
+- Source version **v0.6.1**; **229 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
 - **Grid self-flat is the default** model (`--self-flat-model=grid`); the v1 `registered` model and the Phase-1 least-squares path remain available for A/B.
 - **Darks are not fabricated.** Master darks come only from real dark exposures.
 - **`--synthetic-dark`, `--synthetic-flat`, `--synthetic-bias` are refused (exit 1)** with the exact strings in §13. Silent synthesis is forbidden.
@@ -343,7 +343,7 @@ Priority: Phases 1–4 replace the unsafe default; 5–6 establish scientific qu
 
 ### 11.1 Chronology and self-test counts
 
-Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **212 (CURRENT)**. Do not treat every `func test*` as a registered case.
+Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **229 (CURRENT)**. Do not treat every `func test*` as a registered case.
 
 - **2026-11-14** — deep-research pass supersedes the seed; three-category split, tagging convention, refusal guardrails.
 - **2026-11-15** — v1 master export + registered self-flat; Phase 1 grid default; `--reference-crop` added (each light star-matched to an external reference and warped in memory; see `COMPARISON.md` for Fitswork comparison); v0.6.0 status note: `--export-masters`, `--bpm`, v1 `--self-flat`, Phase-1 grid, and default recoverable path (metadata pedestal + grid self-flat when no user masters exist); darks not fabricated; `--synthetic-*` refused. Not implemented then: Phase 2 mask relaxation/5×5 rejection, Phase 3 IRLS, gamma-aware division, real-flat validation.
@@ -399,7 +399,7 @@ Reproducible protocol commands (repo root):
 
 ### 11.5 Reproducibility checklist
 
-`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (212 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
+`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (229 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
 
 ---
 
@@ -459,6 +459,13 @@ Curated corpus (cycle 5, 2026-11-17; goCrawler filtered English text + `output/r
 ---
 
 ## 15. Consolidated open gaps
+
+Sensor-characterisation and calibration reference sources (SharpCap Sensor
+Analysis at 1-2% linearity, HFR autofocus with a 15% rejection threshold,
+DeepSkyStacker 16-sigma hot-pixel rule and entropy-based dark scaling, and
+stack-size-dependent rejection heuristics) are indexed in
+[03-reference-and-literature.md](03-reference-and-literature.md) §6; the
+details are not duplicated here.
 
 1. **Gamma / EOTF (Phase 5) — experimental option validated 2026-11-18.** The self-flat is still applied in sRGB-encoded space by default; `--self-flat-linear-srgb` decodes with the sRGB EOTF before division and re-encodes afterwards, and is off by default. A two-run OrionNebula validation (16 lights, dark+bias, `--method mean`, 64 px cells, degree 4; grid diagnostics identical in both runs: center/edge **1.0018**, fit RMS **0.06787**, 760/2542 cells, mask **13.2 %**) gave global stack means **0.00942616** (encoded) vs **0.00943065** (EOTF), center/border **0.99198** vs **0.99173**, mean absolute pixel difference **6.2e-6** and max **0.0316** on bright cores. With this mildly vignetted field the EOTF correction is negligible at the background level and changes mainly bright pixels; no artifact was observed. Default remains encoded; the report now states which path was used. A full linear-light pipeline (normalisation, sigma clipping, outputs) is still a larger, separate change.
 2. **Real-flat validation informal / incomplete (Phase 6).** Only separate-run, JPEG-approximate grid-vs-real-flat comparisons exist (§11.4). Smooth agreement within 5–10% and dust residuals are not yet quantified under a dedicated dataset/protocol; "validated" cannot be claimed.

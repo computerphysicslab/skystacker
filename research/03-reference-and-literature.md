@@ -567,7 +567,217 @@ Under the single-file, stdlib-only, `CGO_ENABLED=0` constraint (Tier 4∞ in **R
 
 ---
 
+## 6. Advanced reference-source survey (2026-11-18)
+
+This section consolidates a 76-source discovery report that extends the
+earlier introductory-source selection with foundational equations, reference
+implementations in C/Python/Rust and quantitative parameters. It is the
+canonical index for these sources; technical conclusions that affect the
+engine live in [01](01-architecture-and-core-engine.md),
+[02](02-astrometry-and-identification.md) and
+[04](04-calibration-and-self-flat.md) and are not repeated here.
+
+Source reliability varies by origin. Papers by Greisen, Calabretta, Lang,
+Tonry and Fruchter and documentation from ATNF, NRAO, STScI, ESA and CDS
+are normative primary specifications. Solver latency comparisons on
+Raspberry Pi, CMOS thermal read-noise measurements and several PixInsight
+rejection heuristics come from community forums (Cloudy Nights, INDI,
+Sequence Generator Pro) and user logs; treat them as field observations,
+not standardised independent benchmarks.
+
+Two documentation gaps remain: no independent comparative test under
+identical image sets exists for Astrometry.net, Tetra3, Cedar-solve and
+community variants such as olive-solve; and no primary vendor technical
+documentation was found for PixInsight SPCC, LocalNormalization and Debayer,
+only external tutorials, third-party wrappers and forum discussions.
+
+### 6.1 FITS WCS and distortion models
+
+Greisen and Calabretta Papers I-III define the staged pixel-to-sphere
+mapping (CRPIX, PC/CD, WCSAXES), the voxel-centre invariant, native
+spherical coordinates with Euler rotations (LONPOLEa, RADESYSa), the
+replacement of CROTAi by linear matrices, and non-linear spectral axes.
+For wide fields, the ideal TAN projection is insufficient: the NASA TPV
+registry specifies first-order standard coordinates in degrees before PV
+polynomials; astropy.wcs distinguishes wcslib core/TPV/TPD from SIP and
+Article IV lookup tables, with Shupe et al. providing SIP-to-PV conversion.
+STScI documents HST/ACS distortion reference files (IDCTAB, NPOLFILE,
+D2IMFILE) applied through updatewcs, TweakReg and AstroDrizzle.
+
+### 6.2 Blind solving and low-latency solvers
+
+Astrometry.net (Lang et al. 2010) builds geometric hashes of star quads
+and validates hypotheses with Bayesian decision theory, reporting >99.9%
+success on USNO-B indexes and 100% with 2MASS. The SOFIA field evaluation
+(solve-field v0.65) tolerated saturated stars and kept 1.13 arcsec centre
+scatter between consecutive solutions after removing Earth rotation.
+Tetra3 (ESA), Cedar-solve and the Rust tetra3 crate optimise quad
+generation for 10-30 deg fields and distorted images. StellarSolver packages
+Astrometry.net in C++ but is sensitive to the declared FOV. ASTAP places
+CRPIX at the geometric centre, warns that nonlinear stretching harms bright-star
+identification, and recommends catalogue density matched to FOV (D50 about
+5000 stars/deg2 versus D05 about 500). Reported latencies (10 s versus 2-3 s
+on a Pi Zero 2, under 1 s versus about 200 ms on a Pi 5, and the Cypress
+olive-solve variant at under 1 ms) are informal field reports.
+
+### 6.3 Source extraction, PSF modelling and artefact cleaning
+
+SExtractor processes multi-extension FITS up to 2Gx2G pixels at about 50
+Mpixel/s or 10,000 sources/s on 3 GHz CPUs, emitting FITS_LDAC catalogues
+with preserved headers and per-source vignettes. PSFEx fits parametric or
+non-parametric PSFs, reconstructs super-resolution from undersampled data,
+models spatial variation with polynomials or PCA and produces Moffat
+homogenisation kernels. SourceXtractor++ adds simultaneous model fitting on
+clumps; SEP exposes SExtractor core algorithms in C for in-memory arrays;
+Astro-SCRAPPY implements L.A.Cosmic in Cython/C for cosmic-ray masking.
+
+### 6.4 Massive catalogues and TAP/ADQL
+
+Gaia DR3 (ESA, delivered 2022-06-13) classifies 1.590 million sources,
+provides BP/RP astrophysical parameters for 470 million objects, 219 million
+mean BP/RP spectra (mostly G < 17.6), variability for 10.5 million sources
+and HEALPix levels 6-9 extinction maps, about 10 TB of compressed ECSV.
+Programmatic access uses astroquery.gaia over TAP+ with DataLink for
+non-tabular products; alternatives include ARI Heidelberg's ADQL 2.1
+gaiadr3.gaia_source_lite table and GAVO ConeSearch services.
+ATLAS-REFCAT2 (Tonry et al. 2018) combines Gaia DR2 astrometry with
+Pan-STARRS DR1, ATLAS Pathfinder and recalibrated APASS over 992,637,834
+sources: at least 99% completeness to m < 19, systematic errors <=5 mmag
+RMS (up to 20 mmag near the Galactic plane). The MAST page warns that H-band
+magnitudes were corrected in June 2022, so older downloads must be refreshed.
+APASS DR7 covers 50 million stars over 98% of the sky for 10 <= V <= 17
+with quoted 0.02 mag and 0.17 arcsec precision; PPMXL has about 910.5 million
+objects, and STILTS/TOPCAT with CDS X-Match supports proper-motion space
+cross-matching and HEALPix-cell aggregation.
+
+### 6.5 Sensor characterisation and HFR autofocus
+
+SharpCap Sensor Analysis (Smart Histogram) requires strict RAW colour mode
+without debayering, neutral contrast/gamma and a uniform region of at least
+100x100 pixels under stable illumination; the end of linear response is
+flagged at a 1-2% deviation. Unity gain (e-/ADU = 1.0) is recommended as a
+reference, with light-frame median ADU well above the bias pedestal and
+measurement at the actual cooling temperature. One ASI2400MC report gives
+read noise 2.24 uncooled (~35 C) versus 3.36 at 0 C, illustrating why each
+camera must be characterised at its operating point.
+N.I.N.A. autofocus takes an initial exposure, moves the focuser outward by
+the initial step, sweeps inward fitting linear/parabolic/hyperbolic/Gaussian
+models and performs a verification exposure; a run is rejected if HFR worsens
+by 15% or more. 2026 guides describe error-bar weighting and overshoot
+compensation; Hocus Focus replaces the star detector and curve report to
+fix hyperbolic-fit failures and tune Pixel Scale on long focal lengths.
+Minimum HFR depends on seeing, focal length, pixel size, exposure and 2x2
+binning, which roughly halves HFR.
+
+### 6.6 Calibration, debayering, rejection and Drizzle
+
+Fruchter & Hook (PASP 2002) and the STScI Drizzle page define variable-pixel
+linear reconstruction for dithered undersampled data including cosmic-ray
+treatment. Siril separates Drizzle registration from Bayer Drizzle stacking
+without prior interpolation. DeepSkyStacker detects stars at 10% of maximum
+luminance with .Info.txt caching, flags hot pixels above median + 16 sigma in
+the dark/master dark and single-pixel dead or saturated columns, equalises
+flat luminance/dynamic range to the first frame and scales master darks by
+entropy minimisation; it also performs iterative Kappa-Sigma clipping and
+two-pass comet stacking with frozen stars.
+PixInsight flows place Pure raw CFA calibration and CosmeticCorrection before
+Debayer (LibRaw since v1.8.6), watch CFA pattern mismatches such as GRBG from
+ASCOM drivers, and choose rejection by stack size: Min/Max (3-4 frames),
+Percentile (5-9), Averaged Sigma (9-15), Winsorized Sigma (15-25) and Linear
+Fit (>25). Community notes warn about over-rejecting nebular signal in low
+rejection maps and about WBPP lacking No Rejection and Min/Max, requiring
+manual ImageIntegration of registered frames to preserve satellite or meteor
+trails.
+
+### 6.7 Source index (all 76 references)
+
+| # | URL | Type | Technical relevance |
+|---:|---|---|---|
+| | *FITS WCS formalism, projections and distortion models* | | |
+| 1 | <https://www.atnf.csiro.au/computing/software/wcs/wcs.pdf> | Peer-reviewed (Paper I) | FITS WCS architecture: WCSAXES, PC/CD matrices, invertibility, voxel-centre convention. |
+| 2 | <https://arxiv.org/abs/astro-ph/0207413> | arXiv preprint (Paper II) | Spherical projections via native coordinates, CRVALia and RADESYSa. |
+| 3 | <https://www.atnf.csiro.au/computing/software/wcs/ccs.pdf> | Peer-reviewed (Paper II) | Replaces CROTAi with matrix transforms and Euler angles (LONPOLEa). |
+| 4 | <https://arxiv.org/abs/astro-ph/0507293> | arXiv preprint (Paper III) | Generalised FITS spectral-coordinate formalism. |
+| 5 | <http://www.aoc.nrao.edu/~egreisen/scs.pdf> | Official author draft (Paper III) | FREQ-LOG, WAVE-LOG, AWAV-LOG; reference to Paper IV on distortions. |
+| 6 | <http://jsoc.stanford.edu/doc/keywords/FITS_and_WCS/fits_wcs.html> | Institutional index | IAU-FWG approval of Papers I-III, official errata and WCS concatenation proposals. |
+| 7 | <https://fits.gsfc.nasa.gov/registry/tpvwcs/tpv.html> | Official NASA FITS registry | Step-by-step evaluation of distorted TAN with PV keywords. |
+| 8 | <https://docs.astropy.org/en/latest/wcs/index.html> | Official documentation (dev) | Three transform families: wcslib core/TPV/TPD, SIP and lookup tables. |
+| 9 | <https://github.com/astropy/astropy/blob/main/astropy/wcs/wcs.py> | Official source code | Internal PV/SIP handling and Shupe et al. SIP-to-PV conversion. |
+| 10 | <https://www.stsci.edu/hst/instrumentation/acs/data-analysis/distortion> | STScI documentation | HST/ACS distortion calibration with IDCTAB, NPOLFILE, D2IMFILE, updatewcs, TweakReg and AstroDrizzle. |
+| 11 | <https://arxiv.org/pdf/2505.03932> | Technical preprint | Recent modular implementation aligned with Greisen & Calabretta (2002) and Shupe et al. |
+| 12 | <https://github.com/cds-astro/wcs-rs/blob/master/readme.md> | CDS Rust repository | Lightweight Rust library for undistorted Paper II celestial projections. |
+| | *Blind astrometric solving and low-latency solvers* | | |
+| 13 | <https://arxiv.org/abs/0910.2233> | arXiv preprint | Founding Astrometry.net paper: geometric hashing of star quads and Bayesian hypothesis testing. |
+| 14 | <https://www.researchgate.net/publication/45877878_ASTROMETRYNET_BLIND_ASTROMETRIC_CALIBRATION_OF_ARBITRARY_ASTRONOMICAL_IMAGES> | Scientific repository | Full abstract: quads, Bayesian test, >99.9% success with USNO-B and 100% with 2MASS. |
+| 15 | <https://astrometry.net/biblio.html> | Official bibliography | Derived publications on USNO-B artefact cleaning and proper-motion plate dating. |
+| 16 | <https://media.readthedocs.org/pdf/astrometrynet/latest/astrometrynet.pdf> | Official technical manual | Index construction, --depth, --no-verify; prior-WCS verification limited to TAN + CD. |
+| 17 | <https://github.com/dstndstn/astrometry.net> | Official repository | Complete source code for algorithmic audit and pipeline integration. |
+| 18 | <https://www.dsi.uni-stuttgart.de/dokumente/Mitarbeiterdateien/Schindler/schindler> | Institutional report | SOFIA evaluation of solve-field v0.65: tolerance to saturated stars and 1.13 arcsec centre scatter. |
+| 19 | <https://github.com/esa/tetra3> | Official ESA repository | Fast star-tracker plate solver with distortion support; default database for 10-30 deg fields. |
+| 20 | <https://github.com/smroid/cedar-solve> | Software repository | Python derivative of Tetra3 aimed at low-latency finders. |
+| 21 | <https://crates.io/crates/tetra3/0.3.2> | Rust crate | Rust implementation replicating cedar-solve quad generation and matching. |
+| 22 | <https://www.cloudynights.com/forums/topic/881707-writing-command-line-platesolving-tool-with-stellarsolver/> | Technical forum (ASTAP author) | CRPIX/CRVAL handling, D05/D50 densities, nonlinear-stretch impact, StellarSolver in C++. |
+| 23 | <https://forum.indilib.org/t/stellarsolver-works-great-until-plate-solve-failed/7390> | Technical forum (developer) | StellarSolver failure diagnostics; exact FOV scale enables ~2.6 s solves. |
+| 24 | <https://astrokeith.com/blogs/latest-blogs/plate-solvers-compared.html> | User technical blog | Observed latency/reliability of Astrometry.net, Tetra3 and Cedar on Pi Zero 2 and Pi 5. |
+| 25 | <https://www.cloudynights.com/forums/topic/1001981-fast-customized-version-of-the-cedar-diy-plate-solver/> | Community forum | Cypress variant with olive-solve (<1 ms/frame) fused with IMU BMI160/BNO085 reads. |
+| 26 | <https://www.astronomo.org/foro/index.php?topic=42428.0> | Community guide (ES) | cedar-detect, cedar-solve and cedar-server components; guided plus blind strategies. |
+| | *Source extraction, PSF modelling and artefact cleaning* | | |
+| 27 | <https://sextractor.readthedocs.io/en/latest/> | Official documentation | Master configuration index, CLI usage and model fitting in SExtractor. |
+| 28 | <https://sextractor.readthedocs.io/_/downloads/en/stable/pdf/> | Official manual PDF | ~50 Mpixel/s, MEF support, memory and bitmask specifications. |
+| 29 | <https://psfex.readthedocs.io/en/latest/Introduction.html> | Official documentation | PSF super-resolution from undersampled images, PCA spatial variation, Moffat homogenisation kernels. |
+| 30 | <https://psfex.readthedocs.io/_/downloads/en/latest/pdf/> | Official manual PDF | FITS_LDAC exchange, .psf files and . homogenisation kernels. |
+| 31 | <https://psfex.readthedocs.io/en/latest/Examples.html> | Official documentation | Applied PSF-fitting photometry in dense stellar fields. |
+| 32 | <https://sourcextractorplusplus.readthedocs.io/_/downloads/en/stable/pdf/> | Official manual PDF | Modern SExtractor evolution with simultaneous model fitting on source clumps. |
+| 33 | <https://sep.readthedocs.io/> | Python/C library docs | C bindings for extraction, deblending and aperture photometry on in-memory arrays. |
+| 34 | <https://astroscrappy.readthedocs.io/en/latest/index.html> | Python/C library docs | Fast Cython/C implementation of L.A.Cosmic for masking cosmic rays in NumPy arrays. |
+| | *Massive astrometric catalogues and TAP/ADQL services* | | |
+| 35 | <https://www.cosmos.esa.int/web/gaia/dr3> | Official ESA dataset | Gaia DR3: ~10 TB ECSV, BP/RP spectra, variability and HEALPix extinction maps. |
+| 36 | <https://www.cosmos.esa.int/web/gaia-users/archive/datalink-products> | Official ESA documentation | Retrieval of non-tabular products (spectra, time series) through DataLink. |
+| 37 | <https://docs.astropy.org/projects/astroquery/en/latest/gaia/gaia.html> | Astroquery documentation | Programmatic Python access to the Gaia IVOA TAP+ service. |
+| 38 | <https://www.cosmos.esa.int/web/gaia-users/archive/programmatic-access> | Official ESA documentation | Anonymous and authenticated astroquery access to the Gaia archive. |
+| 39 | <https://gaia.ari.uni-heidelberg.de/tap.html> | Institutional TAP service | Alternative ADQL 2.1 endpoint exposing gaiadr3.gaia_source_lite. |
+| 40 | <https://dc.g-vo.org/LP/astro.upjs/gaiadr3_eb/t/gdr3cone> | GAVO ConeSearch service | Simplified cone searches on Gaia DR3 subsets. |
+| 41 | <https://arxiv.org/abs/1809.09157> | Peer-reviewed paper | Tonry et al. (2018) ATLAS-REFCAT2: completeness to m < 19, systematic error <=5 mmag RMS. |
+| 42 | <https://archive.stsci.edu/hlsp/atlas-refcat2> | MAST/STScI repository | Declination-zone distribution, refcat.c utility, CasJobs and June 2022 H-magnitude correction notice. |
+| 43 | <https://vizier.cds.unistra.fr/viz-bin/VizieR?-source=J/ApJ/867/105> | VizieR catalogue | Tabular access and exact metadata for the 992,637,834 ATLAS-REFCAT2 records. |
+| 44 | <https://catalogs.mast.stsci.edu/panstarrs> | MAST documentation | Pan-STARRS DR1/DR2 PSF, Kron and aperture mean magnitudes with detection flags. |
+| 45 | <https://www.ta3.sk/caosp/Eedition/FullTexts/vol43no3/pp518-522.pdf> | Scientific paper | APASS DR7 photometric (0.02 mag) and astrometric (0.17 arcsec) specifications. |
+| 46 | <http://www.astrometrica.at/catalogs.html> | Software documentation | Comparison of ATLAS-REFCAT2, PPMXL (910,468,710 objects) and UCAC4+APASS. |
+| 47 | <https://www.star.bris.ac.uk/mbt/topcat/sun253/sun253.html> | Official TOPCAT documentation | CDS Upload X-Match integration from TOPCAT/STILTS and HEALPix-cell visualisation. |
+| 48 | <https://indico.in2p3.fr/event/38575/contributions/172187/attachments/103624/161613/tctuto.pdf> | Workshop material | Practical proper-motion space analysis (M4 cluster) with STILTS and CDS X-Match. |
+| 49 | <https://arxiv.org/html/1611.04431v3> | Technical preprint | Interoperability and performance tests between TOPCAT/STILTS and CDS Xmatch. |
+| | *Sensor characterisation, optimal exposure and HFR autofocus* | | |
+| 50 | <https://www.sharpcap.co.uk/sharpcap/features/sensor-analysis> | Official product page | Why Sensor Analysis requires strict RAW mode without debayering. |
+| 51 | <https://docs.sharpcap.co.uk/4.0/#!2!Sensor%20Analysis> | Official SharpCap manual | Operating protocol: >=100x100 px region, exposures under 2 s, neutral settings for Smart Histogram. |
+| 52 | <https://forums.sharpcap.co.uk/viewtopic.php?t=2265> | Official support forum | 1-2% deviation from linearity used as the end-of-linear-response criterion. |
+| 53 | <https://forums.sharpcap.co.uk/viewtopic.php?t=4292> | Official forum (admin) | Still Mode for ASCOM DSLR stability and its limitations. |
+| 54 | <https://forums.sharpcap.co.uk/viewtopic.php?t=7512> | Official forum (admin) | Automatic selection of spaced gains (e.g. 100 to 30,000) by driver range. |
+| 55 | <https://www.cloudynights.com/forums/topic/869275-sharpcap-sensor-analysis/> | Community forum | Unity gain definition (e-/ADU = 1.0) and background-versus-bias check. |
+| 56 | <https://www.cloudynights.com/forums/topic/882233-best-practices-for-doing-the-sharpcap-sensor-analysis/> | Community forum | Read-noise variation with cooling (ASI2400MC: 2.24 uncooled to 3.36 at 0 C) and quadratic integration effect. |
+| 57 | <https://nighttime-imaging.eu/docs/master/site/advanced/autofocus/> | Official N.I.N.A. documentation | V-curve autofocus, model fitting and 15% HFR worsening rejection threshold. |
+| 58 | <https://www.svenesis.org/blog/2026-07-autofokus_en.html> | Technical guide (2026) | Hocus Focus detection improvements and nightly HFR/star-count history interpretation. |
+| 59 | <https://www.backyardastronomy.net/2026/06/07/nina-auto-focus-explained-getting-sharp-focus-every-time/> | Technical guide (2026) | Empirical step-size calculation, error-bar weighting and overshoot compensation. |
+| 60 | <https://www.cloudynights.com/forums/topic/949057-issue-with-hocus-focus-plugin-in-nina/> | Community forum | Hocus Focus focus-range and Pixel Scale tuning for long focal lengths. |
+| 61 | <https://forum.sequencegeneratorpro.com/t/what-is-your-typical-hfr-number-when-in-perfect-focus/6240> | Community forum | Effect of seeing, focal length, pixel size and 2x2 binning (roughly halves HFR) on minimum HFR. |
+| | *Calibration, debayering, statistical pixel rejection and Drizzle* | | |
+| 62 | <https://arxiv.org/abs/astro-ph/9808087> | arXiv preprint (PASP 2002) | Fruchter & Hook paper on variable-pixel linear reconstruction of undersampled data and cosmic rays. |
+| 63 | <https://www.stsci.edu/~fruchter/dither/drizzle.html> | STScI technical page | Original Drizzle algorithm applied to the Hubble Deep Field. |
+| 64 | <http://deepskystacker.free.fr/english/technical.htm> | Official DSS documentation | Hot pixels (> median + 16 sigma), dead columns, flat normalisation and entropy-based dark scaling. |
+| 65 | <http://deepskystacker.free.fr/spanish/technical.htm> | Official DSS documentation (ES) | Gaussian centroid fitting, Kappa-Sigma clipping and star-freeze comet stacking. |
+| 66 | <http://deepskystacker.free.fr/english/userguide.htm> | Official DSS manual | Workflows, 64-bit FITS/TIFF formats and RAW/FITS DDP parameters. |
+| 67 | <https://github.com/outback-deepskystacker> | Repository / technical summary | DeepSkyStacker architecture and recent Linux/macOS builds. |
+| 68 | <https://siril.readthedocs.io/es/latest/preprocessing/drizzle.html> | Official Siril documentation (ES) | Separation of Drizzle registration and Bayer Drizzle stacking without prior interpolation. |
+| 69 | <https://telescope.live/blog/pixinsight-debayer-demosaicing-process-explained> | External technical tutorial | Order CFA calibration -> CosmeticCorrection -> Debayer. |
+| 70 | <https://www.cloudynights.com/forums/topic/706570-pixinsight-debayer/> | Community forum | DCRAW to LibRaw transition (v1.8.6+) and Pure raw requirement. |
+| 71 | <https://www.cloudynights.com/forums/topic/772602-pixinsight-debayer-pattern/> | Community forum | Correct Bayer matrix selection (e.g. GRBG in ASCOM drivers). |
+| 72 | <https://www.deepskycolors.com/astro/docs/tools/DSPX/main/index.html> | Third-party documentation | Parameter reference index for CosmeticCorrection, Debayer and LocalNormalization in DSPX. |
+| 73 | <http://trappedphotons.com/blog/?p=1144> | User technical blog | Heuristic table of rejection algorithms by frame count (Min/Max to Linear Fit Clipping). |
+| 74 | <https://www.cloudynights.com/forums/topic/697077-question-about-rejection-algorithms-in-pixinsight/> | Community forum | Winsorized versus Linear Fit and correct interpretation of low rejection maps. |
+| 75 | <https://www.cloudynights.com/forums/topic/902675-stop-pixel-rejection-in-pixinsight-wbpp/> | Community forum | WBPP lacks Min/Max and No Rejection; manual ImageIntegration fallback for satellite/meteor trails. |
+| 76 | <https://www.cloudynights.com/forums/topic/616865-post-your-pixinsight-processing-flow/> | Community forum | Full end-to-end flow with SubframeSelector, LocalNormalization and 2x DrizzleIntegration. |
+
 ## Sources absorbed
+
 
 The following source files were read in full and merged/deduplicated into this document; no other file was modified.
 
@@ -575,6 +785,7 @@ The following source files were read in full and merged/deduplicated into this d
 2. `research/03-reference-and-literature/source-catalog-and-microarchitecture.md` — 50-source catalog, software/profiling/Roofline notes, 100-term keyword index, v0.6.0 map → §1, §3, §2.
 3. `research/02-astrometry-and-identification/astronomical-identification-and-sky-charts.md` — bibliography (§10 A–E), essential papers (§1.1), reference-implementation and standards URLs (§§1.3, 2.1, 3.1, 3.3, 4.1, 5–7) → §1.
 4. `research/GEMINI_DEEP_RESEARCH_PROMPT-outcome.md` — Go-internals/toolchain, XISF/FITS and AI-tool reference lists (the "Sources" URL list), SIP-in-resampler and single-pass sigma-clip status notes → §1, §3, §4, §5 and §0.3.
+5. `research/pendingUpdates/1.txt` — Spanish 76-source discovery report, translated to English and consolidated as §6; the original file was removed after ingestion.
 
 Supporting context (read for accurate cross-links/status only, not absorbed as new reference content): `research/README.md`, `main.go` (version `0.6.1`, SIP order-2, `--resample-sip`).
 

@@ -446,6 +446,15 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--diagnose-integrated` | During a normal run, write diagnostics next to the report | `false` |
 | `--diagnose-timeout N` / `--diagnose-top N` | Collection timeout in seconds / number of top processes | `5` / `10` |
 | `--diagnose-updates` | Include installed packages/hotfixes (local inventory only, no network) | `false` |
+| `--frame-metrics PATH` / `--include-list PATH` | Per-frame quality CSV and frame culling by list | — |
+| `--keep-sharpest N` | Keep only the sharpest N% of frames by median star HFR | `0` |
+| `--calib-library PATH` | Match calibration masters by exposure/temperature/ISO/gain | — |
+| `--comet-combine` | Recombine comet and stars stacks into `stacked_comet_combined` | `false` |
+| `--batch FILE` | Run a JSON queue of CLI invocations sequentially | — |
+| `--starless-psf` | Per-star HFR/eccentricity radii for star removal | `false` |
+| `--wavelets` / `--wavelet-scales N` / `--wavelet-sigma F` | À trous wavelet denoise on linear data | `false` / `3` / `3.0` |
+| `--deconvolve-wiener` | FFT Wiener deconvolution (uses `--deconv-sigma`) | `false` |
+| `--photometry` | Ensemble Gaia aperture photometry → `photometry.csv/.json` | `false` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |
