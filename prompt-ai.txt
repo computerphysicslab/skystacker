@@ -61,6 +61,13 @@ Current product state (do not re-implement)
 - `--fits` writes `stacked_sum.fits` (big-endian BITPIX=-32, NAXIS=3); `--xisf` writes `stacked_sum.xisf` (monolithic XISF 1.0, planar Float32); writer round-trip selftests cover both.
 - `--bpm-auto` derives a bad-pixel map from master dark/bias (median + N*sigma*MAD, `--bpm-auto-sigma`, default 5); `testBPMAuto` verifies detection and masking.
 - Self-flat Phase 4 done: grid model is the default (v1 `registered` kept for compatibility). Validated on Orion limit 20 with mean/median/sigma and `--no-register`; extrapolation+min<0.45 guard added; gamma-aware correction documented as out of scope for sRGB. Real flat validation deferred.
+Tool permissions
+----------------
+- In OpenCode, reading from and writing to `/tmp` is always authorised. Do not
+  ask for confirmation before creating, reading or deleting temporary files
+  there (including `/tmp/opencode/`); use it freely for scratch files, logs and
+  intermediate outputs.
+
 Research-to-roadmap protocol (mandatory after every knowledge-base update)
 -------------------------------------------------------------------------
 - Whenever research/ changes (new source ingested, section appended, partial
@@ -84,14 +91,14 @@ Donation footer (roadmap item 47, user request 2026-11-18)
 - Donation addresses (public data, not secrets), implemented in `donations.go`:
   Ethereum ERC-20 (USDT/USDC) `0xE5f68950D479fAB12797dABbe5a4B0d88eC7A722`
   and Bitcoin native SegWit `bc1qz4zvf42l3fu4axp0nd85fp2jr0gnavrr2v6xsj`.
-  They are stored once in `donationEthAddress` / `donationBTCAddress`; the 10
+  They are stored once in `donationEthAddress` / `donationBTCAddress`; the 110
   English messages in `donationMessages` use `{address}` / `{btc_address}`
   placeholders and must never repeat a literal address.
 - The rotating footer is printed only after a fully successful run that
   includes both stacking and post-processing; never on errors, `--stack-only`,
   `--post-only`, help/version or diagnostics. It uses the open module
   `github.com/skip2/go-qrcode` (MIT) to render both addresses as terminal QR
-  codes. `--no-donation` and `--no-donation-qr` are available; `--batch`
+  codes. `--donation` prints the message and QR standalone with no image processing; `--no-donation` and `--no-donation-qr` are available; `--batch`
   children are suppressed via `SKYSTACKER_NO_DONATION=1`.
 
 Local AI tools (myTools)

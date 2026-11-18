@@ -249,6 +249,7 @@ type cliOptions struct {
 	Photometry             bool
 	DonationEnabled        bool
 	DonationQR             bool
+	DonationShow           bool
 	BGMultiscale           bool
 	ConfigPath             string
 	Deconvolve             bool
@@ -525,6 +526,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	var noDonation, noDonationQR bool
 	fs.BoolVar(&noDonation, "no-donation", false, "suppress the rotating thank-you/donation footer after a successful full run")
 	fs.BoolVar(&noDonationQR, "no-donation-qr", false, "print the donation footer without terminal QR codes")
+	fs.BoolVar(&o.DonationShow, "donation", false, "print the rotating donation message and QR codes, then exit (no image processing)")
 	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
 	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
 	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
@@ -1136,6 +1138,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --photometry           ensemble Gaia photometry -> photometry.csv/.json")
 	fmt.Fprintln(w, "  --no-donation          suppress the final thank-you/donation footer")
 	fmt.Fprintln(w, "  --no-donation-qr       omit terminal QR codes from the donation footer")
+	fmt.Fprintln(w, "  --donation             show the rotating message and QR codes, then exit (no images)")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --deconvolve-grid  local PSF from star HFR over a 3x3/4x4 grid (--deconv-grid-size)")
@@ -5096,6 +5099,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if !o.DonationQR {
 		add("--no-donation-qr")
 	}
+	if o.DonationShow {
+		add("--donation")
+	}
 	if o.DiagnoseTimeout != 5 || o.DiagnoseTop != 10 {
 		add(fmt.Sprintf("--diagnose-timeout %d --diagnose-top %d", o.DiagnoseTimeout, o.DiagnoseTop))
 	}
@@ -5540,6 +5546,7 @@ type runOptions struct {
 	Photometry             bool
 	DonationEnabled        bool
 	DonationQR             bool
+	DonationShow           bool
 	BGMultiscale           bool
 	Deconvolve             bool
 	DeconvSigma            float64
@@ -17930,8 +17937,8 @@ func testDonationFooter() error {
 		donationBTCAddress != "bc1qz4zvf42l3fu4axp0nd85fp2jr0gnavrr2v6xsj" {
 		return fmt.Errorf("donation addresses changed: %q / %q", donationEthAddress, donationBTCAddress)
 	}
-	if len(donationMessages) != 10 {
-		return fmt.Errorf("got %d donation messages, want 10", len(donationMessages))
+	if len(donationMessages) != 110 {
+		return fmt.Errorf("got %d donation messages, want 110", len(donationMessages))
 	}
 	seen := make(map[string]bool)
 	for _, msg := range donationMessages {
@@ -17958,6 +17965,10 @@ func testDonationFooter() error {
 	opts, err := parseArgs([]string{"--no-donation", "--no-donation-qr"})
 	if err != nil || opts.DonationEnabled || opts.DonationQR {
 		return fmt.Errorf("donation flags: %+v err=%v", opts, err)
+	}
+	show, err := parseArgs([]string{"--donation", "--no-donation-qr"})
+	if err != nil || !show.DonationShow || show.DonationQR {
+		return fmt.Errorf("--donation flags: %+v err=%v", show, err)
 	}
 	return nil
 }
@@ -26895,6 +26906,10 @@ func main() {
 	}
 	if opts.Version {
 		fmt.Println(version)
+		return
+	}
+	if opts.DonationShow {
+		printDonationFooter(true, opts.DonationQR)
 		return
 	}
 	if opts.Batch != "" {

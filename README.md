@@ -457,6 +457,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--photometry` | Ensemble Gaia aperture photometry → `photometry.csv/.json` | `false` |
 | `--no-donation` | Suppress the rotating thank-you/donation footer after a successful full run | `false` |
 | `--no-donation-qr` | Print the footer without terminal QR codes | `false` |
+| `--donation` | Print the rotating message and both QR codes, then exit (no image processing) | `false` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |

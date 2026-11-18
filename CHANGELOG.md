@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
-- Implemented roadmap item 47: rotating English thank-you footer with dedicated ETH/BTC constants, 10 placeholder templates, MIT-licensed terminal QR codes, opt-out flags and success-only output; self-tests 231.
+- Implemented roadmap item 47: rotating English thank-you footer with dedicated ETH/BTC constants, 110 placeholder templates, MIT-licensed terminal QR codes, standalone `--donation` flag, opt-out flags and success-only output; self-tests 231.
 - Roadmap item 47 added: rotating English thank-you / $1 USDT-USDC donation footer with a single public-address constant and `--no-donation` opt-out (design only, not yet implemented).
 - Roadmap item 34: measured self-flat × normalization interaction with a controlled synthetic selftest and three real OrionNebula runs; report now warns when both paths are active; self-tests 230.
 - Roadmap extended to 46 items: 18 new challenges (29-46) promoted from the canonical research knowledge base, plus a mandatory research-to-roadmap gap-analysis routine recorded in the AI context files.
