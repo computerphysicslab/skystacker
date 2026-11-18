@@ -9,15 +9,18 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-18):** 37 Done · 6 Open · 6 Blocked · 1 Executed/not accepted
+**Summary (2026-11-18):** 37 Done · 11 Open · 6 Blocked · 1 Executed/not accepted
 · 7 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18
 (the portable diagnostic module) was delivered afterwards. Items 19–28 were
 promoted from the feature comparison of mature stacking tools and delivered
 except item 27, which remains blocked by item 13. Items 29–46 were
 promoted from the canonical research knowledge base, item 47 was added by
 user request, and items 48–49 came from the HiPS-cutout/SVG-map analysis in
-[02](research/02-astrometry-and-identification.md) §13; items 50–57 were promoted from the cycle-7 corpus in [08](research/08-crawler-source-discovery.md) §10. The status column
-below is the authoritative view.
+[02](research/02-astrometry-and-identification.md) §13; items 50–57 were promoted
+from the cycle-7 corpus in [08](research/08-crawler-source-discovery.md) §10,
+and items 58–62 add a standalone multi-image processing mode analysed in
+[01](research/01-architecture-and-core-engine.md). The status column below is
+the authoritative view.
 
 ## Completed (2026-11-17)
 
@@ -29,7 +32,7 @@ below is the authoritative view.
 6. Research folder consolidated into flat thematic files plus the ingestion
    script `scripts/consolidate-research.py`.
 
-## Issue tracker — 57 items (ordered by effort)
+## Issue tracker — 62 items (ordered by effort)
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
@@ -73,6 +76,8 @@ below is the authoritative view.
 | 50 | **SSO annotation with velocity vectors** | S–M (~1–2 h) | **Open** | [02](research/02-astrometry-and-identification.md) §10.2 | Support `a:/c:/p:/dp:/s:` object IDs, 3-symbol IAU observatory code, hard `DATE-OBS` requirement, geocentric fallback and velocity-vector arrows from cached ephemerides; selftest on synthetic site headers. |
 | 51 | **Frame-selection expression engine** | S–M (~1–2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §10.2 | Add `--frame-expr` boolean/weight expressions over the frame-metrics CSV with per-variable Min/Max/Median/Sigma and an `SSWEIGHT`-like output keyword; selftest with a small expression set. |
 | 53 | **CFA-aware pre-drizzle background extraction** | S–M (~1–2 h) | **Blocked** — needs item 14 | [01](research/01-architecture-and-core-engine.md) §10.2 | Treat Bayer CFA as four interleaved subchannels, fit order-1 polynomial per subchannel and recombine before Bayer Drizzle (X-Trans unsupported); blocked until raw Bayer planes are available. |
+| 58 | **Standalone single-image post-processing CLI** | S–M (~1–2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) "Standalone image-processing mode" | `--process-image PATH[,PATH...]` + `--image-op blur|sharpen|background|stretch|denoise|deconvolve|starless`: decode with `decodeImageFile`, reuse existing pure `frame` functions, write `<basename>_processed.f32raw` + JPEG and report provenance; never modify inputs. |
+| 59 | **Multi-image arithmetic operations** | S–M (~1–2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) "Standalone image-processing mode" | `--image-op sum|subtract|average|median|min|max` over equal-size inputs with valid-pixel masks and dimension/normalisation diagnostics; reuse `accumulator`/`reduceTilesStack`; selftest on synthetic frames. |
 | 36 | **Gaia DR4 / Archive v3.15 TAP adaptation** | M (~2–4 h) | **Done** 2026-11-18 | [02](research/02-astrometry-and-identification.md) §11 | Add pagination, queue/backoff handling, renamed DataLink IDs, <=4 active requests and persistent HEALPix cache fallback during the 25 Nov-2 Dec 2026 blackout. |
 | 37 | **Decoupled rejection sub-tiles and dedicated buffer pool** | M (~2–3 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §3.3 | Use 64x64/128x128 rejection sub-tiles independent of alignment tiles with a `sync.Pool`, bounding RAM for deep stacks on 15 GiB hosts. |
 | 38 | **XISF / PGM / PPM input ingestion** | M (~2–4 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §2.1/§12.3, [03](research/03-reference-and-literature.md) §4 | Add uncompressed readers for these formats so discovery accepts them as lights/masters; no compression support required. |
@@ -84,6 +89,9 @@ below is the authoritative view.
 | 54 | **Matched-filter source detection** | M (~2–3 h) | **Open** | [02](research/02-astrometry-and-identification.md) §10.2 | Implement `T = αC⁻¹S` with per-pixel noise weights and positive/negative source output on linear frames; selftest shows improved faint-star recovery over the current smoothed-S/N threshold. |
 | 55 | **Layered SVG annotation extension** | M (~2–3 h) | **Open** | [02](research/02-astrometry-and-identification.md) §10.2 | Extend item 49 with independent layers, ellipse axes/PA corrected for field rotation and mirroring, and label placement (8 fields, 16 candidate positions, 20 collision passes); SVG only. |
 | 56 | **Asymmetric-clipping background with harmonic inpainting** | M (~3–4 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §10.2 | Implement σ=1.4826×MAD, asymmetric low/high clipping, multiscale harmonic inpainting, Scale [1,10], polynomial degree [1,6] and RBF alternative; selftest on a synthetic gradient. |
+| 60 | **Pairwise transform and quality measurement** | M (~2–3 h) | **Open** | [01](research/01-architecture-and-core-engine.md) "Standalone image-processing mode" | `--image-op measure-transform|measure-quality`: report dx/dy, rotation, scale and inlier RMS from `detectStars`+`matchStarsToReference`, plus per-image HFR/HFD, eccentricity, background sigma and frame-quality scores; CSV/JSON output, no image rewrite. |
+| 61 | **Standalone Gaia SVG sky map for arbitrary images** | M (~2–3 h) | **Open** | [02](research/02-astrometry-and-identification.md) §13, item 49 | Extend `--sky-map` to accept an explicit image path, run `--plate-solve` when needed (seed via `--plate-center` or FITS RA/DEC) and emit `stacked_sky_map.svg` at the exact input dimensions; reuse the offline Gaia cache and item 55 layered rendering. |
+| 62 | **Standalone HiPS survey cutout aligned to arbitrary images** | M (~3–4 h) | **Open** | [02](research/02-astrometry-and-identification.md) §13, item 48 | Extend `--survey-cutout` to accept an explicit image path, solve WCS if needed, call CDS hips2fits with the image width/height/FOV/rotation and write `survey_reference.fits/.jpg` plus a star-match diagnostic; opt-in network, never block offline runs. |
 | 49 | **SVG sky map of the field** | M (~3-4 h) | **Done** 2026-11-18 | [02](research/02-astrometry-and-identification.md) §13.2 | Emit `stacked_sky_map.svg` at the exact width/height/orientation of the solved frame: project cached Gaia sources with `wcsTanForward`, draw magnitude-sized circles/labels, and optionally overlay SIMBAD/VizieR extended objects as ellipses only when major/minor axis and PA exist; label each object source; write beside `stacked_annotated.jpg` without touching scientific outputs. |
 | 48 | **HiPS survey cutout with exact frame geometry** | M–L (~4-6 h) | **Done** 2026-11-18 | [02](research/02-astrometry-and-identification.md) §13.1 | Opt-in network stage using CDS hips2fits (`hips`, `width`, `height`, `projection=TAN`, `ra`, `dec`, `fov`, `rotation_angle`, `format=fits`, or a `wcs` JSON) to fetch a DSS2/Pan-STARRS cutout at exactly `refW x refH`, cache it, align with existing star matching and write `survey_reference.fits/.jpg`; require a plate solution, never block offline runs, respect the 50 Mpix service limit. |
 | 44 | **Satellite-streak extraction (Median Radon Transform)** | M–L (~3–5 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §13 | Deterministic line-integral detection of sub-noise streaks on the linear master; write a streak mask and report, complementing max-stack diagnostics. |

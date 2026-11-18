@@ -723,3 +723,49 @@ SIMD (SSE2/AVX) and OpenMP. Calibration specifics are in
 [04](04-calibration-and-self-flat.md); tool positioning is in `COMPARISON.md`.
 
 A cycle-7 curated corpus of drizzle kernels, DSS theory and background models is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §10; its quantitative findings are consolidated there.
+
+## Standalone image-processing mode (2026-11-18, append-only)
+
+The user requested a CLI mode that treats existing JPG/PNG/FITS images as
+first-class inputs without running the stacking pipeline. Analysis: nearly all
+building blocks already exist as pure functions over `*frame`, so the new work
+is flag plumbing, input loading, operation dispatch and provenance output —
+not new algorithms.
+
+**Proposed contract.** `--process-image PATH[,PATH...]` (or repeated flag)
+switches to image mode; `--image-op OP` selects the operation; `--image-output
+DIR` defaults to `<cwd>/image_processing`. Inputs are decoded with
+`decodeImageFile` (JPG/PNG/FITS/RAW/SER), never modified, and every output is
+written as `_processed.f32raw` + JPEG preview with the source basename in the
+name and in `report.txt`/`report.json`.
+
+**Operation families.**
+
+- *Single-image post-processing*: `blur` (`gaussianBlur`), `sharpen`
+  (`multiScaleSharpen`, `unsharpMask`), `background` (`removeBackground`,
+  `multiscaleBackground`, `--bg-multiscale`), `stretch` (`autoStretch`, MTF),
+  `denoise` (`denoiseFrame`, `waveletDenoise`), `deconvolve`
+  (`richardsonLucy`, `deconvolveWiener`) and `starless` (`removeStarsForOptions`).
+  These reuse the existing post-processing functions unchanged.
+- *Multi-image arithmetic*: `sum`, `subtract`, `average`, `median`, `min`,
+  `max` over equal-size frames, with per-pixel valid masks and a report of
+  dimensions/normalisation. Existing `accumulator` and `reduceTilesStack`
+  helpers cover most cases.
+- *Pairwise measurement*: `measure-transform` uses `detectStars` +
+  `matchStarsToReference` / `estimateSimilarity` to report dx, dy, rotation,
+  scale and inlier RMS; `measure-quality` reports `computeFrameQuality`,
+  `computeAdvancedQuality`, median HFR/HFD, eccentricity and background sigma
+  per image, reusing `ditherDiagnostic` and `computeTiltDiagnostic` where
+  applicable.
+- *Astrometric products*: `sky-map` and `survey-cutout` are already implemented
+  for the stacked frame in `sky_products.go`; in image mode they must accept an
+  explicit input path and, when needed, run `--plate-solve` (seeded by
+  `--plate-center` or FITS RA/DEC) before projecting Gaia sources or calling
+  CDS hips2fits with the image's exact width/height/FOV/rotation.
+
+**Constraints.** No external runtime dependencies beyond the existing QR module;
+no mutation of source files; batch through `--batch`; opt-in network only for
+plate solving and survey cutouts; output naming must avoid collisions when the
+same operation is run twice. Feasibility is high because every listed operation
+already has a tested implementation; the roadmap tracks the plumbing and
+integration separately by effort.
