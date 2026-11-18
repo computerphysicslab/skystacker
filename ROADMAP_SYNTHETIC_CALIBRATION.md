@@ -1,5 +1,8 @@
 # ROADMAP — Synthetic calibration for SkyStacker
 
+Master roadmap: [`ROADMAP.md`](ROADMAP.md). This file remains the detailed
+calibration-only tier plan.
+
 **Input for the next implementation session.** Derived from
 `research/04-calibration-and-self-flat.md` §10. Do not implement items
 out of order; each tier assumes the previous one is green in

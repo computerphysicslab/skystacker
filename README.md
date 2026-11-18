@@ -46,6 +46,7 @@ It takes a folder of night-sky exposures, detects stars, aligns the frames, comb
 - [Planned Potential Features and Technologies Roadmap](#planned-potential-features-and-technologies-roadmap)
 - [How SkyStacker Compares](#how-skystacker-compares)
 - [Benchmarks](BENCHMARKS.md)
+- [Roadmap](ROADMAP.md) (master milestones ordered by effort)
 - [Research](research/README.md) (consolidated thematic index and ingestion protocol)
 - [Project Goals & License](#project-goals--license)
 
