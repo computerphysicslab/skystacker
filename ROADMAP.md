@@ -14,8 +14,10 @@ authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort
 (the portable diagnostic module) was delivered afterwards. Items 19–28 were
 promoted from the feature comparison of mature stacking tools and delivered
 except item 27, which remains blocked by item 13. Items 29–46 were
-promoted from the canonical research knowledge base; item 47 was added by
-user request. The status column below is the authoritative view.
+promoted from the canonical research knowledge base, item 47 was added by
+user request, and items 48–49 came from the HiPS-cutout/SVG-map analysis in
+[02](research/02-astrometry-and-identification.md) §13. The status column
+below is the authoritative view.
 
 ## Completed (2026-11-17)
 
