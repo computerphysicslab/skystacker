@@ -105,7 +105,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 
 ## Scope & Architecture
 
-- **Single-binary, static Go CLI**: the executable is built from `main.go`, two first-party modules (`goPureRaw/` for CR2, `goDiagnostics/` for system reports) and one small MIT-licensed third-party module (`github.com/skip2/go-qrcode`) used only to render donation QR codes in the terminal. `CGO_ENABLED=0` static cross-platform builds remain.
+- **Single-binary, static Go CLI**: the executable is built from the package root (`main.go` + `donations.go`), two first-party modules (`goPureRaw/` for CR2, `goDiagnostics/` for system reports) and one small MIT-licensed third-party module (`github.com/skip2/go-qrcode`) used only to render donation QR codes in the terminal. `CGO_ENABLED=0` static cross-platform builds remain.
 - **Linear float32 pipeline**: Accumulates and processes image data in IEEE 754 `float32` precision end-to-end.
 - **Current boundaries**:
   - **CLI-only**: No GUI is included.
@@ -249,10 +249,10 @@ On every run, SkyStacker prints a one-line banner to standard error:
 SkyStacker 0.6.1 | [https://github.com/computerphysicslab/skystacker](https://github.com/computerphysicslab/skystacker) | built 2026-11-15T00:00:00Z
 ```
 
-To embed the real build time when building directly from `main.go`:
+To embed the real build time when building from the package root:
 
 ```bash
-go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker main.go
+go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .
 ```
 
 Without `-ldflags`, SkyStacker falls back to the VCS commit timestamp embedded by Go when building from a Git checkout, or prints `unknown`.
@@ -702,7 +702,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a single-file implementation in `main.go` (current source version: **0.6.1**, 208 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 246 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-18 · **Current state:** v0.6.1, 231 registered self-tests,
+**Updated:** 2026-11-18 · **Current state:** v0.6.1, 246 registered self-tests,
 Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-18):** 35 Done · 0 Open · 5 Blocked · 1 Executed/not accepted
+**Summary (2026-11-18):** 35 Done · 2 Open · 5 Blocked · 1 Executed/not accepted
 · 6 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18
 (the portable diagnostic module) was delivered afterwards. Items 19–28 were
 promoted from the feature comparison of mature stacking tools and delivered
@@ -27,7 +27,7 @@ user request. The status column below is the authoritative view.
 6. Research folder consolidated into flat thematic files plus the ingestion
    script `scripts/consolidate-research.py`.
 
-## Issue tracker — 47 items (ordered by effort)
+## Issue tracker — 49 items (ordered by effort)
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
@@ -75,6 +75,8 @@ user request. The status column below is the authoritative view.
 | 41 | **Entropy-minimisation dark scaling** | M (~2–3 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §14, [03](research/03-reference-and-literature.md) §6.6 | 1-D scalar search over [0,1] minimising entropy after dark subtraction; report the factor per light and selftest on synthetic thermal drift. |
 | 42 | **Single-image cosmic-ray rejection (L.A.Cosmic-style)** | M (~2–4 h) | **Done** 2026-11-18 | [03](research/03-reference-and-literature.md) §6.3 | Stdlib convolution and threshold on the linear master to mask cosmic rays in low-N sessions where temporal rejection is weak. |
 | 43 | **9-zone tilt, roundness, off-axis HFD and SQM diagnostics** | M (~2–4 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §9 | Compute tilt %, three-corner mode, off-axis HFD, roundness and SQM/extinction notes from existing per-star HFR positions; report-only. |
+| 49 | **SVG sky map of the field** | M (~3-4 h) | **Open** | [02](research/02-astrometry-and-identification.md) §13.2 | Emit `stacked_sky_map.svg` at the exact width/height/orientation of the solved frame: project cached Gaia sources with `wcsTanForward`, draw magnitude-sized circles/labels, and optionally overlay SIMBAD/VizieR extended objects as ellipses only when major/minor axis and PA exist; label each object source; write beside `stacked_annotated.jpg` without touching scientific outputs. |
+| 48 | **HiPS survey cutout with exact frame geometry** | M–L (~4-6 h) | **Open** | [02](research/02-astrometry-and-identification.md) §13.1 | Opt-in network stage using CDS hips2fits (`hips`, `width`, `height`, `projection=TAN`, `ra`, `dec`, `fov`, `rotation_angle`, `format=fits`, or a `wcs` JSON) to fetch a DSS2/Pan-STARRS cutout at exactly `refW x refH`, cache it, align with existing star matching and write `survey_reference.fits/.jpg`; require a plate solution, never block offline runs, respect the 50 Mpix service limit. |
 | 44 | **Satellite-streak extraction (Median Radon Transform)** | M–L (~3–5 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §13 | Deterministic line-integral detection of sub-noise streaks on the linear master; write a streak mask and report, complementing max-stack diagnostics. |
 | 45 | **Higher-order SIP fit (order 3-5) with inverse AP/BP terms** | M (~2–4 h) | **Blocked** — needs item 13 | [01](research/01-architecture-and-core-engine.md) §6.3, [02](research/02-astrometry-and-identification.md) §2.2 | Extend the least-squares SIP fit beyond order 2 and include linear inverse coefficients; corner-residual gate <0.2 px. |
 | 46 | **Full linear-light pipeline (normalisation, clipping, outputs)** | XL (~12-16 h) | **Deferred** | [04](research/04-calibration-and-self-flat.md) §7/§15 | Remove the sRGB-encoded approximation across calibration, normalisation, stacking and writers; item 6 is only the stopgap. |

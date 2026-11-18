@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Fixed CI/release builds to compile the package (`.`) instead of only `main.go`, restoring macOS/Windows/race/release jobs after `donations.go` was added; docs now describe the multi-file root package. Added roadmap items 48-49 for HiPS survey cutouts and SVG sky maps.
 - Consolidated the cycle-6 curated corpus into `research/08-crawler-source-discovery.md` §9 (36 URLs, 20 new), kept `research/pendingToAnalyse/` with `.gitkeep` and removed the processed log; corrected and expanded `COMPARISON.md` with license taxonomy, primary domains, modern stacking metrics and ten missing FOSS plus four missing freeware/proprietary tools.
 - Delivered all 15 remaining Open roadmap items (29-44): dither/rejection diagnostics, quoted sidecar argv, post-preset ordering, GHS/WCS fixtures, Gaia DR4 adaptation, buffer pool, XISF/PGM/PPM input, 16-bit mono sidecar FITS, adaptive wavelets, entropy dark scaling, cosmic-ray rejection, tilt diagnostics and streak detection; self-tests 246.
 - Implemented roadmap item 47: rotating English thank-you footer with dedicated ETH/BTC constants, 110 placeholder templates, MIT-licensed terminal QR codes, standalone `--donation` flag, opt-out flags and success-only output; self-tests 231.

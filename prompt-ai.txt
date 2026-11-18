@@ -10,9 +10,9 @@ touching code. Documentation in English. Final user reports in Spanish.
 Version and tests
 -----------------
 - Source version is v0.6.1 (`var version` in main.go).
-- Registered self-tests: 231. Count entries in `runSelfTests`, not every
+- Registered self-tests: 246. Count entries in `runSelfTests`, not every
   function whose name starts with `test`. Expect:
-      all 231 self-tests passed
+      all 246 self-tests passed
   Update this number only when a case is added or removed.
 
 Build and install
@@ -28,7 +28,7 @@ Build and install
   PATH entry cannot win. /usr/local/bin needs sudo.
 - After every code change:
       cd /home/jips/datos/datos-juan/proyectos/astronomia/SkyStacker
-      gofmt -w main.go
+      gofmt -w *.go
       go vet ./...
       go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         -o /home/jips/.local/bin/skystacker .

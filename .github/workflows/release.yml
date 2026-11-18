@@ -30,7 +30,7 @@ jobs:
         run: |
           EXT=""
           [ "$GOOS" = "windows" ] && EXT=".exe"
-          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o "skystacker_${GOOS}_${GOARCH}${EXT}" main.go
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o "skystacker_${GOOS}_${GOARCH}${EXT}" .
       - uses: actions/upload-artifact@v4
         with:
           name: skystacker-${{ matrix.goos }}-${{ matrix.goarch }}
