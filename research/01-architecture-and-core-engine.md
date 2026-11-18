@@ -672,3 +672,52 @@ Statuses reflect §1/§17 appendix. Effort S/M/L/XL/∞ per the survey and [READ
 Current-state appendix cross-checked against `NEXT_SESSION_PROMPT.md`, `TECHNICAL_SPEC.md`, `BENCHMARKS.md`, `CHANGELOG.md` and `README.md` (no content duplicated from the canonical cross-reference files listed in the header).
 
 A cycle-6 curated corpus of stacking/drizzle/rejection sources is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §9; its quantitative findings are consolidated there.
+
+## DeepSkyStacker kernel reference (2026-11-18, append-only)
+
+Three pending notes (`dss.md`, `dss2.md`, `dss3.md`) describing the DSS source
+were translated/reviewed and consolidated here; the originals were removed.
+
+**Architecture.** BSD-3-Clause, Qt, Windows/Linux/macOS; `DeepSkyStackerKernel`
+holds `CRegisterEngine`, `CStackingEngine`, `MatchingStars.cpp`, `DSSTools.h`,
+`BackgroundCalibration.*` and `AHDDemosaicing.*`. Pipeline: load → optional
+calibration → star detection/registration → background calibration → stacking
+→ post-processing (MTF/autostretch). Registration/intermediate results are
+cached in `.stackinfo.txt`.
+
+**Star detection and registration.** Stars are near-circular, luminance falls
+regularly in all directions, radius ≤~50 px; Gaussian fitting refines centres;
+threshold ~10% of maximum; aim for ~20 to a few hundred stars; quality score
+favours round, well-sized stars; ≥8 common stars required. Registration uses
+triangle distances filtered by side-ratio (~0.9), a voting grid, then
+least-squares fitting (`CBilinearParameters`). Models: linear, bilinear,
+bisquared (≥~25 pairs), bicubic (≥~40 pairs), with corner locking and residual
+outlier rejection.
+
+**Demosaicing.** Bilinear, AHD (adaptive homogeneity-directed), super-pixel
+(2×2 block → one pixel, 4× less resolution) and Bayer Drizzle (sub-pixel shift
+reconstruction); super-pixel and Bayer Drizzle retain more detail for stacking.
+
+**Background models.** None, Offset (median difference), Linear (piecewise
+below/above median), Rational; per-channel or RGB-neutral, with histogram
+parameters.
+
+| DSS stacking method | Behaviour |
+|---|---|
+| Average | Arithmetic mean |
+| Median | Median; master frames/outliers |
+| Maximum | Highest value; defect visualisation |
+| Kappa-Sigma | Iterative hard rejection outside μ±κσ, then mean; ≥~10 frames |
+| Median Kappa-Sigma | Rejected values replaced by median; masters |
+| Auto Adaptive Weighted Average | Soft re-weighting (Stetson 1989); 3–5 iterations |
+| Entropy Weighted Average | Entropy weighting for mixed exposures (HDR) |
+
+Kappa-Sigma uses κ≈1.5–3 (commonly 2–3), 2–5 passes, and ≥10 frames for a
+stable σ; `CDynamicStats` avoids full recomputation. Median Kappa-Sigma swaps
+buffers and substitutes the median. Auto Adaptive Weighted Average starts from
+the mean and iterates `w_i = 1/(1+(|x_i−μ|/σ)²)`, with the constant `1/σ²`
+omitted because normalisation cancels it; constant data (σ≤5) returns the
+plain mean. DSS also supports dark entropy scaling, hot pixels >median+~16σ
+with bad-column correction, comet star-freeze dual stacking, Delaunay tools,
+SIMD (SSE2/AVX) and OpenMP. Calibration specifics are in
+[04](04-calibration-and-self-flat.md); tool positioning is in `COMPARISON.md`.

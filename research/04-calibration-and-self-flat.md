@@ -491,3 +491,9 @@ details are not duplicated here.
 - `research/08-curated-content-cycle-5-2026-11-17.md` — PixInsight master frames, WBPP, NOVA stack paths and drizzle excerpts (master-frame practice)
 
 A cycle-6 curated corpus of calibration/WBPP/RAW sources is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §9.
+
+DSS calibration details from the consolidated source review (dark entropy
+scaling, hot pixels >median+~16σ, bad-column correction and median
+kappa-sigma for masters) are recorded in
+[01-architecture-and-core-engine.md](01-architecture-and-core-engine.md) under
+"DeepSkyStacker kernel reference"; they are not repeated here.
