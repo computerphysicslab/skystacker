@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Roadmap item 34: measured self-flat × normalization interaction with a controlled synthetic selftest and three real OrionNebula runs; report now warns when both paths are active; self-tests 230.
 - Roadmap extended to 46 items: 18 new challenges (29-46) promoted from the canonical research knowledge base, plus a mandatory research-to-roadmap gap-analysis routine recorded in the AI context files.
 - Roadmap items 19–28 delivered: `--frame-metrics/--include-list`, `--keep-sharpest`, `--calib-library`, `--comet-combine`, `--batch`, `--starless-psf`, `--wavelets`, `--deconvolve-wiener` and `--photometry`; self-tests 229.
 - Added portable `goDiagnostics/` Go module (`goDiagnostics`, stdlib-only, Go 1.22 baseline) with OS/runtime/CPU/memory/disk/process/update/tool/network collectors, redaction, timeouts and text/JSON rendering; SkyStacker consumes it through `--diagnose`, `--diagnose-json`, `--diagnose-quick`, `--diagnose-integrated`, `--diagnose-timeout`, `--diagnose-top` and `--diagnose-updates`; self-tests 220.

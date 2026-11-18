@@ -8987,6 +8987,28 @@ func divideSliceByFlat(pix []float32, flat *frame, linearSRGB bool) {
 	}
 }
 
+func selfFlatNormalizeNote(sf *selfFlatResult, tiles []normStats, local bool) string {
+	if sf == nil {
+		return ""
+	}
+	detail := ""
+	if local && len(tiles) > 0 {
+		lo, hi := math.Inf(1), math.Inf(-1)
+		for _, t := range tiles {
+			if t.Median > 0 {
+				lo = min(lo, t.Median)
+				hi = max(hi, t.Median)
+			}
+		}
+		if !math.IsInf(lo, 1) && lo > 0 {
+			detail = fmt.Sprintf(", normalization tile-median ratio=%.4f", hi/lo)
+		}
+	}
+	return fmt.Sprintf(
+		"Self-flat and normalization are both active (self-flat center/edge=%.4f%s): local normalization can partially re-correct the same low-frequency illumination. Validate against a run with --no-local-normalize before publishing a master.",
+		sf.CenterEdge, detail)
+}
+
 // writeCoverageMap writes a per-pixel coverage map: each pixel's value
 // is (valid frame count at that pixel) / totalRegistered, clamped to [0,1].
 // "Valid" means the resampler produced a real sample there (not -1 from
@@ -11299,6 +11321,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				notes = append(notes, fmt.Sprintf("Local normalization: per-tile scale+offset over %dx%d tiles of %d px, reference = %s.", normNTX, normNTY, opts.LNTileSize, filepath.Base(accepted[refIdx].path)))
 			} else {
 				notes = append(notes, fmt.Sprintf("Global normalization: per-frame scale+offset, reference = %s.", filepath.Base(accepted[refIdx].path)))
+			}
+			if note := selfFlatNormalizeNote(selfFlat, normRefTiles, opts.LocalNormalize); note != "" {
+				notes = append(notes, note)
+				logf("WARNING: %s", note)
 			}
 		}
 	} else {
@@ -17262,6 +17288,7 @@ func runSelfTests() int {
 		{"à trous wavelets", testWaveletDenoise},
 		{"Wiener deconvolution", testWienerDeconvolution},
 		{"ensemble photometry", testEnsemblePhotometry},
+		{"self-flat × local-normalize interaction", testSelfFlatNormalizeInteraction},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
 		{"TIFF bad input", testTIFFBadInput},
@@ -17803,6 +17830,76 @@ func testXISFRev2RoundTrip() error {
 	opts, err := parseArgs([]string{"--xisf", "--xisf-rev2"})
 	if err != nil || !opts.CreateXISF || !opts.XISFRev2 {
 		return fmt.Errorf("XISF Rev 2 flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testSelfFlatNormalizeInteraction() error {
+	const w, h = 64, 64
+	flat := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := range h {
+		for x := range w {
+			dx := (float64(x) - float64(w-1)/2) / (float64(w-1) / 2)
+			v := float32(1 - 0.3*dx*dx)
+			p := (y*w + x) * 3
+			flat.Pix[p], flat.Pix[p+1], flat.Pix[p+2] = v, v, v
+		}
+	}
+	makeFrame := func(offset int) *frame {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for y := range h {
+			for x := range w {
+				dx := (float64(x) - float64(w-1)/2) / (float64(w-1) / 2)
+				g := 0.5 * (1 - 0.3*dx*dx)
+				d := float64((x+offset)%17 - 8)
+				v := float32(g + 0.02*math.Exp(-d*d/8))
+				p := (y*w + x) * 3
+				f.Pix[p], f.Pix[p+1], f.Pix[p+2] = v, v, v
+			}
+		}
+		return f
+	}
+	centerBorder := func(f *frame) float64 {
+		var center, border float64
+		nc, nb := 0, 0
+		for y := range h {
+			for x := range w {
+				v := float64(f.Pix[(y*w+x)*3])
+				if x >= w/3 && x < 2*w/3 && y >= h/3 && y < 2*h/3 {
+					center += v
+					nc++
+				} else if x < w/6 || x >= 5*w/6 || y < h/6 || y >= 5*h/6 {
+					border += v
+					nb++
+				}
+			}
+		}
+		return (center / float64(nc)) / (border / float64(nb))
+	}
+	raw := makeFrame(0)
+	rawRatio := centerBorder(raw)
+	corrected := makeFrame(0)
+	applySensorFlat(corrected, flat, false)
+	flatRatio := centerBorder(corrected)
+	if math.Abs(rawRatio-1) < 0.1 || math.Abs(flatRatio-1) > 0.02 {
+		return fmt.Errorf("flat correction did not remove the synthetic gradient: %.4f -> %.4f", rawRatio, flatRatio)
+	}
+	const ts = 32
+	ntx, nty := w/ts, h/ts
+	tiles := make([]normStats, ntx*nty)
+	for ty := range nty {
+		for tx := range ntx {
+			tiles[ty*ntx+tx] = computeRegionStats(corrected, tx*ts, ty*ts, (tx+1)*ts, (ty+1)*ts)
+		}
+	}
+	both := localNormalizeWithRefTiles(corrected, tiles, computeNormStats(corrected), ntx, nty, ts)
+	bothRatio := centerBorder(both)
+	if math.Abs(bothRatio-1) > 0.05 {
+		return fmt.Errorf("double correction over-corrected gradient: %.4f -> %.4f", flatRatio, bothRatio)
+	}
+	note := selfFlatNormalizeNote(&selfFlatResult{CenterEdge: rawRatio}, tiles, true)
+	if note == "" || !strings.Contains(note, "both active") || !strings.Contains(note, "tile-median ratio") {
+		return fmt.Errorf("missing overlap warning: %q", note)
 	}
 	return nil
 }

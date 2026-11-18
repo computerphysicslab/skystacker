@@ -27,7 +27,7 @@ original contribution files whose unique content it now owns. No other
 
 ## Current state
 
-SkyStacker v0.6.1, Go 1.27.4, 229 registered self-tests. Native CR2 decoding
+SkyStacker v0.6.1, Go 1.27.4, 230 registered self-tests. Native CR2 decoding
 and the goPureRaw library are in use; `--resample-sip`, fused sigma-clip,
 external AI sidecars and FITS/XISF writers are shipped. Still open: CFA/Bayer
 drizzle, FITS Rice, BigTIFF, XISF Rev 2, per-frame astrometric reprojection

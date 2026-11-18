@@ -2,7 +2,7 @@
 
 **CURRENT STATUS (canonical, 2026-11-17):**
 
-- Source version **v0.6.1**; **229 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
+- Source version **v0.6.1**; **230 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
 - **Grid self-flat is the default** model (`--self-flat-model=grid`); the v1 `registered` model and the Phase-1 least-squares path remain available for A/B.
 - **Darks are not fabricated.** Master darks come only from real dark exposures.
 - **`--synthetic-dark`, `--synthetic-flat`, `--synthetic-bias` are refused (exit 1)** with the exact strings in §13. Silent synthesis is forbidden.
@@ -343,7 +343,7 @@ Priority: Phases 1–4 replace the unsafe default; 5–6 establish scientific qu
 
 ### 11.1 Chronology and self-test counts
 
-Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **229 (CURRENT)**. Do not treat every `func test*` as a registered case.
+Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **230 (CURRENT)**. Do not treat every `func test*` as a registered case.
 
 - **2026-11-14** — deep-research pass supersedes the seed; three-category split, tagging convention, refusal guardrails.
 - **2026-11-15** — v1 master export + registered self-flat; Phase 1 grid default; `--reference-crop` added (each light star-matched to an external reference and warped in memory; see `COMPARISON.md` for Fitswork comparison); v0.6.0 status note: `--export-masters`, `--bpm`, v1 `--self-flat`, Phase-1 grid, and default recoverable path (metadata pedestal + grid self-flat when no user masters exist); darks not fabricated; `--synthetic-*` refused. Not implemented then: Phase 2 mask relaxation/5×5 rejection, Phase 3 IRLS, gamma-aware division, real-flat validation.
@@ -399,7 +399,7 @@ Reproducible protocol commands (repo root):
 
 ### 11.5 Reproducibility checklist
 
-`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (229 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
+`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (230 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
 
 ---
 
@@ -471,7 +471,7 @@ details are not duplicated here.
 2. **Real-flat validation informal / incomplete (Phase 6).** Only separate-run, JPEG-approximate grid-vs-real-flat comparisons exist (§11.4). Smooth agreement within 5–10% and dust residuals are not yet quantified under a dedicated dataset/protocol; "validated" cannot be claimed.
 3. **Single-process ablation executed 2026-11-18, gate still blocked.** With 16 `assets/OrionNebula` lights, `--method mean`, dark+bias only (grid, `/tmp/gamma_encoded`) versus dark+flat+bias (real flat, `/tmp/flat_validation_real`), both runs completed. Grid stack center/border **0.992**, real-flat stack center/border **1.522**; global means **0.00943** vs **0.30285** (flat division rescales the level, so absolute means are not comparable). The centre/border gap shows the bundled flats are not a matched calibration set for these lights (exposure/gain differ); this run cannot establish numerical parity and the acceptance gate remains blocked pending a matched dataset.
 4. **Dust / defect handling out of scope (Phase 7).** Polynomial grid cannot represent high-frequency dust; 5×5 rejection removes rather than corrects it. Real flats or a dedicated residual model required; do not promise it in flag descriptions.
-5. **`--local-normalize` interaction unmeasured.** Local normalisation removes large-scale background; combined with `--self-flat` it can remove the same signal twice. Needs a controlled synthetic run on a gradient-free field; prefer one or the other until measured.
+5. **`--local-normalize` interaction measured 2026-11-18 (no severe double correction).** Three controlled 16-light OrionNebula runs (`--method mean --scale 2 --dark --bias`) gave stacked center/border **1.00972** (grid self-flat only), **1.00972** (plus global `--normalize`, numerically identical) and **1.02599** (plus `--local-normalize`, a +1.6% shift). Global means were 0.009423 / 0.009423 / 0.009337. The local run reported self-flat center/edge **0.9824** and a normalization tile-median ratio **1.2667**, so the two paths do touch the same low-frequency field, but the effect on the final background is small rather than a runaway double division. A synthetic gradient-only selftest (`testSelfFlatNormalizeInteraction`) confirms the ordering: raw centre/border ≈1.15 → 0.9975 after flat → within 0.05 of 1 after local normalization. The report now emits an explicit overlap warning whenever both paths are active, with the measured tile-median ratio; keep the warning and compare against `--no-local-normalize` before publishing a master.
 6. **Lowercase `--calib-root` bug fixed.** The earlier failure looked for `assets/OrionNebula/Darks` while the tree uses lowercase `darks/flats/biases/lights`; `detectCalibrationSubdirs`/`--calib-root` now use case-insensitive discovery/fallback. Note as a resolved gap, not open.
 7. **SIP resampling no longer a gap.** The former "SIP not applied in stacking resampler" limitation is closed: `--resample-sip` loads stored order-2 SIP from `plate_solution.json`, undistorts reference pixels, applies the similarity/affine transform in undistorted space, and redistorts source pixels before bilinear sampling (`testResampleSIP`). Per-frame astrometric reprojection and drizzle remain open. Implementation and WCS detail lives in [01-architecture-and-core-engine.md](01-architecture-and-core-engine.md) and [02-astrometry-and-identification.md](02-astrometry-and-identification.md).
 8. **Astrophysical bias / residual-RMS metric.** Residual RMS is a departure-from-unity metric, not radial goodness-of-fit; a radial metric would separate vignetting from astrophysical structure. Masking detected stars/high-surface-brightness regions before reduction is a natural next experiment (not implemented).
