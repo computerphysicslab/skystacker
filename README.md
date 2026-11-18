@@ -458,6 +458,12 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--no-donation` | Suppress the rotating thank-you/donation footer after a successful full run | `false` |
 | `--no-donation-qr` | Print the footer without terminal QR codes | `false` |
 | `--donation` | Print the rotating message and both QR codes, then exit (no image processing) | `false` |
+| `--rejection MODE` | Auto/mean/median/sigma rejection heuristic by stack size | `""` |
+| `--post-preset NAME` | `default` or `detail-last` (detail enhancement after denoise) | `default` |
+| `--wavelet-adaptive` | Per-tile MAD thresholds with `--wavelets` | `false` |
+| `--dark-scale-entropy` | Scale master dark per light by minimising residual entropy | `false` |
+| `--cosmic-reject` | Single-frame cosmic-ray rejection on linear lights | `false` |
+| `--streak-detect` | Detect linear satellite streaks and write `stacked_streak_mask.f32raw` | `false` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |

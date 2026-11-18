@@ -513,3 +513,5 @@ Single consolidated list; each DOI/URL appears once. The **master bibliography a
 - `research/05-research-deep-dive-2026-11-16.md` — Pillar B (Gaia v3.15/DR4, DCR, quad solvers, HATS/LSDB, NWAY), §9 ASTAP CLI audit, §11.1 TAN-SIP, §12 quotas, §13.5 test statuses, v0.6.1 correction.
 - `research/GEMINI_DEEP_RESEARCH_PROMPT-outcome.md` — Gaia DR4 quotas/blackout, Cedar/tetra3rs/SkySolver, ASTAP updates, Siril drizzle/plate-solving context, `--resample-sip` status, survey gaps.
 - `research/08-curated-content-cycle-5-2026-11-17.md` — Astrometry.net `build-index.html`/`code.html`/`axy`, `tetra3rs` tutorial, Siril plate solving, ASTAP databases.
+
+A cycle-6 curated corpus of plate-solving, index, catalog and PCC sources is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §9.

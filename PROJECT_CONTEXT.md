@@ -1764,3 +1764,8 @@ rejection and disk spill. `--scale N` downsamples.
 - Compare against `ROADMAP.md`, skip existing or explicitly rejected items, then add genuinely new challenges with ascending-effort order, S/M/L/XL estimate, status (Open/Blocked/Deferred), canonical research owner and a falsifiable acceptance scope; update the summary counts.
 - Repeat the routine after comparison-matrix changes, promoting only features feasible under the stdlib-only static CLI constraints. Keep the comparative rationale in `COMPARISON.md`, not duplicated in `ROADMAP.md`.
 - The habit is recorded in `prompt-ai.txt` and `NEXT_SESSION_PROMPT.md` so future sessions apply it automatically.
+
+### Roadmap Open items delivered (2026-11-18)
+
+- Items 29-44 were implemented in one pass: dither diagnostic and small-dither warning, `--rejection` stack-size heuristic, quoted sidecar argv tokenizer, `--post-preset detail-last`, GHS parameter-mapping test, independent WCS/SIP fixture, Gaia DR4 TAP adaptation (<=4 concurrent, DataLink IDs, blackout guard), pooled rejection buffers with 64px tiles, XISF/PGM/PPM input, 16-bit/mono sidecar FITS, `--wavelet-adaptive`, `--dark-scale-entropy`, `--cosmic-reject`, 9-zone tilt diagnostics and `--streak-detect`.
+- All 246 selftests pass; `ROADMAP.md` now shows 35 Done, 0 Open, 5 Blocked, 1 Executed/not accepted and 6 Deferred.

@@ -8,21 +8,21 @@ limited or workflow-dependent.
 
 | Tool | License | Platforms | Interface |
 |---|---|---|---|
-| **SkyStacker** | MIT | Win / Mac / Linux | CLI only |
-| **OriginStack** | GPLv3 | Win / Mac / Linux | GUI + CLI |
-| **DeepSkyStacker** | Free | Win, Mac (6.1.3+), Linux (Wine) | GUI + CLI |
-| **Siril** | GPLv3 | Win / Mac / Linux | GUI + CLI |
+| **SkyStacker** | Open Source (MIT) | Win / Mac / Linux | CLI only |
+| **OriginStack** | Open Source (GPLv3) | Win / Mac / Linux | GUI + CLI |
+| **DeepSkyStacker** | Open Source (BSD-3-Clause) | Win, macOS (6.1.3+), Linux x64 native (Qt 6) | GUI + CLI |
+| **Siril** | Open Source (GPLv3) | Win / Mac / Linux | GUI + CLI |
 | **Astro Pixel Processor** | Paid | Win / Mac / Linux | GUI |
 | **PixInsight** | Paid | Win / Mac / Linux | GUI + CLI |
-| **Sequator** | Freeware | Win (Mac via CrossOver) | GUI |
-| **ASTAP** | MPL 2.0 | Win / Linux | GUI + CLI |
-| **IRIS** | Free | Win (Linux via Wine) | GUI + CLI |
+| **Sequator** | Freeware (closed) | Win (Mac via CrossOver) | GUI |
+| **ASTAP** | Open Source (MPL 2.0) | Win / Linux / macOS (Intel + Apple Silicon) / Linux ARM | GUI + CLI |
+| **IRIS** | Freeware (closed) | Windows | GUI + CLI |
 | **Nebulosity** | Paid | Win / Mac | GUI |
 | **MaxIm DL** | Paid | Windows | GUI + COM |
-| **AstroImageJ** | GPL | Java (all OS) | GUI + macros |
+| **AstroImageJ** | Open Source (GPL) | Java (all OS) | GUI + macros |
 | **Starry Landscape Stacker** | Paid | macOS | GUI |
-| **AutoStakkert!** | Free | Windows | GUI + CLI |
-| **Fitswork** | Freeware | Windows | GUI |
+| **AutoStakkert!** | Freeware (closed) | Windows | GUI + CLI |
+| **Fitswork** | Freeware (closed) | Windows | GUI |
 
 ## Calibration and registration
 
@@ -31,17 +31,17 @@ limited or workflow-dependent.
 | **SkyStacker** | Yes | Yes (`--bpm`, `--bpm-auto`) | Partial (SIP in WCS helpers and `--resample-sip`) | Partial (wired, seeded; also in `--post-only`) |
 | **OriginStack** | Yes | – | – | Yes |
 | **DeepSkyStacker** | Yes | – | – | – |
-| **Siril** | Yes | Yes | Yes | Partial |
+| **Siril** | Yes | Yes | Yes | Yes |
 | **Astro Pixel Processor** | Yes | Yes | Yes | – |
 | **PixInsight** | Yes | Yes | Yes | Yes |
 | **Sequator** | Dark, Flat | – | Yes | – |
-| **ASTAP** | Yes | – | – | Yes |
+| **ASTAP** | Yes | Yes | Yes (order-3 SIP) | Yes |
 | **IRIS** | Yes | – | – | – |
 | **Nebulosity** | Yes | Yes | – | – |
 | **MaxIm DL** | Yes | Yes | – | – |
 | **AstroImageJ** | Partial | – | – | – |
 | **Starry Landscape Stacker** | Dark, Flat | – | Yes | – |
-| **AutoStakkert!** | – | – | – | – |
+| **AutoStakkert!** | Dark, Flat | – | – | – |
 | **Fitswork** | Yes | – | Partial (manual) | – |
 
 ## Stacking methods
@@ -71,7 +71,7 @@ limited or workflow-dependent.
 | **SkyStacker** | Extensive | CLI + JSON config (`--config`) | TIFF / JPEG / PNG / BMP / FITS / XISF / raw; native pure-Go CR2 input (CR3 via dcraw) | – |
 | **OriginStack** | Extensive | CLI (Python) | FITS / JPG | Yes (CUDA) |
 | **DeepSkyStacker** | Minimal | CLI | TIFF / FITS | – |
-| **Siril** | Extensive | Scripts + CLI | FITS / TIFF / JPEG / SER | – |
+| **Siril** | Extensive | Scripts + CLI | FITS / TIFF / JPEG / SER / XISF / PNG / BMP | – |
 | **Astro Pixel Processor** | Moderate | Limited | FITS / TIFF / JPEG | – |
 | **PixInsight** | Exhaustive | PJSR / Python / CLI | XISF / FITS / TIFF / JPEG | Partial |
 | **Sequator** | Moderate | – | TIFF / JPEG | – |
@@ -96,16 +96,16 @@ automatic `--reference-crop`.
 
 | Tool | License | Platforms | Interface | Calibration | Star alignment | Crop to reference frame |
 |---|---|---|---|---|---|---|
-| **SkyStacker** | MIT | Win / Mac / Linux | CLI | Yes | Automatic star-pattern | **Yes, automatic (`--reference-crop`)** |
-| **Fitswork** | Freeware | Windows | GUI | Yes | Manual 2-star + pattern | **Yes (manual 2-star)** |
-| **PixInsight** | Paid | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (StarAlignment / DynamicCrop) |
-| **Siril** | GPLv3 | Win / Mac / Linux | GUI + CLI | Yes | Yes | Partial (registration + crop) |
-| **IRIS** | Free | Windows | GUI + CLI | Yes | Yes | Yes (manual) |
+| **SkyStacker** | Open Source (MIT) | Win / Mac / Linux | CLI | Yes | Automatic star-pattern | **Yes, automatic (`--reference-crop`)** |
+| **Fitswork** | Freeware (closed) | Windows | GUI | Yes | Manual 2-star + pattern | **Yes (manual 2-star)** |
+| **PixInsight** | Paid | Win / Mac / Linux | GUI + CLI | Yes | Yes | Yes (StarAlignment / DynamicCrop) |
+| **Siril** | Open Source (GPLv3) | Win / Mac / Linux | GUI + CLI | Yes | Yes | Yes (registration + crop) |
+| **IRIS** | Freeware (closed) | Windows | GUI + CLI | Yes | Yes | Yes (manual) |
 | **Nebulosity** | Paid | Win / Mac | GUI | Yes | Yes | Partial |
 | **MaxIm DL** | Paid | Windows | GUI + COM | Yes | Yes | Yes |
 | **ASTAP** | MPL 2.0 | Win / Linux | GUI + CLI | Yes | Yes | Partial |
-| **AstroImageJ** | GPL | Java (all OS) | GUI + macros | Yes | Yes | Partial |
-| **AutoStakkert!** | Free | Windows | GUI + CLI | – | Yes (lucky imaging) | Partial |
+| **AstroImageJ** | Open Source (GPL) | Java (all OS) | GUI + macros | Yes | Yes | Partial |
+| **AutoStakkert!** | Freeware (closed) | Windows | GUI + CLI | – | Yes (lucky imaging) | Partial |
 
 **B. Post-processing and automation**
 
@@ -114,7 +114,7 @@ automatic `--reference-crop`.
 | **SkyStacker** | Yes (`--deconvolve` RL, `--wavesharp` classical) | Yes (basic, `--starless`) | Yes (`--bg-multiscale`, partial) | – | CLI flags + `--config` |
 | **Fitswork** | Yes (Richardson–Lucy, Wiener) | – | – | Yes | – |
 | **PixInsight** | Yes | Yes | Yes | Yes | PJSR / Python |
-| **Siril** | Yes | Yes | Partial | Partial | Scripts + CLI |
+| **Siril** | Yes | Yes | Partial | Yes | Scripts + CLI |
 | **IRIS** | Yes (RL) | Partial | – | Yes | Editor + CLI |
 | **Nebulosity** | Partial | – | – | Partial | – |
 | **MaxIm DL** | Yes | Yes | Partial | Yes | COM |
@@ -163,6 +163,7 @@ reference frame in memory. Source files are never modified.
 ## Sources
 
 - DeepSkyStacker — <https://github.com/deepskystacker/DSS/releases>, <http://deepskystacker.free.fr>
+- OriginStack — <https://github.com/hd152/originstack>, <https://originstack.site>
 - Siril — <https://siril.org>, <https://siril.pixls.us>
 - Astro Pixel Processor — <https://www.astropixelprocessor.com>
 - PixInsight — <https://pixinsight.com>
@@ -202,3 +203,71 @@ Not promoted: GUI, GPU/CUDA acceleration, embedded neural inference
 synthetic calibration-frame generation — all already rejected or out of scope
 in `ROADMAP.md`. Multi-session/multi-filter automation is covered by item 23
 rather than as a separate flag.
+
+## 2026-11-18 corrections and ecosystem additions
+
+The tables above were corrected in place for the highest-impact factual errors
+(DSS native Linux and BSD-3 license, Siril complete plate solving and XISF/PNG/BMP
+output, ASTAP macOS/ARM, order-3 SIP and bad-pixel maps/weighting, AutoStakkert!
+dark/flat calibration, PixInsight and Siril reference-frame crop, Siril mosaic).
+The notes below add the structural context that flat `Yes`/`–` matrices cannot express.
+
+### License taxonomy
+
+Use **Open Source (license)** for OSI-approved projects (SkyStacker MIT,
+DeepSkyStacker BSD-3-Clause, Siril GPLv3, ASTAP MPL-2.0, Seti Astro Suite Pro
+GPLv3, AstroImageJ GPL, THELI/Sirilic/ALS/PSS GPLv3) and **Freeware (closed)**
+for distributed-at-no-cost binaries with no source offer (IRIS, AutoStakkert!,
+Sequator, Fitswork, StarStaX, ASIStudio). **Freemium** is reserved for SharpCap.
+This replaces the previously mixed `Free`/`Freeware` labels.
+
+### Primary domain (recommended extra column)
+
+| Tool | Primary domain |
+|---|---|
+| SkyStacker, DeepSkyStacker, Siril, PixInsight, APP, ASTAP, IRIS, Nebulosity, MaxIm DL, Fitswork | Deep-sky stacking and reduction |
+| OriginStack | Deep-sky stacking (GPLv3, GUI + CLI) |
+| AutoStakkert!, PlanetarySystemStacker, Lynkeos, AstroSurface | Planetary / lunar / solar lucky imaging |
+| Starry Landscape Stacker, Sequator, Hugin `align_image_stack` | Nightscape / wide-field / star trails |
+| AstroImageJ, C-Munipack / Munipack, Seti Astro Suite Pro | Scientific photometry / variable-star reduction |
+| SharpCap, Astro Live Stacker, ASILive | Live stacking (EAA) |
+| Sirilic, THELI | Multi-session / pipeline orchestration |
+| Astropy (`ccdproc`/`reproject`/`astroalign`), AstrOmatic (`SWarp`/`SCAMP`/`SExtractor`) | Library / professional pipeline building |
+
+### Modern stacking metrics (recommended extra columns)
+
+| Tool | Local background normalisation | Bayer/CFA drizzle | Native multi-session / multi-filter |
+|---|---|---|---|
+| SkyStacker | Yes (`--local-normalize`, per-tile) | Open (item 14) | Partial (`--batch`, item 23) |
+| PixInsight | Yes (`LocalNormalization`) | Yes (`DrizzleIntegration` CFA) | Yes (WBPP) |
+| Astro Pixel Processor | Yes (LNC) | Yes (Bayer Drizzle) | Yes |
+| Siril | Yes (local normalisation) | Yes (Bayer Drizzle) | Via Sirilic |
+| Seti Astro Suite Pro | Yes (ABE/DBE) | Yes (CFA Drizzle) | Yes |
+| THELI / AstrOmatic | Yes | Partial (SWarp reprojection) | Yes |
+
+### Missing open-source tools
+
+| Tool | License / platforms | Role |
+|---|---|---|
+| Seti Astro Suite Pro | GPLv3, Win/macOS/Linux, GUI + headless CLI/Python | Full reduction suite; advanced rejection (Winsorized, Kappa-Sigma, Rosner ESD), CFA drizzle, comet stacking, Multi-Frame Deconvolution Stacking, ABE/DBE, cross-platform GPU |
+| AstrOmatic Suite (`SWarp`+`SCAMP`+`SExtractor`) | GPLv3, Linux/macOS/Win (WSL), CLI | Professional astrometry, high-order distortion, weighted FITS mosaics |
+| Astropy (`ccdproc`+`reproject`+`astroalign`) | BSD-3, multi-platform, Python library/CLI | Scientific CCD reduction, triangle registration, flux-conserving reprojection |
+| THELI | GPLv3, Linux/macOS, GUI + CLI | Automated wide-field pipeline with SCAMP/SWarp |
+| Sirilic | GPLv3, Win/macOS/Linux, GUI + CLI | Multi-session/multi-filter Siril orchestrator |
+| Astro Live Stacker | GPLv3, Win/macOS/Linux/Raspberry Pi, GUI + web | Live deep-sky stacking (EAA) |
+| PlanetarySystemStacker | GPLv3, Win/macOS/Linux, GUI + CLI | FOSS alternative to AutoStakkert! with local-sharpness selection and multi-point alignment |
+| Lynkeos | GPLv2, macOS, GUI | Native macOS planetary/lunar stacking with wavelets |
+| C-Munipack / Munipack | GPLv2/GPLv3, Win/Linux, GUI + CLI | Differential photometry and FITS time-series reduction |
+| Hugin `align_image_stack` | GPLv2, Win/macOS/Linux, CLI | Wide-field/landscape alignment with lens-distortion correction |
+
+### Missing freeware / proprietary tools
+
+| Tool | Model / platforms | Role |
+|---|---|---|
+| ASIStudio (`ASIDeepStack`/`ASILive`) | Freeware, Win/macOS/Linux | ZWO-oriented fast deep-sky and live stacking |
+| SharpCap | Freemium, Windows | EAA reference with live calibration, plate solving and FWHM/background weighting |
+| AstroSurface | Freeware, Windows | Modern planetary/lucky-imaging stacker with wavelets and deconvolution |
+| StarStaX | Freeware, Win/macOS/Linux | Cross-platform star-trail stacking with gap filling |
+
+URLs for the new tools will be added when verified; only OriginStack URLs were
+supplied with this correction set and are listed in `## Sources`.

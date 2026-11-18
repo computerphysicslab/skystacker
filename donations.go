@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -163,6 +164,44 @@ func renderDonationQR(text string) (string, error) {
 	return b.String(), nil
 }
 
+func joinDonationQRColumns(left, right, leftLabel, rightLabel string) string {
+	lines := func(s string) []string {
+		return strings.Split(strings.TrimRight(s, "\n"), "\n")
+	}
+	leftLines, rightLines := lines(left), lines(right)
+	width := func(parts []string, label string) int {
+		w := utf8.RuneCountInString(label)
+		for _, line := range parts {
+			if n := utf8.RuneCountInString(line); n > w {
+				w = n
+			}
+		}
+		return w
+	}
+	leftWidth, rightWidth := width(leftLines, leftLabel), width(rightLines, rightLabel)
+	pad := func(s string, w int) string {
+		n := w - utf8.RuneCountInString(s)
+		if n < 0 {
+			n = 0
+		}
+		return s + strings.Repeat(" ", n)
+	}
+	var b strings.Builder
+	b.WriteString(pad(leftLabel, leftWidth) + "   " + pad(rightLabel, rightWidth) + "\n")
+	rows := max(len(leftLines), len(rightLines))
+	for i := range rows {
+		l, r := "", ""
+		if i < len(leftLines) {
+			l = leftLines[i]
+		}
+		if i < len(rightLines) {
+			r = rightLines[i]
+		}
+		b.WriteString(pad(l, leftWidth) + "   " + pad(r, rightWidth) + "\n")
+	}
+	return b.String()
+}
+
 func printDonationFooter(enabled, showQR bool) {
 	if !enabled || os.Getenv("SKYSTACKER_NO_DONATION") != "" {
 		return
@@ -180,8 +219,6 @@ func printDonationFooter(enabled, showQR bool) {
 	if err != nil {
 		return
 	}
-	fmt.Println("\nUSDT / USDC (Ethereum):")
-	fmt.Print(ethQR)
-	fmt.Println("BTC (native SegWit):")
-	fmt.Print(btcQR)
+	fmt.Println()
+	fmt.Print(joinDonationQRColumns(ethQR, btcQR, "USDT / USDC (Ethereum):", "BTC (native SegWit):"))
 }

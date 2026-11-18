@@ -670,3 +670,5 @@ Statuses reflect §1/§17 appendix. Effort S/M/L/XL/∞ per the survey and [READ
 * `research/05-research-deep-dive-2026-11-16.md` (architecture-relevant §§1, 5, 6–14) — ASTAP interop audit/corrected encodings/32-bit HFD ceiling, memory/rejection RAM model and 64×64 sub-tiles, Swiss Tables/Go notes, TAN–SIP/AP-BP, stretch math, Gaia v3.15/DR4, Alpaca/REST telemetry, ProvenanceDM, BXT/NXT/SXT analysis, detrend/dark QA/Gaia 429, post-processing review, drizzle/CFA decision, Orion validation, correction note.
 
 Current-state appendix cross-checked against `NEXT_SESSION_PROMPT.md`, `TECHNICAL_SPEC.md`, `BENCHMARKS.md`, `CHANGELOG.md` and `README.md` (no content duplicated from the canonical cross-reference files listed in the header).
+
+A cycle-6 curated corpus of stacking/drizzle/rejection sources is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §9; its quantitative findings are consolidated there.

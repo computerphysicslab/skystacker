@@ -167,3 +167,5 @@ The following source material was read and merged/deduplicated into this documen
 4. `main.go` (v0.6.1) — `writeFloat32RGBFITS`/`readFloat32RGBFITS`, `runExternalSidecar`, flag definitions/validation, `runPostProcessing` insertion points, `testExternalAISidecar`, `--internal-ai-sidecar-mock` → §4 (implementation detail verified, not absorbed as research claims).
 
 Supporting context (read for accurate cross-links/status only, not absorbed as new research): `research/README.md`, `research/01-architecture-and-core-engine.md`, `research/02-astrometry-and-identification.md`, `research/03-reference-and-literature.md`, `research/04-calibration-and-self-flat.md`, and the canonical cross-link file list.
+
+ASTAP StarNet2 comet splitting details from the cycle-6 corpus are in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §9.

@@ -451,3 +451,47 @@ From the crawler's final frequency dump (preserved as reported):
   [`05-toolchain-and-modularity.md`](05-toolchain-and-modularity.md),
   [`06-external-ai-sidecars.md`](06-external-ai-sidecars.md),
   [`07-native-cr2-decoding.md`](07-native-cr2-decoding.md), [`README.md`](README.md).
+
+## 9. Cycle 6 curated corpus (2026-11-18)
+
+**Provenance.** `research/pendingToAnalyse/corpusCuratedText.log` contained 36
+English-curated source blocks (~342 KB). Its content was translated/reviewed,
+deduplicated against this file and consolidated below; the log was deleted and
+the folder kept for future drops. 16 URLs were already indexed in §5/§6; 20 are
+new. Technical conclusions stay in the owning thematic files, not duplicated
+here.
+
+### 9.1 New source index (20 URLs)
+
+| URL | Theme | Relevance |
+|---|---|---|
+| `https://docs.afternightastro.org/processes/stacking-integration/image-stacking-reference.html` | 01 | Full rejection, normalisation, weighting and memory model reference |
+| `https://www.deepskycolors.com/astro/docs/tools/SubframeStudio/SubframeStudio.html` | 01/19 | Frame approval, `SSWEIGHT`, SubframeSelector-compatible expressions |
+| `https://siril.org/tutorials/tuto-manual/` | 04 | Master rejection rate 0.1-0.5%, pre-stack gradient model |
+| `https://www.skyatnightmagazine.com/astrophotography/siril-stacking` | 04 | Exact `lights/darks/biases/flats` subfolder requirement |
+| `https://siril.readthedocs.io/en/stable/preprocessing/registration.html` | 01/02 | Transform DOF table, RANSAC, SIP as prior, interpolation/clamping |
+| `https://siril.readthedocs.io/en/stable/preprocessing/stacking.html` | 01 | MAD/GESDT/Linear Fit rejection, Weighted FWHM, drizzled CFA |
+| `https://siril.readthedocs.io/en/latest/processing/background.html` | 01/04 | Asymmetric clipping, multiscale harmonic inpainting, CFA background |
+| `https://docs.astropy.org/en/stable/wcs/` | 02 | High/low-level WCS API, origin conventions, pixel vs array order |
+| `https://www.scivision.dev/astrometry-tips-techniques/` | 02 | Solve-field tuning: ~100 sources, log-odds thresholds, `-L` speedup |
+| `https://astrometry.ai/learn/astrometry-net-index-files/` | 02 | Index scale semantics, HEALPix tiles, pattern-size rules |
+| `https://docs.astropy.org/projects/astroquery/en/latest/astrometry_net/astrometry_net.html` | 02 | Source-list upload API key, parity and scale hints, timeout handling |
+| `https://astroalign.quatrope.org/en/latest/` | 02 | Triangle asterism registration without WCS |
+| `https://www.watney-astrometry.net/about` | 02/05 | Dependency-free C# quad solver, .NET 10 baseline from v2 |
+| `https://siril.readthedocs.io/en/latest/processing/color-calibration/pcc.html` | 02 | PCC vs SPCC, 433/363/70-star worked example |
+| `https://pypi.org/project/astrometry/` | 02/05 | Pure-Python index series, size/position hints, log-odds default |
+| `https://pipelines.lsst.io/modules/lsst.meas.algorithms/tasks/lsst.meas.algorithms.SourceDetectionTask.html` | 02 | Positive/negative source detection with matched Gaussian PSF |
+| `https://miklosoft.se/wbpp-measuring-weighting-and-frame-selection/` | 04/19 | WBPP measurement, weighting options, expression filtering |
+| `https://siril.readthedocs.io/en/latest/preprocessing/calibration.html` | 04 | Dark optimisation, cosmetic correction, master validation |
+| `https://siril.readthedocs.io/en/stable/preprocessing/conversion.html` | 04/07 | Keep CFA undebayered, LibRaw delegation |
+| `https://pipelines.lsst.io/api/lsst.ip.isr.IsrTask.html` | 04/05 | ISR overscan/saturation masks, config toggles, Butler products |
+
+Already indexed (no new row needed): `astrometry.net/`, Siril annotations/drizzle/plate-solving/master-frames, APP Bayer drizzle, measurethepixels, `astrometry.net/doc/code.html`/`build-index.html`/`readme.html`, Tetra3rs, OpticalMechanics calibration, prose Gaia catalogs, `reproject`, `hnsky.org/astap.htm`, MikloSoft preprocessing-in-depth.
+
+### 9.2 Consolidated findings
+
+- **Stacking (→ [01](01-architecture-and-core-engine.md)).** Drizzle pixfrac ≈ 1/scale; Square flux-preserving vs Point (holes) vs Gaussian (photometry, not flux-preserving) vs Lanczos3; CFA needs ~2× mono droplet size and scale 1.0. Afternight documents ≥3-frame minimum for every rejection method, sigma-stop rules, Winsorized 1.5σ/1.134 factor, linear-fit defaults 5/4, GESDT ESD parameters, IKSS (6-MAD biweight), additive/multiplicative normalisation, FWHM/stars/noise/SNR weighting, and a memory model where rejection holds `rows×width×channels×frames×4` bytes. Siril defaults: triangle+RANSAC, 2000 max stars, bicubic/Lanczos4 with clamping (~2× slower, ~8% better FWHM), SIP as pre-distortion, Weighted FWHM since 1.3.
+- **Astrometry (→ [02](02-astrometry-and-identification.md)).** Solve-field targets ~100 sources; log-odds 14 enhancement / 20 solve; `-L` can speed solves >20×. Index scale is angular pattern size, quads span 10–100% of the frame; astroquery source lists are ~10⁴× cheaper than image uploads; ASTAP quads use 6 distances, ≥3 matches, 0.007 tolerance, ≥30 stars and add 3rd-order SIP; its star DB uses 1476 sky areas with 3-byte RA/Dec; PCC needs linear frames and uses B−V while SPCC uses Gaia `Teff`.
+- **Calibration (→ [04](04-calibration-and-self-flat.md)).** WBPP measures 42 frames in ~10 s; dark scaling still helps at ±0.1 °C; Siril dark coefficient 0.110 = 60/600, cosmetic-correction hot sigma 3, flat median from homogeneous unsaturated region, master medians should match, no Bayer pattern in master dark. OpticalMechanics: dark current roughly doubles every 5–7 °C, 20–30 darks, flats peak 20k–35k ADU, bias 50–200 frames, dither 1–2 subs.
+- **Sidecars (→ [06](06-external-ai-sidecars.md)).** ASTAP's StarNet2 comet workflow splits stars/comet, feeds `sinh`-stretched frames and recombines with ~5 px ephemeris accuracy.
+- **CR2/RAW (→ [07](07-native-cr2-decoding.md)).** Siril delegates DSLR decode to LibRaw and must keep CFA undebayered; ASTAP uses modified LibRaw `unprocessed_raw` writing Bayer pattern/date/active area into FITS; SubframeStudio forces RGGB when BAYERPAT is absent.

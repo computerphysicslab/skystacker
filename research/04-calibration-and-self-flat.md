@@ -489,3 +489,5 @@ details are not duplicated here.
 - `research/GEMINI_DEEP_RESEARCH_PROMPT-outcome.md` — §A calibration/noise findings, feasibility matrix, Proposals 2/6/7, and the 2026-11-17 SIP + single-pass-sigma-clip append (calibration portions only)
 - `research/GEMINI_DEEP_RESEARCH_PROMPT.md` — §1 ground-truth pipeline/status, §3 KB inventory, §4 domain questions (calibration context only)
 - `research/08-curated-content-cycle-5-2026-11-17.md` — PixInsight master frames, WBPP, NOVA stack paths and drizzle excerpts (master-frame practice)
+
+A cycle-6 curated corpus of calibration/WBPP/RAW sources is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §9.
