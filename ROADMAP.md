@@ -9,10 +9,11 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative.
 
-**Summary (2026-11-18):** 9 Done · 3 Blocked · 1 Executed/not accepted ·
-5 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18 (the
-portable diagnostic module) was delivered afterwards. The status column below
-is the authoritative view.
+**Summary (2026-11-18):** 9 Done · 9 Open · 4 Blocked · 1 Executed/not accepted
+· 5 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18
+(the portable diagnostic module) was delivered afterwards. Items 19–28 were
+promoted from the feature comparison of mature stacking tools. The status
+column below is the authoritative view.
 
 ## Completed (2026-11-17)
 
@@ -24,7 +25,7 @@ is the authoritative view.
 6. Research folder consolidated into flat thematic files plus the ingestion
    script `scripts/consolidate-research.py`.
 
-## Issue tracker — 18 items (ordered by effort)
+## Issue tracker — 28 items (ordered by effort)
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
@@ -46,6 +47,16 @@ is the authoritative view.
 | 16 | **PCC/SPCC + PSF-fitting photometry** | L–XL (~8 h) | **Deferred** — L–XL scope | [01](research/01-architecture-and-core-engine.md) §13 | Linear-data colour calibration against Gaia, PSF-fitting ensemble photometry with MAD rejection; opt-in, provenance-tagged. |
 | 17 | **Observatory automation sidecar** | L–XL (~8 h) | **Deferred** — design only | [01](research/01-architecture-and-core-engine.md) §16 | External daemon writing an Alpaca-property → FITS-keyword mapping before header sealing; metadata ingestion only, interactive control out of scope. |
 | 18 | **Standalone diagnostic module (`goDiagnostics/`)** | S–L (~1–6 h, phased) | **Done** 2026-11-18 | [goDiagnostics/README.md](goDiagnostics/README.md) | Self-contained Go module with OS/runtime/CPU/memory/disk/process/update/tool collectors, `--diagnose` flag, text/JSON output, redaction, timeouts and copy-paste portability to other Go projects. |
+| 19 | **Frame metrics + culling (`--frame-metrics`, `--include-list`)** | S–M (~1–2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §quality/diagnostics | From PixInsight SubframeSelector, DeepSkyStacker and Siril: export a CSV with per-frame HFR/FWHM/eccentricity/SNR/background/weight; `--include-list` filters discovered frames before stacking; selftest verifies filtering and CSV schema. |
+| 20 | **Sharpest-N% frame selection (`--keep-sharpest N`)** | S–M (~1–2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §13.4, [03](research/03-reference-and-literature.md) §5 | From AutoStakkert! lucky imaging: rank frames by median star HFR, keep the sharpest N%, apply before accumulation, log kept/rejected frames; opt-in and compatible with `--method mean/sigma`. |
+| 21 | **Calibration library with metadata matching (`--calib-library PATH`)** | M (~2–3 h) | **Open** | [04](research/04-calibration-and-self-flat.md) §2 | From PixInsight/MaxIm DL/DeepSkyStacker calibration libraries: index master dark/flat/bias by EXIF/FITS temperature, exposure, gain and ISO; select the best match per light, report the choice, fall back to explicit `--dark/--flat/--bias`. |
+| 22 | **Dual-stack comet+stars recombination (`--comet-combine`)** | M (~3–4 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §12.1 | From PixInsight/DSS comet workflows: build a stars stack and a comet stack from the existing comet modes, recombine with a mask/blend into `stacked_comet_combined.f32raw/.jpg`, keep both inputs, selftest with a synthetic moving source. |
+| 23 | **Multi-run batch queue (`--batch FILE`)** | M (~3–4 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §12 CLI | From Siril scripts, PixInsight PJSR and MaxIm COM: JSON array of runs (input, output, flags), sequential execution with one report per run, stop on first error, no shell interpolation; selftest with two synthetic runs. |
+| 24 | **PSF-based starless mask (`--starless-psf`)** | M (~3–4 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §8, [03](research/03-reference-and-literature.md) §5 | From PixInsight/Siril starless workflows: estimate a local PSF from bright-star HFR and eccentricity, build a star mask, replace masked stars with local background; compare against the annulus baseline; selftest on a synthetic star field. |
+| 25 | **À trous wavelet multiscale (`--wavelets`)** | M–L (~4–5 h) | **Open** | [03](research/03-reference-and-literature.md) §wavelets, [01](research/01-architecture-and-core-engine.md) §8 | From PixInsight/Fitswork wavelets: stdlib à trous decomposition, per-scale noise sigma from MAD, threshold/reconstruct, write preview layers; selftest verifies noise suppression without flux bias on synthetic data. |
+| 26 | **Wiener deconvolution (`--deconvolve-wiener`)** | M–L (~4–5 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §8/§15.3 | From Fitswork: FFT-based Wiener/regularized deconvolution with a noise power spectrum estimated from the frame, opt-in, star-masked, complementary to Richardson–Lucy; selftest on a synthetic blurred star. |
+| 27 | **Per-frame WCS reprojection mosaic (`--mosaic`)** | L–XL (~8–12 h) | **Blocked** — depends on item 13 | [02](research/02-astrometry-and-identification.md) §11 | From PixInsight, Siril, APP, IRIS, MaxIm DL, ASTAP and Fitswork mosaics: assemble plate-solved panels on a common WCS canvas with bilinear reprojection and overlap weighting, output FITS+JPEG; blocked until per-frame WCS solutions exist. |
+| 28 | **Ensemble photometry + light curves (`--photometry`)** | L (~6–8 h) | **Open** | [01](research/01-architecture-and-core-engine.md) §12.2 | From AstroImageJ and MaxIm DL: aperture photometry on the plate-solved stack, Gaia ensemble zero point with MAD rejection, CSV/JSON light curve and residual table; selftest on a synthetic catalogued field. |
 
 ## Deferred / explicitly rejected
 

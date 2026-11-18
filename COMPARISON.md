@@ -177,3 +177,28 @@ reference frame in memory. Source files are never modified.
 
 Feature summaries reflect public documentation as of late 2026. If a cell
 disagrees with your installed version, treat the vendor docs as authoritative.
+
+## Candidate features promoted to the roadmap (2026-11-18)
+
+Features that are both present in mature tools and feasible under the
+stdlib-only, static, CLI-only constraints. Full acceptance criteria live in
+`ROADMAP.md` items 19–28; this table records only the comparative rationale.
+
+| Comparative feature | Seen in | Roadmap item |
+|---|---|---|
+| SubframeSelector-style metrics + frame culling | PixInsight, DeepSkyStacker, Siril | 19 |
+| Sharpest-N% / lucky-imaging selection | AutoStakkert! | 20 |
+| Calibration library matched by temperature/exposure/gain | PixInsight, MaxIm DL, DeepSkyStacker | 21 |
+| Comet + stars dual-stack recombination | PixInsight, DeepSkyStacker | 22 |
+| Scripting / batch automation (shell-free JSON queue) | Siril scripts, PixInsight PJSR, MaxIm COM | 23 |
+| PSF-based starless masks | PixInsight, Siril | 24 |
+| À trous wavelets | PixInsight, Fitswork | 25 |
+| Wiener deconvolution | Fitswork | 26 |
+| Mosaics from plate-solved panels | PixInsight, Siril, APP, IRIS, MaxIm DL, ASTAP, Fitswork | 27 (blocked by item 13) |
+| Ensemble photometry / light curves | AstroImageJ, MaxIm DL | 28 |
+
+Not promoted: GUI, GPU/CUDA acceleration, embedded neural inference
+(BXT/NXT/SXT), `simd/archsimd`, 2× drizzle as a general mode, GZIP FITS and
+synthetic calibration-frame generation — all already rejected or out of scope
+in `ROADMAP.md`. Multi-session/multi-filter automation is covered by item 23
+rather than as a separate flag.
