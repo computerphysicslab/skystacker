@@ -2,7 +2,7 @@
 
 **CURRENT STATUS (canonical, 2026-11-17):**
 
-- Source version **v0.6.1**; **230 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
+- Source version **v0.6.1**; **231 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
 - **Grid self-flat is the default** model (`--self-flat-model=grid`); the v1 `registered` model and the Phase-1 least-squares path remain available for A/B.
 - **Darks are not fabricated.** Master darks come only from real dark exposures.
 - **`--synthetic-dark`, `--synthetic-flat`, `--synthetic-bias` are refused (exit 1)** with the exact strings in §13. Silent synthesis is forbidden.
@@ -343,7 +343,7 @@ Priority: Phases 1–4 replace the unsafe default; 5–6 establish scientific qu
 
 ### 11.1 Chronology and self-test counts
 
-Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **230 (CURRENT)**. Do not treat every `func test*` as a registered case.
+Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **231 (CURRENT)**. Do not treat every `func test*` as a registered case.
 
 - **2026-11-14** — deep-research pass supersedes the seed; three-category split, tagging convention, refusal guardrails.
 - **2026-11-15** — v1 master export + registered self-flat; Phase 1 grid default; `--reference-crop` added (each light star-matched to an external reference and warped in memory; see `COMPARISON.md` for Fitswork comparison); v0.6.0 status note: `--export-masters`, `--bpm`, v1 `--self-flat`, Phase-1 grid, and default recoverable path (metadata pedestal + grid self-flat when no user masters exist); darks not fabricated; `--synthetic-*` refused. Not implemented then: Phase 2 mask relaxation/5×5 rejection, Phase 3 IRLS, gamma-aware division, real-flat validation.
@@ -399,7 +399,7 @@ Reproducible protocol commands (repo root):
 
 ### 11.5 Reproducibility checklist
 
-`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (230 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
+`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (231 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
 
 ---
 

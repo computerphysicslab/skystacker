@@ -1,8 +1,8 @@
 # SkyStacker — Technical Specification
 
 **Current version:** 0.6.1
-**Implementation language:** Go 1.27.4 (single executable, standard library only; one first-party dependency `github.com/computerphysicslab/skystacker/goPureRaw v0.1.1`, tag `goPureRaw/v0.1.1`)
-**Status:** Active Development. Registered `--selftest` cases: 230. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Implementation language:** Go 1.27.4 (single executable; first-party modules `goPureRaw v0.1.1` and `goDiagnostics v0.0.0`, plus MIT-licensed `github.com/skip2/go-qrcode` for terminal donation QR codes)
+**Status:** Active Development. Registered `--selftest` cases: 231. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -10,7 +10,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 ## 2. Scope
 
 ### Included
-- CLI executable `skystacker`, single Go file, standard library only.
+- CLI executable `skystacker`, built from `main.go` plus two first-party modules and one MIT QR module; all code remains pure Go with `CGO_ENABLED=0`.
 - Input formats: JPG/JPEG/PNG (native), FITS (native, with ImageMagick fallback), SER (8/16-bit mono, Bayer-as-gray, RGB/BGR), CR2 native pure-Go lossless JPEG; CR3 via dcraw/ImageMagick at runtime.
 - Star detection, triangle matching, RANSAC similarity transforms, optional 6-DOF affine refinement.
 - Calibration frames (dark, flat, bias; individual files or auto-discovered folder trees via `--calib-root`).
@@ -184,4 +184,4 @@ Before processing:
 - Memory and disk pre-flight checks abort before Pass 1; `--force` bypasses both.
 
 ## 8. Self-tests
-`./skystacker --selftest` runs 230 embedded tests (plus a Go 1.26 `testing/synctest` rate-limiter test via `go test ./...`) covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only), plus FITS/XISF writers, config/resume, narrowband, deconvolution, annotation, native CR2 decoding and detector QA.
+`./skystacker --selftest` runs 231 embedded tests (plus a Go 1.26 `testing/synctest` rate-limiter test via `go test ./...`) covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only), plus FITS/XISF writers, config/resume, narrowband, deconvolution, annotation, native CR2 decoding and detector QA.

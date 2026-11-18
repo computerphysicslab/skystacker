@@ -247,6 +247,8 @@ type cliOptions struct {
 	WaveletSigma           float64
 	DeconvolveWiener       bool
 	Photometry             bool
+	DonationEnabled        bool
+	DonationQR             bool
 	BGMultiscale           bool
 	ConfigPath             string
 	Deconvolve             bool
@@ -520,6 +522,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.WaveletSigma, "wavelet-sigma", 3.0, "soft-threshold in MAD sigma units for wavelet details")
 	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
 	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
+	var noDonation, noDonationQR bool
+	fs.BoolVar(&noDonation, "no-donation", false, "suppress the rotating thank-you/donation footer after a successful full run")
+	fs.BoolVar(&noDonationQR, "no-donation-qr", false, "print the donation footer without terminal QR codes")
 	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
 	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
 	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
@@ -579,6 +584,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, err
 	}
 	o.Register = !noRegister
+	o.DonationEnabled = !noDonation
+	o.DonationQR = !noDonationQR
 	o.NoAffine = noAffine
 	if noSpikes {
 		o.AddSpikes = false
@@ -1127,6 +1134,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --wavelets             à trous wavelet denoise (--wavelet-scales/--wavelet-sigma)")
 	fmt.Fprintln(w, "  --deconvolve-wiener    FFT Wiener deconvolution (uses --deconv-sigma)")
 	fmt.Fprintln(w, "  --photometry           ensemble Gaia photometry -> photometry.csv/.json")
+	fmt.Fprintln(w, "  --no-donation          suppress the final thank-you/donation footer")
+	fmt.Fprintln(w, "  --no-donation-qr       omit terminal QR codes from the donation footer")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --deconvolve-grid  local PSF from star HFR over a 3x3/4x4 grid (--deconv-grid-size)")
@@ -5081,6 +5090,12 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Photometry {
 		add("--photometry")
 	}
+	if !o.DonationEnabled {
+		add("--no-donation")
+	}
+	if !o.DonationQR {
+		add("--no-donation-qr")
+	}
 	if o.DiagnoseTimeout != 5 || o.DiagnoseTop != 10 {
 		add(fmt.Sprintf("--diagnose-timeout %d --diagnose-top %d", o.DiagnoseTimeout, o.DiagnoseTop))
 	}
@@ -5523,6 +5538,8 @@ type runOptions struct {
 	WaveletSigma           float64
 	DeconvolveWiener       bool
 	Photometry             bool
+	DonationEnabled        bool
+	DonationQR             bool
 	BGMultiscale           bool
 	Deconvolve             bool
 	DeconvSigma            float64
@@ -11574,6 +11591,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 	logf("Done -> %s", outputDir)
+	if opts.DonationEnabled && opts.PostProcess && !opts.StackOnly && !opts.PostOnly {
+		printDonationFooter(opts.DonationEnabled, opts.DonationQR)
+	}
 	return nil
 }
 
@@ -17288,6 +17308,7 @@ func runSelfTests() int {
 		{"à trous wavelets", testWaveletDenoise},
 		{"Wiener deconvolution", testWienerDeconvolution},
 		{"ensemble photometry", testEnsemblePhotometry},
+		{"donation footer", testDonationFooter},
 		{"self-flat × local-normalize interaction", testSelfFlatNormalizeInteraction},
 		{"TIFF large values", testTIFFLargeValues},
 		{"TIFF scaled round trip", testTIFFScaledRoundTrip},
@@ -17900,6 +17921,43 @@ func testSelfFlatNormalizeInteraction() error {
 	note := selfFlatNormalizeNote(&selfFlatResult{CenterEdge: rawRatio}, tiles, true)
 	if note == "" || !strings.Contains(note, "both active") || !strings.Contains(note, "tile-median ratio") {
 		return fmt.Errorf("missing overlap warning: %q", note)
+	}
+	return nil
+}
+
+func testDonationFooter() error {
+	if donationEthAddress != "0xE5f68950D479fAB12797dABbe5a4B0d88eC7A722" ||
+		donationBTCAddress != "bc1qz4zvf42l3fu4axp0nd85fp2jr0gnavrr2v6xsj" {
+		return fmt.Errorf("donation addresses changed: %q / %q", donationEthAddress, donationBTCAddress)
+	}
+	if len(donationMessages) != 10 {
+		return fmt.Errorf("got %d donation messages, want 10", len(donationMessages))
+	}
+	seen := make(map[string]bool)
+	for _, msg := range donationMessages {
+		if seen[msg] {
+			return fmt.Errorf("duplicate donation message: %q", msg)
+		}
+		seen[msg] = true
+		if !strings.Contains(msg, "{address}") && !strings.Contains(msg, "{btc_address}") {
+			return fmt.Errorf("donation message has no address placeholder: %q", msg)
+		}
+		if strings.Contains(msg, donationEthAddress) || strings.Contains(msg, donationBTCAddress) {
+			return fmt.Errorf("donation message repeats a literal address: %q", msg)
+		}
+	}
+	rendered := donationFooterFor(12345)
+	if strings.Contains(rendered, "{address}") || strings.Contains(rendered, "{btc_address}") ||
+		!strings.Contains(rendered, donationEthAddress) {
+		return fmt.Errorf("donation rendering failed: %q", rendered)
+	}
+	qr, err := renderDonationQR(donationEthAddress)
+	if err != nil || qr == "" || (!strings.Contains(qr, "█") && !strings.Contains(qr, "▀") && !strings.Contains(qr, "▄")) {
+		return fmt.Errorf("QR rendering failed: %v, output %q", err, qr)
+	}
+	opts, err := parseArgs([]string{"--no-donation", "--no-donation-qr"})
+	if err != nil || opts.DonationEnabled || opts.DonationQR {
+		return fmt.Errorf("donation flags: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -26741,11 +26799,13 @@ func runBatchQueue(path string) error {
 			ctx, cancel = context.WithTimeout(ctx, time.Duration(e.TimeoutSec)*time.Second)
 			cmd := exec.CommandContext(ctx, self, e.Args...)
 			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+			cmd.Env = append(os.Environ(), "SKYSTACKER_NO_DONATION=1")
 			err = cmd.Run()
 			cancel()
 		} else {
 			cmd := exec.CommandContext(ctx, self, e.Args...)
 			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+			cmd.Env = append(os.Environ(), "SKYSTACKER_NO_DONATION=1")
 			err = cmd.Run()
 		}
 		if err != nil {
@@ -26993,6 +27053,8 @@ func main() {
 		WaveletSigma:           opts.WaveletSigma,
 		DeconvolveWiener:       opts.DeconvolveWiener,
 		Photometry:             opts.Photometry,
+		DonationEnabled:        opts.DonationEnabled,
+		DonationQR:             opts.DonationQR,
 		BGMultiscale:           opts.BGMultiscale,
 		Deconvolve:             opts.Deconvolve,
 		DeconvSigma:            opts.DeconvSigma,

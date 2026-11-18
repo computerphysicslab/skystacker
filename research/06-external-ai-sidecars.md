@@ -10,7 +10,7 @@
 
 Where the earlier files disagreed or used different flag names, one answer is given here.
 
-**Status (current).** SkyStacker is **v0.6.1** with **230 registered self-tests**. Proposal 4 is **implemented** as a runner only: the binary ships **no ML runtime, model weights, or GPU code**. It orchestrates user-installed, licensed executables through a private directory of 32-bit float FITS files. The feasibility matrix classifies this as *Partial — CLI runner Yes, ML No*.
+**Status (current).** SkyStacker is **v0.6.1** with **231 registered self-tests**. Proposal 4 is **implemented** as a runner only: the binary ships **no ML runtime, model weights, or GPU code**. It orchestrates user-installed, licensed executables through a private directory of 32-bit float FITS files. The feasibility matrix classifies this as *Partial — CLI runner Yes, ML No*.
 
 ---
 
@@ -141,7 +141,7 @@ An error from any stage aborts post-processing and propagates the diagnostic; wo
 - the temp directory no longer exists after the call (`os.Stat` → `IsNotExist`);
 - a missing executable yields a `not found` diagnostic; a nonlinear frame is refused for `denoise` but accepted with `allowNonlinear=true`; `--external-timeout 7` parses; and a command missing `{output}` is rejected.
 
-**E2E smoke:** `--post-only --external-bge … --external-denoise …` completed with `_work/external_bge.f32raw` and `_work/external_denoise.f32raw` written (implementation note, 2026-11-17). The mock self-test is part of the **230** registered self-tests at v0.6.1.
+**E2E smoke:** `--post-only --external-bge … --external-denoise …` completed with `_work/external_bge.f32raw` and `_work/external_denoise.f32raw` written (implementation note, 2026-11-17). The mock self-test is part of the **231** registered self-tests at v0.6.1.
 
 ---
 

@@ -105,7 +105,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 
 ## Scope & Architecture
 
-- **Single-binary, stdlib-only Go CLI**: the executable is built from `main.go` plus one first-party module (`goPureRaw/`, pure-Go CR2 decoding). No third-party dependencies; `CGO_ENABLED=0` static cross-platform builds.
+- **Single-binary, static Go CLI**: the executable is built from `main.go`, two first-party modules (`goPureRaw/` for CR2, `goDiagnostics/` for system reports) and one small MIT-licensed third-party module (`github.com/skip2/go-qrcode`) used only to render donation QR codes in the terminal. `CGO_ENABLED=0` static cross-platform builds remain.
 - **Linear float32 pipeline**: Accumulates and processes image data in IEEE 754 `float32` precision end-to-end.
 - **Current boundaries**:
   - **CLI-only**: No GUI is included.
@@ -455,6 +455,8 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--wavelets` / `--wavelet-scales N` / `--wavelet-sigma F` | À trous wavelet denoise on linear data | `false` / `3` / `3.0` |
 | `--deconvolve-wiener` | FFT Wiener deconvolution (uses `--deconv-sigma`) | `false` |
 | `--photometry` | Ensemble Gaia aperture photometry → `photometry.csv/.json` | `false` |
+| `--no-donation` | Suppress the rotating thank-you/donation footer after a successful full run | `false` |
+| `--no-donation-qr` | Print the footer without terminal QR codes | `false` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |
