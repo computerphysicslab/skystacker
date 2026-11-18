@@ -464,6 +464,9 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--dark-scale-entropy` | Scale master dark per light by minimising residual entropy | `false` |
 | `--cosmic-reject` | Single-frame cosmic-ray rejection on linear lights | `false` |
 | `--streak-detect` | Detect linear satellite streaks and write `stacked_streak_mask.f32raw` | `false` |
+| `--sky-map` | Write `stacked_sky_map.svg` with Gaia sources in the solved frame | `false` |
+| `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry | `false` |
+| `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout` | `CDS/P/DSS2/color` / `30` |
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |

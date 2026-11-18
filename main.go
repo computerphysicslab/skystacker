@@ -249,6 +249,10 @@ type cliOptions struct {
 	EntropyDarkScale       bool
 	CosmicReject           bool
 	StreakDetect           bool
+	SkyMap                 bool
+	SurveyCutout           bool
+	SurveyHIPS             string
+	SurveyTimeout          int
 	DeconvolveWiener       bool
 	Photometry             bool
 	DonationEnabled        bool
@@ -533,6 +537,10 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.EntropyDarkScale, "dark-scale-entropy", false, "scale the master dark per light by minimising residual entropy")
 	fs.BoolVar(&o.CosmicReject, "cosmic-reject", false, "single-frame cosmic-ray rejection on linear lights before stacking")
 	fs.BoolVar(&o.StreakDetect, "streak-detect", false, "detect linear satellite streaks on the linear stack and write a mask")
+	fs.BoolVar(&o.SkyMap, "sky-map", false, "write stacked_sky_map.svg from cached Gaia sources (requires --plate-solve)")
+	fs.BoolVar(&o.SurveyCutout, "survey-cutout", false, "fetch a CDS HiPS survey cutout matching the solved frame geometry")
+	fs.StringVar(&o.SurveyHIPS, "survey-hips", "CDS/P/DSS2/color", "HiPS survey ID for --survey-cutout")
+	fs.IntVar(&o.SurveyTimeout, "survey-timeout", 30, "HTTP timeout in seconds for --survey-cutout")
 	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
 	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
 	var noDonation, noDonationQR bool
@@ -581,7 +589,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -719,6 +727,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DiagnoseTop < 1 || o.DiagnoseTop > 100 {
 		return nil, fmt.Errorf("--diagnose-top must be in [1, 100], got %d", o.DiagnoseTop)
+	}
+	if o.SurveyTimeout < 1 || o.SurveyTimeout > 300 {
+		return nil, fmt.Errorf("--survey-timeout must be in [1, 300], got %d", o.SurveyTimeout)
 	}
 	if o.KeepSharpest < 0 || o.KeepSharpest > 100 {
 		return nil, fmt.Errorf("--keep-sharpest must be in [0, 100], got %d", o.KeepSharpest)
@@ -1158,6 +1169,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --dark-scale-entropy   scale master dark per light by residual entropy")
 	fmt.Fprintln(w, "  --cosmic-reject        single-frame cosmic-ray rejection before stacking")
 	fmt.Fprintln(w, "  --streak-detect        detect linear satellite streaks and write a mask")
+	fmt.Fprintln(w, "  --sky-map              write stacked_sky_map.svg from cached Gaia sources")
+	fmt.Fprintln(w, "  --survey-cutout        fetch a CDS HiPS FITS cutout matching the solved frame")
+	fmt.Fprintln(w, "  --survey-hips ID / --survey-timeout N  HiPS survey and HTTP timeout (30 s)")
 	fmt.Fprintln(w, "  --deconvolve-wiener    FFT Wiener deconvolution (uses --deconv-sigma)")
 	fmt.Fprintln(w, "  --photometry           ensemble Gaia photometry -> photometry.csv/.json")
 	fmt.Fprintln(w, "  --no-donation          suppress the final thank-you/donation footer")
@@ -5331,6 +5345,12 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.StreakDetect {
 		add("--streak-detect")
 	}
+	if o.SkyMap {
+		add("--sky-map")
+	}
+	if o.SurveyCutout {
+		add("--survey-cutout --survey-hips " + o.SurveyHIPS + fmt.Sprintf(" --survey-timeout %d", o.SurveyTimeout))
+	}
 	if o.DeconvolveWiener {
 		add("--deconvolve-wiener")
 	}
@@ -5796,6 +5816,10 @@ type runOptions struct {
 	EntropyDarkScale       bool
 	CosmicReject           bool
 	StreakDetect           bool
+	SkyMap                 bool
+	SurveyCutout           bool
+	SurveyHIPS             string
+	SurveyTimeout          int
 	DeconvolveWiener       bool
 	Photometry             bool
 	DonationEnabled        bool
@@ -9599,6 +9623,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				logf("WARNING: catalog annotation: %v", err)
 			}
 		}
+		if opts.SkyMap {
+			if err := runSkyMapSVG(outputDir, opts); err != nil {
+				logf("WARNING: sky map: %v", err)
+			}
+		}
+		if opts.SurveyCutout {
+			if err := runSurveyCutout(outputDir, opts); err != nil {
+				logf("WARNING: survey cutout: %v", err)
+			}
+		}
 		postOutputs, err := runPostProcessing(outputDir, opts)
 		if err != nil {
 			return fmt.Errorf("post-processing: %w", err)
@@ -11968,6 +12002,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if opts.Annotate {
 		if err := runCatalogAnnotation(outputDir, opts); err != nil {
 			logf("WARNING: catalog annotation: %v", err)
+		}
+	}
+	if opts.SkyMap {
+		if err := runSkyMapSVG(outputDir, opts); err != nil {
+			logf("WARNING: sky map: %v", err)
+		}
+	}
+	if opts.SurveyCutout {
+		if err := runSurveyCutout(outputDir, opts); err != nil {
+			logf("WARNING: survey cutout: %v", err)
 		}
 	}
 	logf("Done -> %s", outputDir)
@@ -17726,6 +17770,7 @@ func runSelfTests() int {
 		{"ensemble photometry", testEnsemblePhotometry},
 		{"donation footer", testDonationFooter},
 		{"dither diagnostic", testDitherDiagnostic},
+		{"sky map and survey cutout", testSkyProducts},
 		{"rejection heuristic", testRejectionHeuristic},
 		{"sidecar quoted argv", testCommandArgv},
 		{"post preset ordering", testPostPreset},
@@ -18698,6 +18743,43 @@ func testRejectionHeuristic() error {
 	}
 	if _, err := parseArgs([]string{"--rejection", "bogus"}); err == nil {
 		return errors.New("invalid rejection mode accepted")
+	}
+	return nil
+}
+
+func testSkyProducts() error {
+	svg := buildSkyMapSVG(200, 100, []skyMapSource{
+		{X: 50, Y: 40, Mag: 8, Kind: "Gaia"},
+		{X: 150, Y: 60, Mag: 12, Name: "NGC <test>", Kind: "galaxy", Major: 20, Minor: 10, PA: 30, Extended: true},
+	})
+	if !strings.Contains(svg, "width=\"200\"") || !strings.Contains(svg, "<circle") || !strings.Contains(svg, "<ellipse") ||
+		!strings.Contains(svg, "&lt;test&gt;") || !strings.Contains(svg, "2 catalogued sources") {
+		return fmt.Errorf("unexpected SVG output: %s", svg[:min(len(svg), 400)])
+	}
+	var fits bytes.Buffer
+	pix := make([]float32, 8*4*3)
+	for i := range pix {
+		pix[i] = float32(i) / 100
+	}
+	if err := writeFloat32RGBFITS(&fits, 8, 4, pix, 1); err != nil {
+		return err
+	}
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Write(fits.Bytes())
+	}))
+	defer srv.Close()
+	data, err := fetchHiPSCutout(context.Background(), srv.URL, "CDS/P/DSS2/color", 8, 4, 10, 20, 0.5, 15)
+	if err != nil || len(data) != fits.Len() || string(data[:6]) != "SIMPLE" {
+		return fmt.Errorf("hips fetch: %d bytes err=%v", len(data), err)
+	}
+	if gotQuery.Get("hips") != "CDS/P/DSS2/color" || gotQuery.Get("projection") != "TAN" || gotQuery.Get("format") != "fits" || gotQuery.Get("width") != "8" {
+		return fmt.Errorf("hips query: %v", gotQuery)
+	}
+	opts, err := parseArgs([]string{"--sky-map", "--survey-cutout", "--survey-hips", "CDS/P/DSS2/red", "--survey-timeout", "12"})
+	if err != nil || !opts.SkyMap || !opts.SurveyCutout || opts.SurveyHIPS != "CDS/P/DSS2/red" || opts.SurveyTimeout != 12 {
+		return fmt.Errorf("sky product flags: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -28138,6 +28220,10 @@ func main() {
 		EntropyDarkScale:       opts.EntropyDarkScale,
 		CosmicReject:           opts.CosmicReject,
 		StreakDetect:           opts.StreakDetect,
+		SkyMap:                 opts.SkyMap,
+		SurveyCutout:           opts.SurveyCutout,
+		SurveyHIPS:             opts.SurveyHIPS,
+		SurveyTimeout:          opts.SurveyTimeout,
 		DeconvolveWiener:       opts.DeconvolveWiener,
 		Photometry:             opts.Photometry,
 		DonationEnabled:        opts.DonationEnabled,

@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Delivered roadmap items 48-49: `--survey-cutout` fetches a CDS HiPS FITS cutout at the solved frame's pixel geometry (star-match diagnostic, FITS+JPEG output) and `--sky-map` writes a Gaia-based `stacked_sky_map.svg`; self-tests 247.
 - Consolidated the three pending DeepSkyStacker kernel notes into `research/01-architecture-and-core-engine.md` (calibration pointer in `04`), removed the processed files and kept `research/pendingToAnalyse/`.
 - Fixed CI/release builds to compile the package (`.`) instead of only `main.go`, restoring macOS/Windows/race/release jobs after `donations.go` was added; docs now describe the multi-file root package. Added roadmap items 48-49 for HiPS survey cutouts and SVG sky maps.
 - Consolidated the cycle-6 curated corpus into `research/08-crawler-source-discovery.md` §9 (36 URLs, 20 new), kept `research/pendingToAnalyse/` with `.gitkeep` and removed the processed log; corrected and expanded `COMPARISON.md` with license taxonomy, primary domains, modern stacking metrics and ten missing FOSS plus four missing freeware/proprietary tools.
