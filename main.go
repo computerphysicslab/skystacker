@@ -3823,15 +3823,21 @@ func splitCommandArgv(s string) ([]string, error) {
 	var cur strings.Builder
 	var quote rune
 	escaped, started := false, false
-	for _, r := range s {
+	runes := []rune(s)
+	for pos, r := range runes {
 		if escaped {
 			cur.WriteRune(r)
 			escaped, started = false, true
 			continue
 		}
 		if r == '\\' && quote != '\'' {
-			escaped = true
-			continue
+			if pos+1 < len(runes) {
+				next := runes[pos+1]
+				if next == ' ' || next == '\t' || next == '"' || next == '\\' || next == '\'' {
+					escaped = true
+					continue
+				}
+			}
 		}
 		if quote != 0 {
 			if r == quote {
@@ -16215,7 +16221,7 @@ func testExternalAISidecar() error {
 	}
 	defer os.RemoveAll(root)
 	marker := filepath.Join(root, "marker.txt")
-	command := fmt.Sprintf("%s %s {input} {output} %s", self, internalAISidecarFlag, marker)
+	command := fmt.Sprintf("%q %s {input} {output} %q", filepath.ToSlash(self), internalAISidecarFlag, filepath.ToSlash(marker))
 	wcs := &wcsTan{
 		CRVAL1: 1.234,
 		CRVAL2: -0.567,
@@ -18665,6 +18671,10 @@ func testCommandArgv() error {
 	}
 	if _, err := splitCommandArgv(`tool "unfinished`); err == nil {
 		return errors.New("unterminated quote accepted")
+	}
+	win, err := splitCommandArgv(`tool "D:\a\skystacker\skystacker.exe" {input}`)
+	if err != nil || len(win) != 3 || win[1] != `D:\a\skystacker\skystacker.exe` {
+		return fmt.Errorf("Windows path tokenization: %v err=%v", win, err)
 	}
 	return nil
 }
