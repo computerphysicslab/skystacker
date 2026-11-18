@@ -46,7 +46,7 @@ It takes a folder of night-sky exposures, detects stars, aligns the frames, comb
 - [Planned Potential Features and Technologies Roadmap](#planned-potential-features-and-technologies-roadmap)
 - [How SkyStacker Compares](#how-skystacker-compares)
 - [Benchmarks](BENCHMARKS.md)
-- [Research](research/README.md) (incl. [Gemini deep-research prompt](research/GEMINI_DEEP_RESEARCH_PROMPT.md))
+- [Research](research/README.md) (consolidated thematic index and ingestion protocol)
 - [Project Goals & License](#project-goals--license)
 
 ---

@@ -153,7 +153,7 @@ reference frame in memory. Source files are never modified.
 - No GUI.
 - No mosaic. True multi-frame drizzle resampling is not wired; `--drizzle-upsample` is a diagnostic upsampler of the final stack.
 - TAN WCS plate solving is wired (`--plate-solve`, seeded via `--plate-center` or the reference frame's FITS `RA`/`DEC`, also usable in `--post-only`; output in `plate_solution.json`). SIP order-2 is applied in WCS helpers and, with `--resample-sip`, in the pixel-space stacking resampler using the stored `plate_solution.json`; it remains `Partial` because there is no per-frame astrometric reprojection or drizzle.
-- Deconvolution is classical only (`--deconvolve` Richardson–Lucy, `--wavesharp`); no neural BXT/NXT/SXT-equivalent inference under the stdlib-only constraint (see `research/05-research-deep-dive-2026-11-16.md` §13). PSF modelling is limited to star HFR/eccentricity.
+- Deconvolution is classical only (`--deconvolve` Richardson–Lucy, `--wavesharp`); no neural BXT/NXT/SXT-equivalent inference under the stdlib-only constraint (see `research/03-reference-and-literature.md` §5). PSF modelling is limited to star HFR/eccentricity.
 - Comet stacking supports pixel rate (`--comet-center`/`--comet-rate`), RA/Dec rate (`--comet-radec`) and ephemeris files (`--comet-target`); no combined comet+stars frame.
 - No scripting language beyond flags plus JSON config files (`--config`).
 - No GPU acceleration.

@@ -140,7 +140,7 @@ use desktop parts or higher-power laptop parts:
   add a row with the exact command/config and a shared dataset hash.
 - Planetary poor-seeing workflows (AutoStakkert! lucky imaging, waveSharp /
   RegiStax wavelets, WinJUPOS derotation) solve a different problem and are not
-  comparable to deep-sky stacking times; see `research/05-research-deep-dive-2026-11-16.md` §13.
+  comparable to deep-sky stacking times; see `research/03-reference-and-literature.md` §5.
 
 ## 7. Reproducing a row
 

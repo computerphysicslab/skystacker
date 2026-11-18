@@ -1,7 +1,7 @@
 # ROADMAP — Synthetic calibration for SkyStacker
 
 **Input for the next implementation session.** Derived from
-`SYNTHETIC_CALIBRATION_RESEARCH.md` section D. Do not implement items
+`research/04-calibration-and-self-flat.md` §10. Do not implement items
 out of order; each tier assumes the previous one is green in
 `--selftest` and in CI.
 
@@ -188,5 +188,5 @@ state.
 
 ## Appendix: 2026-11-16 research deep dive
 
-- Full synthesis (English): `research/05-research-deep-dive-2026-11-16.md` (pillars A–C: calibration/detectors, astrometry/catalogues/indexing, architecture/provenance/automation). Spanish draft archived at `research/last-research.md`.
+- Full synthesis (English): `research/README.md` index and its thematic files (01 architecture, 02 astrometry, 03 literature, 04 calibration). The former deep-dive and Spanish draft were absorbed into those canonical files on 2026-11-18.
 - Backlog items flagged by research: optional RTN 1G/3G/5G dark profiling and wavelength-aware BFE (research/flagged); gamma/EOTF-aware self-flat division design; fix `detectCalibrationSubdirs`/`--calib-root` to accept lowercase `lights/darks/flats/biases` (observed with `assets/OrionNebula`); Gaia Archive v3.15/DR4 client constraints if TAP/DataLink is added; ProvenanceDM emission plan.

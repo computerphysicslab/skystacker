@@ -1,68 +1,91 @@
-# SkyStacker Research & Technical Architecture
+# Research — consolidated index
 
-This repository folder contains the reorganized, cleanly structured technical specifications, mathematical formulations, astrometric research, and literature compendia for **SkyStacker** (a local-first, single-binary Go CLI engine for astrophotography calibration, registration, stacking, post-processing, and astronomical identification).
+This directory is the single source of truth for SkyStacker research. It is
+flat by design: **no subfolders**, one canonical Markdown file per theme, and
+no duplicated content between files. Raw contributions (Gemini Deep Research,
+Google DeepMind, goCrawler, curated corpus dumps, local analyses) are
+temporary: their unique facts are folded into the canonical theme files and
+the contribution files are then removed.
 
-Every piece of technical content, equation, benchmark, CLI flag, code snippet, and bibliographic reference from the original research documents has been preserved and organized into logical domains for clarity and maintainability.
+## Canonical files
 
----
+| File | Scope |
+|---|---|
+| [README.md](README.md) | This index, current status and the consolidation protocol |
+| [01-architecture-and-core-engine.md](01-architecture-and-core-engine.md) | Pipeline workflows, memory model, star detection/registration, stacking math, post-processing, diagnostics, formats, CLI reference, ASTAP interop, roadmap and status |
+| [02-astrometry-and-identification.md](02-astrometry-and-identification.md) | Plate solving, TAN/SIP, catalogues, annotation/anomalies, morphology, time domain, IVOA, HEALPix verification and implementation status |
+| [03-reference-and-literature.md](03-reference-and-literature.md) | One master bibliography, one glossary/index, microarchitecture reference, file formats and BXT/NXT/SXT analysis |
+| [04-calibration-and-self-flat.md](04-calibration-and-self-flat.md) | Master frames, physical models, recoverability table, self-flat v1/grid/IRLS, validation record, refusal policy, detector physics and open gaps |
+| [05-toolchain-and-modularity.md](05-toolchain-and-modularity.md) | Go toolchain chronology and final state, Go 1.24–1.27 gains, modularization decision, PureRaw module, file-format interoperability backlog |
+| [06-external-ai-sidecars.md](06-external-ai-sidecars.md) | GraXpert / RC-Astro / StarNet2 ecosystem, linear-stage safety, shipped FITS sidecar runner and limits |
+| [07-native-cr2-decoding.md](07-native-cr2-decoding.md) | CR2 stream facts, decoder measurements, dcraw v9.28 source check, `cr2_slice` refutation and open validation |
+| [08-crawler-source-discovery.md](08-crawler-source-discovery.md) | goCrawler method, robots.txt policy, all run cycles, master source table and curated excerpts index |
 
-## Folder Structure & Document Guide
+Each canonical file ends with a `## Sources absorbed` list naming the
+original contribution files whose unique content it now owns. No other
+`.md` file in this directory is canonical.
 
-### Root Entry Point
-* **[`RESEARCH_SYNTHESIS.md`](RESEARCH_SYNTHESIS.md)** — **Start here.** Master synthesis covering current implementation status (`v0.4.1` → `v0.5.0`), core mathematical foundations, architectural principles, strengths/limitations, and the prioritized engineering roadmap.
-* **[`04-calibration-and-self-flat.md`](04-calibration-and-self-flat.md)** — Calibration master export (`--export-masters`), the self-flat derivation (`--self-flat`), Orion-135mm validation, and the limits of a flat built from lights. See §16 for the v0.6.0 transfer status.
-* **[`SYNTHETIC_CALIBRATION_RESEARCH.md`](SYNTHETIC_CALIBRATION_RESEARCH.md)** and **[`Synthetic generation of calibration frames for astrophotography.md`](Synthetic%20generation%20of%20calibration%20frames%20for%20astrophotography.md)** — earlier calibration research. Do not treat them as newer than `04-calibration-and-self-flat.md`. Append-only: do not rename or delete them.
+## Current state
 
-### `01-architecture-and-core-engine/` (Stacking, Go Runtime & CLI)
-* **[`01-architecture-and-core-engine/current-implementation-v0.4.1.md`](01-architecture-and-core-engine/current-implementation-v0.4.1.md)** — Concrete snapshot analysis of the `v0.4.1` single-file Go CLI codebase (pipeline steps, notable design choices, strengths, and observed limitations).
-* **[`01-architecture-and-core-engine/core-engine-technical-specification.md`](01-architecture-and-core-engine/core-engine-technical-specification.md)** — Comprehensive system architecture: 9-step SkyStacker pipeline vs. 5-step ASTAP in-memory workflow, Go concurrency & `sync.Pool` memory management, Swiss Tables (`SoA` / SIMD), photometric calibration, registration, statistical stacking, OSC demosaicing, post-processing, optical diagnostics (HFD/tilt/SQM), file formats (TIFF/BigTIFF/FITS/XISF), CLI reference, dual-stack comet recombination, and ensemble photometry.
-* **[`01-architecture-and-core-engine/cli-integration-and-observatory-automation.md`](01-architecture-and-core-engine/cli-integration-and-observatory-automation.md)** — Cross-platform binary deployment (Windows ARM64/x64, Linux, macOS code-signing, Android), headless observatory integration, 7-stage decoupled pipeline, ASTAP CLI flags & return-code encodings (`%errorlevel%` / `stdout`), and `skystacker_results/` output schemas (`.wcs`, `.ini`, JSON telemetry).
+SkyStacker v0.6.1, Go 1.27.4, 212 registered self-tests. Native CR2 decoding
+and the PureRaw library are in use; `--resample-sip`, fused sigma-clip,
+external AI sidecars and FITS/XISF writers are shipped. Still open: CFA/Bayer
+drizzle, FITS Rice, BigTIFF, XISF Rev 2, per-frame astrometric reprojection
+and bit-exact CR2 validation. Authoritative code-facing docs are the root
+`README.md`, `TECHNICAL_SPEC.md`, `PROJECT_CONTEXT.md` and `BENCHMARKS.md`.
 
-### `02-astrometry-and-identification/` (Plate Solving, Sky Charts & Anomaly Detection)
-* **[`02-astrometry-and-identification/astronomical-identification-and-sky-charts.md`](02-astrometry-and-identification/astronomical-identification-and-sky-charts.md)** — Broad research blueprint for an astrometric intelligence subsystem: blind plate solving (Astrometry.net, ASTAP, SCAMP, Siril), sky-chart integration (SkyChart/Cartes du Ciel vs. Aladin/HiPS), multi-catalogue cross-matching (Gaia DR3, SIMBAD, VizieR, NED, SDSS, AAVSO VSX, MPC, TNS), pixel-level morphology, transient/ZOGY difference imaging, moving-object tracking (A-Track), Go module layout, and a 6-phase implementation roadmap.
-* **[`02-astrometry-and-identification/astrometric-catalog-annotation-and-anomalies.md`](02-astrometry-and-identification/astrometric-catalog-annotation-and-anomalies.md)** — Formal mathematical specification for WCS/SIP forward projection, HEALPix bounding queries, elliptical aperture rendering, $k$-d tree spatial cross-matching, unassociated-source anomaly flagging (`anomalies.json`), and unit test suites (`testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`).
-* **[`02-astrometry-and-identification/healpix-reference-verification.md`](02-astrometry-and-identification/healpix-reference-verification.md)** — Reference verification and calibration log (`healpy 1.16.5`, Gorski et al. 2005 §5) documenting the nested scheme convention, spherical diamond face-boundary geometry findings (commit `e47c3fd`), and fixture regeneration instructions.
+<!-- consolidation-status:start -->
+Last consolidation: 2026-11-18
+Canonical theme files: 8
+Pending incoming files: none
+<!-- consolidation-status:end -->
 
-### `03-reference-and-literature/` (Source Catalogs, Keywords & Reading Lists)
-* **[`03-reference-and-literature/source-catalog-and-microarchitecture.md`](03-reference-and-literature/source-catalog-and-microarchitecture.md)** — Exhaustive catalog of all 50 primary project references (software, standards, papers, Go libraries), deep-dive notes on Go runtime internals (`sync.Pool`, Swiss Tables, eBPF profiling, Roofline model), scientific formats, and a categorized 100-term technical keyword index.
-* **[`03-reference-and-literature/comprehensive-technical-glossary.md`](03-reference-and-literature/comprehensive-technical-glossary.md)** — Full 100-item numbered glossary with detailed technical definitions spanning architecture, data structures, calibration, astrometry, stacking statistics, post-processing, diagnostics, and file standards.
+## Consolidation protocol
 
----
+New research material arrives as loose `.md` files dropped into this
+directory (for example `GEMINI_...-outcome.md`, `07-crawler-....md`,
+`crawler-cycle-N.md`, `deep-research-....md`). Do not edit those files into
+permanent documents and do not create subfolders. Instead:
 
-## Original Source Mapping
+1. **Drop** the contribution files into `research/` with any name.
+2. **Preview** the consolidation:
 
-For traceability, the original files in `research/` map to the reorganized structure as follows:
+   ```bash
+   python3 scripts/consolidate-research.py
+   ```
 
-| Original File | Reorganized Location(s) |
-| :--- | :--- |
-| `README.md` | `README.md` |
-| `RESEARCH_SYNTHESIS.md` | `RESEARCH_SYNTHESIS.md` |
-| `analysis.md` | `01-architecture-and-core-engine/current-implementation-v0.4.1.md` |
-| `skystacker_technical_specification.md` | `01-architecture-and-core-engine/core-engine-technical-specification.md` & `03-reference-and-literature/comprehensive-technical-glossary.md` |
-| `TECHNICAL SPECIFICATION_ CROSS-PLATFORM CLI INTEGRATION AND AUTOMATION ARCHITECTURE FOR OBSERVATORY IMAGE STACKING.md` | `01-architecture-and-core-engine/cli-integration-and-observatory-automation.md` |
-| `astronomical-object-identification-and-astrometry.md` | `02-astrometry-and-identification/astronomical-identification-and-sky-charts.md` |
-| `astrometric-catalog-annotation.md` | `02-astrometry-and-identification/astrometric-catalog-annotation-and-anomalies.md` |
-| `healpix-methodology.md` | `02-astrometry-and-identification/healpix-reference-verification.md` |
-| `skystacker_compendium.md` & `skystacker_technical_compendium_english.md` | `03-reference-and-literature/source-catalog-and-microarchitecture.md` (consolidated superset of all 50 sources, microarchitecture notes, and categorized keywords) |
-## 2026-11-17 external deep-research outcome
+   The script prints, for each incoming file, the target theme, the number of
+   unique paragraphs and the number of duplicates skipped. Nothing is written.
+3. **Resolve ambiguity** if a file has no clear theme. Either rename it with
+   a theme keyword or pass an explicit mapping:
 
-* **[`GEMINI_DEEP_RESEARCH_PROMPT.md`](GEMINI_DEEP_RESEARCH_PROMPT.md)** — the self-contained prompt sent to Google Gemini Deep Research.
-* **[`GEMINI_DEEP_RESEARCH_PROMPT-outcome.md`](GEMINI_DEEP_RESEARCH_PROMPT-outcome.md)** — Gemini's 2024–2026 state-of-the-art survey and feasibility assessment: Go 1.24–1.26 stdlib/runtime gains, RC-Astro standalone CLIs, GraXpert/SASpro headless tools, finite-sample MAD corrections, ASTAP single-pass sigma clipping and FITS Rice, XISF Rev 2, CFA/Bayer drizzle, spatially gridded PSF, Gaia DR4 quotas, and explicit infeasibility of embedded ML and amd64-only SIMD. Treat the outcome as **external material to be verified**, not as implemented features.
-## Toolchain upgrade note (2026-11-17)
+   ```bash
+   python3 scripts/consolidate-research.py --map incoming.md=02-astrometry-and-identification.md
+   ```
 
-* **[`GO_TOOLCHAIN_UPGRADE_ANALYSIS.md`](GO_TOOLCHAIN_UPGRADE_ANALYSIS.md)** — verified pros/cons of moving from go1.20.3 to go1.27.4 (security, Swiss maps, Green Tea GC, JSON/tooling, risks, recommendation).
-### Toolchain upgrade status (2026-11-17)
+4. **Apply**:
 
-The upgrade analysed in `GO_TOOLCHAIN_UPGRADE_ANALYSIS.md` was implemented with **go1.26.11** (not 1.27.4); see its "Decision implemented" and "Current-state correction" sections.
-### CR2 bit-exact investigation prompt (2026-11-17)
+   ```bash
+   python3 scripts/consolidate-research.py --apply
+   ```
 
-* **[`GEMINI_CR2_BITEXACT_PROMPT.md`](GEMINI_CR2_BITEXACT_PROMPT.md)** — self-contained Deep Research prompt with all verified CR2/SOF3/dcraw observations and 7 targeted research questions about the blocked bit-exact validation.
-### CR2 bit-exact outcome (2026-11-17)
+   Unique paragraphs are appended to the target theme file under an
+   `## Imported from ...` heading with a provenance line. The incoming file is
+   then deleted. Exact paragraph-level deduplication is performed against all
+   canonical files; paraphrased duplication cannot be detected mechanically,
+   so review the preview and edit the contribution before applying `--apply`
+   when a file spans several themes.
+5. **Verify** with `git diff`, `gofmt -l .`, `go vet ./...` and
+   `./skystacker --selftest`, then commit only when explicitly asked.
 
-* **[`GEMINI_CR2_BITEXACT_PROMPT-outcome.md`](GEMINI_CR2_BITEXACT_PROMPT-outcome.md)** — local source research (Gemini API was rate-limited on Free Tier). Confirms our lossless-JPEG core matches dcraw; leading hypothesis is `cr2_slice`/linearization, with revised 2–4 h estimate.
-### Modularisation analysis (2026-11-17)
+Rules:
 
-* **[`MODULARIZATION_ANALYSIS.md`](MODULARIZATION_ANALYSIS.md)** — monorepo+subdirectory Go modules vs separate repos for PureRaw / future FITS I/O libraries, with migration plan and caveats (`go.work`, tagged subdir versions, `go install`).
-### Toolchain upgrade status update (2026-11-17, later same day)
-
-The go1.26.11 status note above is historical. The forward-looking go1.27.4 option was subsequently implemented: both modules now declare `go 1.27` + `toolchain go1.27.4`, CI/release are pinned to 1.27.4, the full matrix is green and BENCHMARKS.md was re-baselined. See the appended "Go 1.27.4 adopted" section in `GO_TOOLCHAIN_UPGRADE_ANALYSIS.md`.
+* Canonical files are never removed or renamed by the script. Only files not
+  in the canonical list are consumed.
+* One fact lives in one file. Cross-references use relative links, not copies.
+* Historical claims stay inside the owning canonical file as clearly dated
+  history; do not create a second "historical" file.
+* Non-Markdown attachments (logs, fixtures) belong in `assets/testdata/` or
+  outside `research/`; the script warns about them but never deletes them.
+* The script is idempotent: after a successful run, a second run reports no
+  incoming files.

@@ -11,6 +11,12 @@ go install .
 
 **Self-test count: 212 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
+Research paths below mentioning former partial files (for example
+`SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
+`05-research-deep-dive-*.md`, `06/07/08-*-2026-11-17.md`) are historical
+names: those files were consolidated on 2026-11-18 into
+`research/01-...08-*.md` plus `research/README.md`. Use the canonical files
+for current content.
 
 ## Post-processing pipeline (8 steps)
 
@@ -1687,7 +1693,7 @@ rejection and disk spill. `--scale N` downsamples.
 
 ### Crawler-based source discovery (2026-11-17)
 
-- `research/06-crawler-based-source-discovery-2026-11-17.md` records a `goCrawler` run over 21 seeds extracted from existing research references: 18 curated English documents kept, focused on registration, stacking/calibration and drizzle (Siril, CFA PixInsight, APP, STScI).
+- `research/08-crawler-source-discovery.md` consolidates the `goCrawler` runs (21 seeds, 18 curated English documents kept, registration/stacking/calibration/drizzle sources: Siril, CFA PixInsight, APP, STScI).
 - `robots.txt` policy blocked 8 URLs (IVOA MOC/VOTable/ConeSearch, Astrometry.net nova UI, astropy docs root, WCStools, Flickr); blocked sources need a manual/alternative route, the crawler does not bypass them.
 - Crawler is sequential and network-bound (24% of one core on 8 cores); parallel worker pool + per-domain rate limits remain a research-tool improvement, not a SkyStacker runtime change.
 - `.gitignore` now excludes the large local dataset `assets/M42-2017-11-18-Leciñena-50mm/`.
@@ -1715,7 +1721,7 @@ rejection and disk spill. `--scale N` downsamples.
 - `frame` gained `WCS *wcsTan` and `Nonlinear bool`. `runPostProcessing` loads `plate_solution.json` into `src.WCS`, runs external BGE before step 1, external denoise/deconv after step 1, external starless in place of built-in star removal, and marks stretched frames nonlinear.
 - `testExternalAISidecar` uses the binary itself via hidden `--internal-ai-sidecar-mock` to verify pixel/WCS round-trip, temp cleanup, missing-binary diagnostics, the linear guard and its override, CLI parsing and placeholder validation. `testExternalAISidecar` raises selftests to 211.
 - E2E `--post-only --external-bge --external-denoise` on the OrionNebula 4-frame stack completed and wrote `_work/external_bge.f32raw` / `_work/external_denoise.f32raw`.
-- Design and limits recorded in `research/09-external-ai-sidecar-2026-11-17.md`. No ML model or runtime is embedded; the CLI tools remain user-supplied and licensed.
+- Design and limits recorded in `research/06-external-ai-sidecars.md`. No ML model or runtime is embedded; the CLI tools remain user-supplied and licensed.
 
 ### SIP order-2 in the stacking resampler (2026-11-17)
 
@@ -1728,4 +1734,4 @@ rejection and disk spill. `--scale N` downsamples.
 ### CR2 bit-exact investigation status (2026-11-17)
 
 - `cr2_slice[]` hypothesis refuted: dcraw v9.28 only resets it to zero; no maker-note tag assigns it. The EOS 40D `0x0009` maker tag is an all-zero ASCII artist field, not a slice table.
-- Next experiment is a raw-Bayer-plane comparison against `dcraw -D -4 -t 1` with margins cropped and black/white normalised; `curve[]` is identity for this camera, so linearization is not the cause. See the appended section in `research/GEMINI_CR2_BITEXACT_PROMPT-outcome.md`.
+- Next experiment is a raw-Bayer-plane comparison against `dcraw -D -4 -t 1` with margins cropped and black/white normalised; `curve[]` is identity for this camera, so linearization is not the cause. See `research/07-native-cr2-decoding.md`.

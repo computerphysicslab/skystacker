@@ -15215,7 +15215,7 @@ func testRotatedWCSBothParities() error {
 // SYNTHETIC CALIBRATION GUARDRAILS (V1)
 // =========================================================================
 //
-// The research pass (SYNTHETIC_CALIBRATION_RESEARCH.md) concluded that
+// The research pass (research/04-calibration-and-self-flat.md) concluded that
 // SkyStacker must NOT silently fabricate bias, dark or flat frames from
 // nothing. Instead it must:
 //
