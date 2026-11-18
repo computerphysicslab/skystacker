@@ -495,3 +495,38 @@ Already indexed (no new row needed): `astrometry.net/`, Siril annotations/drizzl
 - **Calibration (→ [04](04-calibration-and-self-flat.md)).** WBPP measures 42 frames in ~10 s; dark scaling still helps at ±0.1 °C; Siril dark coefficient 0.110 = 60/600, cosmetic-correction hot sigma 3, flat median from homogeneous unsaturated region, master medians should match, no Bayer pattern in master dark. OpticalMechanics: dark current roughly doubles every 5–7 °C, 20–30 darks, flats peak 20k–35k ADU, bias 50–200 frames, dither 1–2 subs.
 - **Sidecars (→ [06](06-external-ai-sidecars.md)).** ASTAP's StarNet2 comet workflow splits stars/comet, feeds `sinh`-stretched frames and recombines with ~5 px ephemeris accuracy.
 - **CR2/RAW (→ [07](07-native-cr2-decoding.md)).** Siril delegates DSLR decode to LibRaw and must keep CFA undebayered; ASTAP uses modified LibRaw `unprocessed_raw` writing Bayer pattern/date/active area into FITS; SubframeStudio forces RGGB when BAYERPAT is absent.
+
+## 10. Cycle 7 curated corpus (2026-11-18)
+
+**Provenance.** A new `research/pendingToAnalyse/corpusCuratedText.log` held 73 URL-delimited English blocks (~618 KB). It was reviewed, deduplicated against §5/§6/§9 and consolidated below; the log was removed, the folder kept. 26 URLs are genuinely new; 5 are version/alias variants of already-indexed pages.
+
+### 10.1 New source index (26 URLs)
+
+| URL | Theme |
+|---|---|
+| `https://data.astrometry.net/` | 02 |
+| `https://www.hnsky.org/astap_astrometric_solving.htm` | 02 |
+| `https://github.com/esa/tetra3`, `https://tetra3.readthedocs.io/` | 02/05 |
+| `https://github.com/lgrcia/twirl` | 02 |
+| `https://github.com/astropy/photutils`, `https://sep.readthedocs.io/en/stable/tutorial.html`, `https://sep.readthedocs.io/en/stable/filter.html` | 02 |
+| `https://pixinsight.com/doc/scripts/ImageSolver/ImageSolver.html`, `https://pixinsight.com/doc/scripts/AnnotateImage/AnnotateImage.html` | 02 |
+| `https://outerspace.stsci.edu/display/PANSTARRS/` | 02 |
+| `https://pipelines.lsst.io/modules/lsst.pipe.tasks/index.html` | 02/04 |
+| `https://siril.readthedocs.io/en/latest/processing/color-calibration/spcc.html` | 02/04 |
+| `https://siril.org/`, `https://siril.org/tutorials/`, `https://siril.readthedocs.io/en/stable/Commands.html` | 01/05 |
+| `https://github.com/spacetelescope/drizzle` (banned domain, record only), `https://www.stsci.edu/scientific-community/software/drizzlepac` | 01 |
+| `https://deepskystacker.free.fr/english/userguide.htm`, `/faq.htm`, `/theory.htm` | 01/07 |
+| `https://www.astropixelprocessor.com/` | 01/07 |
+| `https://astronomy.tools/calculators/ccd_suitability`, `https://www.photonstophotos.net/` | 01/05 |
+| `https://pixinsight.com/tutorials/` | 03 |
+
+### 10.2 Consolidated findings
+
+- **Stacking (→ [01](01-architecture-and-core-engine.md)).** Siril kernels: Square flux-preserving (default), Point fastest/hole-prone, Turbo for 10⁴ planetary frames, Gaussian (FWHM=pixfrac, non-flux-preserving, Avila 2015 for photometry), Lanczos3 tightest FWHM. Siril 1.5 PSF frame weights need <10 unsaturated matches → null weight; GESDT good >50 frames. DSS theory page warns entropy-weighted averaging *increases* noise; √N table 10→3.16 … 300→17.32; masters need ≥20 frames. Background automatic model: σ=1.4826×MAD, asymmetric clipping with tighter upper bound, multiscale harmonic inpainting, Scale [1,10] default 5, polynomial degree [1,6], RBF alternative, CFA as 4 interleaved subchannels (Bayer only). APP reports a 70-panel mosaic at 0.1 px RMS solved by one Trust Region Newton step (~1000 parameters).
+- **Astrometry (→ [02](02-astrometry-and-identification.md)).** ASTAP quads: 500 brightest → ~300 tetrahedra, 6 sorted distances, ratios + longest side as hash, ≥3 matches → 6 plate constants; purely linear. Astrometry.net 1° fields use indexes 5203–5206 + 4107–4109; Source Extractor 2.4.4 emits all-zero xyls, 2.8.6 works. Tetra3 solves lost-in-space in ~10 ms at ~10 arcsec with a 10–30° DB; Twirl's optional numba gives up to 30× faster asterism matching; SEP's matched filter `T = αC⁻¹S`. PI ImageSolver is not blind, uses homography + 2D surface splines, converges <0.005 px, writes XISF `AstrometricSolution` properties and no FITS WCS keys. AnnotateImage layers cover 1.8×10⁹ Gaia DR3 sources, DE440, 749,629 asteroids in ~90 MB XEPH files and emits SVG.
+- **Calibration (→ [04](04-calibration-and-self-flat.md)).** Siril DSLR master bias can be constant 2048=2¹¹, dark coefficient 0.110=60/600, `find_hot` map syntax, hot sigma 3, flat right tail <80% of full scale; STC-SPCC uses Gaia level-12 nested HEALPix, HTTP RANGE catalog, ≤127 brightest per level-8 cell, float16 spectra, <21 GB. ASTAP recommends dark flats over bias on modern sensors and ≥4 frames for sigma checks.
+- **Toolchain/AI/RAW (→ [05]/[06]/[07]).** Siril uses all cores, >60,000 SER frames; StarNet expects `-upscale 2`, `synthstar` is a non-ML star-mask alternative. APP 2.0.0 supports CR2/CR3/NEF/ARW/PEF/ORF/RWL/RW2/3FR/fff/RAF; DSS FAQ requires binning off for Bayer patterns and T-shirt flats peak 1/3–1/2.
+
+### 10.3 Roadmap candidates promoted
+
+From these facts the following were added to `ROADMAP.md`: SSO annotation with velocity vectors; frame-selection expression engine; `.xnml`/`PSFScaleSNR` ingestion; matched-filter source detection; layered SVG annotation extension; asymmetric-clipping/harmonic-inpainting background; CFA pre-drizzle background (blocked by item 14); and a deferred R&D spike on spline distortion models. APP-style global mosaic optimisation was *not* added: it remains explicitly rejected with the other mosaic items.

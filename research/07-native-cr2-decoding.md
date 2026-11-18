@@ -171,3 +171,5 @@ For module path, tags, `go.work` and release mechanics see **C5**. CR2-specific 
 - Current-status verification — `NEXT_SESSION_PROMPT.md`, `PROJECT_CONTEXT.md`, `CHANGELOG.md`, `TECHNICAL_SPEC.md`, `main.go` (`--no-native-cr2` flag, default-on native decode, "usable but not bit-exact" qualification).
 
 LibRaw/CFA preservation notes from the cycle-6 corpus are indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §9.
+
+Cycle-7 RAW/CR2/CR3 format evidence is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §10.

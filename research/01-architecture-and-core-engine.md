@@ -721,3 +721,5 @@ plain mean. DSS also supports dark entropy scaling, hot pixels >median+~16σ
 with bad-column correction, comet star-freeze dual stacking, Delaunay tools,
 SIMD (SSE2/AVX) and OpenMP. Calibration specifics are in
 [04](04-calibration-and-self-flat.md); tool positioning is in `COMPARISON.md`.
+
+A cycle-7 curated corpus of drizzle kernels, DSS theory and background models is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §10; its quantitative findings are consolidated there.

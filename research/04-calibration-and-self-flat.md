@@ -497,3 +497,5 @@ scaling, hot pixels >median+~16σ, bad-column correction and median
 kappa-sigma for masters) are recorded in
 [01-architecture-and-core-engine.md](01-architecture-and-core-engine.md) under
 "DeepSkyStacker kernel reference"; they are not repeated here.
+
+A cycle-7 curated corpus of Siril/ASTAP/SPCC calibration details is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §10.
