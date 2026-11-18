@@ -54,6 +54,24 @@ func buildSkyMapSVG(width, height int, sources []skyMapSource) string {
 	return b.String()
 }
 
+func skySourcesForImage(width, height int, ww *wcsTan, gaia []gaiaStar, extra []annotationCatalogEntry) []skyMapSource {
+	sources := make([]skyMapSource, 0, len(gaia)+len(extra))
+	for _, st := range gaia {
+		x, y := wcsTanForward(ww, st.RA, st.Dec)
+		if x >= 0 && y >= 0 && x < float64(width) && y < float64(height) {
+			sources = append(sources, skyMapSource{X: x, Y: y, Mag: st.MagG, Kind: "Gaia"})
+		}
+	}
+	for _, e := range extra {
+		x, y := wcsTanForward(ww, e.RA*math.Pi/180, e.Dec*math.Pi/180)
+		if x >= 0 && y >= 0 && x < float64(width) && y < float64(height) {
+			sources = append(sources, skyMapSource{X: x, Y: y, Mag: e.Mag, Name: e.Name, Kind: e.Type,
+				Major: e.Major, Minor: e.Minor, PA: e.PA, Extended: e.Major > 0})
+		}
+	}
+	return sources
+}
+
 func readStackDimensions(outputDir string) (int, int, error) {
 	f, err := os.Open(filepath.Join(outputDir, "_work", "stacked_mean.f32raw"))
 	if err != nil {
@@ -91,23 +109,11 @@ func runSkyMapSVG(outputDir string, opts runOptions) error {
 		logf("Sky map: no cached Gaia tile for nside=%d ipix=%d, skipping", nside, ipix)
 		return nil
 	}
-	sources := make([]skyMapSource, 0, len(tile.Stars))
-	for _, st := range tile.Stars {
-		x, y := wcsTanForward(&ww, st.RA, st.Dec)
-		if x >= 0 && y >= 0 && x < float64(w) && y < float64(h) {
-			sources = append(sources, skyMapSource{X: x, Y: y, Mag: st.MagG, Kind: "Gaia"})
-		}
-	}
 	extra, err := loadAnnotationCatalogs(opts.AnnotationCatalogs)
 	if err != nil {
 		return err
 	}
-	for _, e := range extra {
-		x, y := wcsTanForward(&ww, e.RA*math.Pi/180, e.Dec*math.Pi/180)
-		if x >= 0 && y >= 0 && x < float64(w) && y < float64(h) {
-			sources = append(sources, skyMapSource{X: x, Y: y, Mag: e.Mag, Name: e.Name, Kind: e.Type, Major: e.Major, Minor: e.Minor, PA: e.PA, Extended: e.Major > 0})
-		}
-	}
+	sources := skySourcesForImage(w, h, &ww, tile.Stars, extra)
 	path := filepath.Join(outputDir, "stacked_sky_map.svg")
 	if err := writeFileAtomic(path, func(out io.Writer) error {
 		_, err := io.WriteString(out, buildSkyMapSVG(w, h, sources))
@@ -117,6 +123,92 @@ func runSkyMapSVG(outputDir string, opts runOptions) error {
 	}
 	logf("Sky map: wrote %s with %d sources (%dx%d)", filepath.Base(path), len(sources), w, h)
 	return nil
+}
+
+func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, stem string, refFrame *frame) error {
+	scale := math.Hypot(wcs.CD[0][0], wcs.CD[0][1]) * 180 / math.Pi
+	if scale <= 0 {
+		return fmt.Errorf("survey cutout: invalid plate scale")
+	}
+	fov := float64(max(width, height)) * scale
+	ra, dec := wcs.CRVAL1*180/math.Pi, wcs.CRVAL2*180/math.Pi
+	rotation := math.Atan2(wcs.CD[0][1], wcs.CD[1][1]) * 180 / math.Pi
+	timeout := opts.SurveyTimeout
+	if timeout <= 0 {
+		timeout = 30
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	fitsData, err := fetchHiPSCutout(ctx, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits",
+		opts.SurveyHIPS, width, height, ra, dec, fov, rotation)
+	if err != nil {
+		return err
+	}
+	if len(fitsData) < 2880 || string(fitsData[:6]) != "SIMPLE" {
+		return fmt.Errorf("survey cutout: service returned non-FITS data")
+	}
+	path := filepath.Join(dir, stem+".fits")
+	if err := writeFileAtomic(path, func(out io.Writer) error {
+		_, err := out.Write(fitsData)
+		return err
+	}); err != nil {
+		return err
+	}
+	survey, err := decodeFITSNative(path, 0, 0)
+	if err != nil {
+		logf("Survey cutout: FITS saved but preview failed: %v", err)
+		return nil
+	}
+	jpg := filepath.Join(dir, stem+".jpg")
+	if err := writeFileAtomic(jpg, func(out io.Writer) error {
+		return writePreviewJPEG(out, survey.Width, survey.Height, survey.Pix)
+	}); err != nil {
+		logf("Survey cutout: preview: %v", err)
+	}
+	if refFrame != nil && refFrame.Width == survey.Width && refFrame.Height == survey.Height {
+		refStars := detectStars(refFrame, 300)
+		surveyStars := detectStars(survey, 300)
+		sim, inliers, ok := matchStarsToReference(refStars, surveyStars)
+		if ok {
+			logf("Survey cutout: star-match %d inliers, scale %.4f, rotation %.2f deg", inliers, sim.scale(), sim.rotation()*180/math.Pi)
+		} else {
+			logf("Survey cutout: star matching failed (%d ref, %d survey stars); inspect %s", len(refStars), len(surveyStars), filepath.Base(path))
+		}
+	}
+	logf("Survey cutout: %s (%dx%d, FOV %.4f deg, rotation %.2f deg)", filepath.Base(path), width, height, fov, rotation)
+	return nil
+}
+
+func runSkyMapForImage(f *frame, sol *plateSolution, dir, base string, opts runOptions) error {
+	ww := sol.WCS
+	ww.SIP = sol.SIP
+	nside := gaiaDefaultNside
+	ipix := healpixAng2PixNested(nside, ww.CRVAL1, ww.CRVAL2)
+	tile, ok := gaiaLoadTileCache(gaiaDefaultCacheDir(), nside, ipix)
+	if !ok {
+		logf("Sky map: no cached Gaia tile for nside=%d ipix=%d", nside, ipix)
+		return fmt.Errorf("no cached Gaia tile for this field (run with --plate-solve and populate the cache)")
+	}
+	extra, err := loadAnnotationCatalogs(opts.AnnotationCatalogs)
+	if err != nil {
+		return err
+	}
+	sources := skySourcesForImage(f.Width, f.Height, &ww, tile.Stars, extra)
+	stem := strings.TrimSuffix(base, filepath.Ext(base)) + "_sky_map.svg"
+	path := filepath.Join(dir, stem)
+	if err := writeFileAtomic(path, func(out io.Writer) error {
+		_, err := io.WriteString(out, buildSkyMapSVG(f.Width, f.Height, sources))
+		return err
+	}); err != nil {
+		return err
+	}
+	logf("Sky map: wrote %s with %d sources (%dx%d)", stem, len(sources), f.Width, f.Height)
+	return nil
+}
+
+func runSurveyForImage(f *frame, sol *plateSolution, dir, base string, opts runOptions) error {
+	stem := strings.TrimSuffix(base, filepath.Ext(base)) + "_survey_reference"
+	return writeSurveyCutout(f.Width, f.Height, &sol.WCS, opts, dir, stem, f)
 }
 
 func fetchHiPSCutout(ctx context.Context, baseURL, hips string, width, height int, ra, dec, fov, rotation float64) ([]byte, error) {
@@ -169,52 +261,10 @@ func runSurveyCutout(outputDir string, opts runOptions) error {
 	if err != nil {
 		return err
 	}
-	scale := math.Hypot(sol.WCS.CD[0][0], sol.WCS.CD[0][1]) * 180 / math.Pi
-	if scale <= 0 {
-		return fmt.Errorf("survey cutout: invalid plate scale")
+	refPath := filepath.Join(outputDir, "_work", "stacked_mean.f32raw")
+	var refFrame *frame
+	if iw, ih, ipix, ierr := readRawFloat32RGB(refPath); ierr == nil {
+		refFrame = &frame{Width: iw, Height: ih, Pix: ipix}
 	}
-	fov := float64(max(w, h)) * scale
-	ra, dec := sol.WCS.CRVAL1*180/math.Pi, sol.WCS.CRVAL2*180/math.Pi
-	rotation := math.Atan2(sol.WCS.CD[0][1], sol.WCS.CD[1][1]) * 180 / math.Pi
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opts.SurveyTimeout)*time.Second)
-	defer cancel()
-	fitsData, err := fetchHiPSCutout(ctx, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits",
-		opts.SurveyHIPS, w, h, ra, dec, fov, rotation)
-	if err != nil {
-		return err
-	}
-	if len(fitsData) < 2880 || string(fitsData[:6]) != "SIMPLE" {
-		return fmt.Errorf("survey cutout: service returned non-FITS data")
-	}
-	path := filepath.Join(outputDir, "survey_reference.fits")
-	if err := writeFileAtomic(path, func(out io.Writer) error {
-		_, err := out.Write(fitsData)
-		return err
-	}); err != nil {
-		return err
-	}
-	survey, err := decodeFITSNative(path, 0, 0)
-	if err != nil {
-		logf("Survey cutout: FITS saved but preview failed: %v", err)
-		return nil
-	}
-	jpg := filepath.Join(outputDir, "survey_reference.jpg")
-	if err := writeFileAtomic(jpg, func(out io.Writer) error {
-		return writePreviewJPEG(out, survey.Width, survey.Height, survey.Pix)
-	}); err != nil {
-		logf("Survey cutout: preview: %v", err)
-	}
-	iw, ih, ipix, ierr := readRawFloat32RGB(filepath.Join(outputDir, "_work", "stacked_mean.f32raw"))
-	if ierr == nil && iw == survey.Width && ih == survey.Height {
-		refStars := detectStars(&frame{Width: iw, Height: ih, Pix: ipix}, 300)
-		surveyStars := detectStars(survey, 300)
-		sim, inliers, ok := matchStarsToReference(refStars, surveyStars)
-		if ok {
-			logf("Survey cutout: star-match %d inliers, scale %.4f, rotation %.2f deg", inliers, sim.scale(), sim.rotation()*180/math.Pi)
-		} else {
-			logf("Survey cutout: star matching failed (%d ref, %d survey stars); inspect %s", len(refStars), len(surveyStars), filepath.Base(path))
-		}
-	}
-	logf("Survey cutout: %s (%dx%d, FOV %.4f deg, rotation %.2f deg)", filepath.Base(path), w, h, fov, rotation)
-	return nil
+	return writeSurveyCutout(w, h, &sol.WCS, opts, outputDir, "survey_reference", refFrame)
 }

@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Delivered roadmap items 58-62: standalone `--process-image` mode with single-image post-processing, multi-image arithmetic, pairwise transform/quality metrics, per-image Gaia SVG maps and HiPS survey cutouts; self-tests 248.
 - Roadmap extended to 62 items: five new Open items (58-62) for standalone single-/multi-image processing, pairwise measurement and per-image sky-map/survey products; design recorded in `research/01`.
 - Delivered roadmap items 48-49: `--survey-cutout` fetches a CDS HiPS FITS cutout at the solved frame's pixel geometry (star-match diagnostic, FITS+JPEG output) and `--sky-map` writes a Gaia-based `stacked_sky_map.svg`; self-tests 247.
 - Consolidated the three pending DeepSkyStacker kernel notes into `research/01-architecture-and-core-engine.md` (calibration pointer in `04`), removed the processed files and kept `research/pendingToAnalyse/`.

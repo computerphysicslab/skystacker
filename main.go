@@ -253,6 +253,9 @@ type cliOptions struct {
 	SurveyCutout           bool
 	SurveyHIPS             string
 	SurveyTimeout          int
+	ProcessImage           string
+	ImageOp                string
+	ImageOutput            string
 	DeconvolveWiener       bool
 	Photometry             bool
 	DonationEnabled        bool
@@ -541,6 +544,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.SurveyCutout, "survey-cutout", false, "fetch a CDS HiPS survey cutout matching the solved frame geometry")
 	fs.StringVar(&o.SurveyHIPS, "survey-hips", "CDS/P/DSS2/color", "HiPS survey ID for --survey-cutout")
 	fs.IntVar(&o.SurveyTimeout, "survey-timeout", 30, "HTTP timeout in seconds for --survey-cutout")
+	fs.StringVar(&o.ProcessImage, "process-image", "", "comma-separated image paths to process without stacking")
+	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout")
+	fs.StringVar(&o.ImageOutput, "image-output", "image_processing", "output directory for --process-image results")
 	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
 	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
 	var noDonation, noDonationQR bool
@@ -589,7 +595,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -727,6 +733,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.DiagnoseTop < 1 || o.DiagnoseTop > 100 {
 		return nil, fmt.Errorf("--diagnose-top must be in [1, 100], got %d", o.DiagnoseTop)
+	}
+	if o.ProcessImage != "" && !validImageOperation(o.ImageOp) {
+		return nil, fmt.Errorf("--image-op must be one of: %s", strings.Join(imageOperations, ", "))
 	}
 	if o.SurveyTimeout < 1 || o.SurveyTimeout > 300 {
 		return nil, fmt.Errorf("--survey-timeout must be in [1, 300], got %d", o.SurveyTimeout)
@@ -1172,6 +1181,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --sky-map              write stacked_sky_map.svg from cached Gaia sources")
 	fmt.Fprintln(w, "  --survey-cutout        fetch a CDS HiPS FITS cutout matching the solved frame")
 	fmt.Fprintln(w, "  --survey-hips ID / --survey-timeout N  HiPS survey and HTTP timeout (30 s)")
+	fmt.Fprintln(w, "  --process-image PATH[,PATH...]  process image(s) without running the stacking pipeline")
+	fmt.Fprintln(w, "  --image-op OP / --image-output DIR  operation (see --help listing) and output directory")
+	fmt.Fprintln(w, "                     ops: blur sharpen background stretch denoise deconvolve starless")
+	fmt.Fprintln(w, "                          sum subtract average median min max measure-transform")
+	fmt.Fprintln(w, "                          measure-quality sky-map survey-cutout")
 	fmt.Fprintln(w, "  --deconvolve-wiener    FFT Wiener deconvolution (uses --deconv-sigma)")
 	fmt.Fprintln(w, "  --photometry           ensemble Gaia photometry -> photometry.csv/.json")
 	fmt.Fprintln(w, "  --no-donation          suppress the final thank-you/donation footer")
@@ -5351,6 +5365,15 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.SurveyCutout {
 		add("--survey-cutout --survey-hips " + o.SurveyHIPS + fmt.Sprintf(" --survey-timeout %d", o.SurveyTimeout))
 	}
+	if o.ProcessImage != "" {
+		add("--process-image " + quoteReportArg(o.ProcessImage))
+		if o.ImageOp != "" {
+			add("--image-op " + o.ImageOp)
+		}
+		if o.ImageOutput != "image_processing" {
+			add("--image-output " + quoteReportArg(o.ImageOutput))
+		}
+	}
 	if o.DeconvolveWiener {
 		add("--deconvolve-wiener")
 	}
@@ -5820,6 +5843,9 @@ type runOptions struct {
 	SurveyCutout           bool
 	SurveyHIPS             string
 	SurveyTimeout          int
+	ProcessImage           string
+	ImageOp                string
+	ImageOutput            string
 	DeconvolveWiener       bool
 	Photometry             bool
 	DonationEnabled        bool
@@ -17771,6 +17797,7 @@ func runSelfTests() int {
 		{"donation footer", testDonationFooter},
 		{"dither diagnostic", testDitherDiagnostic},
 		{"sky map and survey cutout", testSkyProducts},
+		{"standalone image mode", testImageMode},
 		{"rejection heuristic", testRejectionHeuristic},
 		{"sidecar quoted argv", testCommandArgv},
 		{"post preset ordering", testPostPreset},
@@ -18743,6 +18770,58 @@ func testRejectionHeuristic() error {
 	}
 	if _, err := parseArgs([]string{"--rejection", "bogus"}); err == nil {
 		return errors.New("invalid rejection mode accepted")
+	}
+	return nil
+}
+
+func testImageMode() error {
+	dir, err := os.MkdirTemp("", "skystacker-image-mode-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	writePPM := func(name string, base int) error {
+		var b bytes.Buffer
+		fmt.Fprintf(&b, "P6\n4 2\n255\n")
+		for i := range 24 {
+			b.WriteByte(byte(base + i))
+		}
+		return os.WriteFile(filepath.Join(dir, name), b.Bytes(), 0o644)
+	}
+	if err := writePPM("a.ppm", 10); err != nil {
+		return err
+	}
+	if err := writePPM("b.ppm", 20); err != nil {
+		return err
+	}
+	outDir := filepath.Join(dir, "out")
+	run := func(op, paths string) error {
+		return runImageCommand(&cliOptions{ProcessImage: paths, ImageOp: op, ImageOutput: outDir})
+	}
+	if err := run("sum", filepath.Join(dir, "a.ppm")+","+filepath.Join(dir, "b.ppm")); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "a_sum.f32raw")); err != nil {
+		return fmt.Errorf("sum output missing: %v", err)
+	}
+	if err := run("average", filepath.Join(dir, "a.ppm")+","+filepath.Join(dir, "b.ppm")); err != nil {
+		return err
+	}
+	if err := run("blur", filepath.Join(dir, "a.ppm")); err != nil {
+		return err
+	}
+	if err := run("measure-quality", filepath.Join(dir, "a.ppm")); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "image_measurements.json"))
+	if err != nil || !bytes.Contains(data, []byte("median_hfr_px")) {
+		return fmt.Errorf("measure JSON missing: %v", err)
+	}
+	if !validImageOperation("sum") || validImageOperation("bogus") {
+		return errors.New("image operation validation broken")
+	}
+	if _, err := parseArgs([]string{"--process-image", "a.jpg", "--image-op", "blur", "--image-output", "out"}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -28058,6 +28137,13 @@ func main() {
 		fmt.Println(version)
 		return
 	}
+	if opts.ProcessImage != "" {
+		if err := runImageCommand(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if opts.DonationShow {
 		printDonationFooter(true, opts.DonationQR)
 		return
@@ -28224,6 +28310,9 @@ func main() {
 		SurveyCutout:           opts.SurveyCutout,
 		SurveyHIPS:             opts.SurveyHIPS,
 		SurveyTimeout:          opts.SurveyTimeout,
+		ProcessImage:           opts.ProcessImage,
+		ImageOp:                opts.ImageOp,
+		ImageOutput:            opts.ImageOutput,
 		DeconvolveWiener:       opts.DeconvolveWiener,
 		Photometry:             opts.Photometry,
 		DonationEnabled:        opts.DonationEnabled,

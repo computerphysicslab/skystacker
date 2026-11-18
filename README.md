@@ -467,6 +467,14 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--sky-map` | Write `stacked_sky_map.svg` with Gaia sources in the solved frame | `false` |
 | `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry | `false` |
 | `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout` | `CDS/P/DSS2/color` / `30` |
+| `--process-image PATH[,PATH...]` | Process existing JPG/PNG/FITS images without stacking | — |
+| `--image-op OP` | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout` | — |
+| `--image-output DIR` | Output directory for image-mode products | `image_processing` |
+
+Image mode writes `<basename>_<op>.f32raw` + JPEG (and JSON metadata), never
+modifies the inputs, and reuses the same plate-solve/Gaia/HiPS helpers as the
+stacking products. `measure-transform`/`measure-quality` write
+`image_measurements.csv/.json`.
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |
