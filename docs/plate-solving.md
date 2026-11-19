@@ -21,6 +21,7 @@ HEALPix tile.
 | No metadata at all, astrometry.net installed with indexes | `--plate-solve --plate-solver astrometry-local` | No |
 | No metadata, ASTAP installed with a D05–D80 database | `--plate-solve --plate-solver astap` | No |
 | No metadata, no local solver, nova account available | `--plate-solve --plate-solver astrometry-web --astrometry-api-key KEY` | Yes (upload + polling) |
+| Native prototype, no external solver at all | `--plate-solve --plate-solver native` | No (needs a Gaia quad index built from cached tiles) |
 | Default, want the best available path automatically | `--plate-solve` (`--plate-solver auto`) | Only if no local backend is installed |
 | One image only, no stacking | `--process-image IMG --image-op plate-solve` | Depends on backend |
 
@@ -36,7 +37,7 @@ The auto chain is deterministic:
 
 A failed backend is logged and the chain continues. If none is available the
 command fails with an actionable message. Pin a single backend with
-`--plate-solver gaia|astrometry-local|astap|astrometry-web`.
+`--plate-solver gaia|astrometry-local|astap|native|astrometry-web`.
 
 ## 2. Seeded solving with the internal Gaia matcher
 
@@ -176,7 +177,48 @@ sidecar never appears next to the user's light frames. A D05–D80 star database
 must be installed. ASTAP is fully offline and parity-invariant, but is more
 sensitive to bloated or out-of-focus stars than astrometry.net.
 
-## 4. Worked example: blind solve of a real image with a mock backend
+## 4. Native Gaia quad index (prototype, no astrometry.net)
+
+`--plate-solver native` removes the external-solver dependency for fields
+covered by an index built from the local Gaia cache:
+
+```bash
+# 1. Populate the Gaia cache for the fields you care about.
+skystacker --test-gaia 83.822,22.015
+
+# 2. Build the index (default: <gaia-cache-dir>/blind_index.json).
+skystacker --build-blind-index /tmp/blind_index.json
+
+# 3. Optional: extend the index across the sky (bounded for a first pass).
+skystacker --build-blind-index /tmp/blind_index.json \
+  --blind-allsky --blind-max-tiles 200 --gaia-nside 8
+
+# 4. Solve without any seed or network.
+skystacker --process-image photo.jpg --image-op plate-solve \
+  --image-output /tmp/out --plate-solver native \
+  --blind-index /tmp/blind_index.json \
+  --solver-focal-length 135 --solver-pixel-size 4.3
+```
+
+The index stores, per cached HEALPix tile, up to 100 bright Gaia stars and
+quantised descriptors of quads built from each star's three nearest neighbours.
+Descriptors use the longest pair as a backbone and encode the two remaining
+stars in normalised coordinates with `|v|`, making them invariant to rotation,
+scale, translation and mirror parity. Three **scale bands** index different
+star densities: `wide` (5–60 arcsec/px, 25 stars), `medium` (0.8–6, 50) and
+`narrow` (0.05–1.2, 100). The focal-length hint selects the band at query time;
+without a hint all bands are searched. Votes select the best tiles and the
+existing `matchStarsToGaia` → `fitWCSFromMatches` → `verifySolution` chain
+produces the usual `plate_solution.json` with `Method: "native"`.
+
+**Scope of the prototype:** `--blind-allsky` can now sweep tiles across the sky
+at a chosen `--gaia-nside` (bounded by `--blind-max-tiles`), but a fine-grained
+all-sky index still needs a large TAP campaign and index tooling. Coarse nside
+values give wide-field coverage; narrow fields need higher nside and more
+tiles. Adding fields with `--test-gaia R,D` and rebuilding extends coverage
+incrementally. Full all-sky generation remains the R&D part of roadmap item 73.
+
+## 5. Worked example: blind solve of a real image with a mock backend
 
 The internal mock exists for integration tests and documentation; it returns a
 fixed but valid WCS. It demonstrates the exact command contract and JSON
@@ -205,7 +247,7 @@ The Gaia refinement was skipped because the mock WCS does not correspond to
 the real pixels; with a genuine solve the refinement re-fits the WCS and fills
 `RMSArcsec`, `NMatches` and `Verify`.
 
-## 5. What a solve produces
+## 6. What a solve produces
 
 ### `plate_solution.json`
 
@@ -245,7 +287,7 @@ Field meanings:
 | `Verify` | Optional report-only `{scale_median_arcsec_per_px, scale_sigma_arcsec_per_px, log_odds, quads, consistent}`. |
 | `RMSArcsec` | Reprojection RMS of the matched stars, arcsec. |
 | `NMatches` / `NStars` | Matched / detected star counts. |
-| `Method` | `header`, `blind`, `astrometry-local`, `astap` or `astrometry-web`. |
+| `Method` | `header`, `blind`, `astrometry-local`, `astap`, `native` or `astrometry-web`. |
 
 Derived quantities for downstream applications:
 
@@ -271,7 +313,7 @@ objects with velocity arrows. Their schemas are described in
 [astrometry-products.md](astrometry-products.md) and
 [output-formats.md](output-formats.md).
 
-## 6. Consuming the solution from another application
+## 7. Consuming the solution from another application
 
 SkyStacker is a CLI, not a daemon. A remote service can invoke it as a process
 and treat `plate_solution.json` as the machine interface:
@@ -308,12 +350,16 @@ Integration rules:
 | Secrets | Prefer `AN_API_KEY` over `--astrometry-api-key`; the latter is redacted in reports but still visible in the process table. |
 | Batching | `--batch FILE` runs a JSON queue of CLI argument lists sequentially; see [integration.md](integration.md). |
 
-## 7. Flags used by the solver
+## 8. Flags used by the solver
 
 | Flag | Default | Purpose |
 |---|---|---|
 | `--plate-solve` | off | Solve after stacking or in `--post-only`. |
-| `--plate-solver MODE` | `auto` | `auto`, `gaia`, `astrometry-local`, `astap`, `astrometry-web`. |
+| `--plate-solver MODE` | `auto` | `auto`, `gaia`, `astrometry-local`, `astap`, `native`, `astrometry-web`. |
+| `--blind-index FILE` | `<gaia-cache-dir>/blind_index.json` | JSON quad index used by the native solver. |
+| `--build-blind-index FILE` | — | Build the native index from cached Gaia tiles and exit. |
+| `--blind-allsky` | off | With `--build-blind-index`: query Gaia tiles across the sky first. |
+| `--blind-max-tiles N` | `0` (all) | Bound the all-sky tile sweep (useful for a first pass). |
 | `--plate-center R,D` | — | Explicit RA/Dec seed in decimal degrees. |
 | `--astrometry-cmd CMD` | `solve-field` | Local astrometry.net command (quoted argv supported). |
 | `--astap-cmd CMD` | `astap` | Local ASTAP command. |
@@ -325,7 +371,7 @@ Integration rules:
 | `--gaia-mirror URL` / `--gaia-cache-dir DIR` | ESA / OS cache | Gaia TAP endpoint and tile cache. |
 | `--image-op plate-solve` | — | Solve one image without running the stacking pipeline. |
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Likely cause | Action |
 |---|---|---|

@@ -28,6 +28,20 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
 - `429` responses are retried with backoff; the client limits concurrency to
   four active requests.
 
+## Native blind solver
+
+- `native blind solve: no index … (build it with --build-blind-index)` — run
+  `--build-blind-index` after populating the Gaia cache with `--test-gaia R,D`.
+- `no nside=64 Gaia tiles in …` — the Gaia cache is empty for the configured
+  `--gaia-nside`; add tiles first.
+- `no quad matches in N image quads` — the field is not covered by the index;
+  add nearby fields to the cache and rebuild.
+- `no candidate tile verified` — the index voted but Gaia matching failed;
+  check the focal-length hint and the quality of the detected centroids.
+- `blind index: N of M Gaia tile queries failed` — TAP throttling or an archive
+  problem during `--blind-allsky`; rerun with a smaller `--blind-max-tiles` or
+  use `--gaia-offline` to rebuild from cached tiles only.
+
 ## Annotation and SSO layers
 
 - `SSO ephemeris …: DATE-OBS header is required` — add a `# DATE-OBS <ISO>` line
@@ -69,7 +83,7 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
 
 ## Self-test and build
 
-- `--selftest` must print `all 262 self-tests passed`; a failure exits `1`.
+- `--selftest` must print `all 263 self-tests passed`; a failure exits `1`.
 - `gofmt -l *.go` must print nothing and `go vet ./...` must be clean.
 - Always install the rebuilt binary on `PATH` and verify `which skystacker` and
   `skystacker --version` before running a production batch.

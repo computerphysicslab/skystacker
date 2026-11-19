@@ -219,6 +219,10 @@ type cliOptions struct {
 	PlateCenter            string
 	BlindBenchmark         string
 	BenchmarkSolvers       string
+	BlindIndex             string
+	BuildBlindIndex        string
+	BlindAllSky            bool
+	BlindMaxTiles          int
 	ConeCatalog            string
 	ConeRadiusArcsec       float64
 	PlateSolver            string
@@ -486,6 +490,10 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.PlateTest, "test-plate", "", "one-shot plate solve on RA,DEC in decimal degrees: prints WCS, then exits")
 	fs.StringVar(&o.PlateCenter, "plate-center", "", "RA,DEC seed for plate solve in decimal degrees (falls back to the reference frame's FITS RA/DEC)")
 	fs.StringVar(&o.BlindBenchmark, "blind-benchmark", "", "run a head-to-head blind-solve benchmark on a corpus directory and write blind_benchmark.csv")
+	fs.StringVar(&o.BlindIndex, "blind-index", "", "native Gaia quad index for --plate-solver native (default: <gaia-cache-dir>/blind_index.json)")
+	fs.StringVar(&o.BuildBlindIndex, "build-blind-index", "", "build a native Gaia quad index from the Gaia cache and write it to this file, then exit")
+	fs.BoolVar(&o.BlindAllSky, "blind-allsky", false, "with --build-blind-index: query Gaia tiles across the sky before building the index")
+	fs.IntVar(&o.BlindMaxTiles, "blind-max-tiles", 0, "maximum number of tiles for --blind-allsky (0 = whole sky at --gaia-nside)")
 	fs.StringVar(&o.BenchmarkSolvers, "benchmark-solvers", "astrometry-local,astap,astrometry-web", "comma-separated solvers for --blind-benchmark")
 	fs.StringVar(&o.ConeCatalog, "cone-catalog", "", "external cone-search catalogue for annotations: sdss, irsa or vizier")
 	fs.Float64Var(&o.ConeRadiusArcsec, "cone-radius", 60, "cone-search radius in arcsec (SDSS max 180, IRSA default 10)")
@@ -626,7 +634,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-max-tiles" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -850,12 +858,15 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, fmt.Errorf("--cone-radius must be in (0, 180] arcsec, got %g", o.ConeRadiusArcsec)
 	}
 	switch o.PlateSolver {
-	case "", "auto", "gaia", "astrometry-local", "astap", "astrometry-web":
+	case "", "auto", "gaia", "astrometry-local", "astap", "native", "astrometry-web":
 	default:
-		return nil, fmt.Errorf("--plate-solver must be auto, gaia, astrometry-local, astap or astrometry-web, got %q", o.PlateSolver)
+		return nil, fmt.Errorf("--plate-solver must be auto, gaia, astrometry-local, astap, native or astrometry-web, got %q", o.PlateSolver)
 	}
 	if o.AstrometryTimeout <= 0 {
 		return nil, fmt.Errorf("--astrometry-timeout must be > 0, got %d", o.AstrometryTimeout)
+	}
+	if o.BlindMaxTiles < 0 {
+		return nil, fmt.Errorf("--blind-max-tiles must be >= 0, got %d", o.BlindMaxTiles)
 	}
 	if (o.SolverFocalLength > 0) != (o.SolverPixelSize > 0) {
 		return nil, errors.New("--solver-focal-length and --solver-pixel-size must be supplied together")
@@ -1369,7 +1380,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
 	fmt.Fprintln(w, "  --blind-benchmark DIR / --benchmark-solvers LIST  head-to-head solve corpus -> blind_benchmark.csv")
 	fmt.Fprintln(w, "  --cone-catalog NAME / --cone-radius N  external cone search for annotations (sdss, irsa, vizier; arcsec)")
-	fmt.Fprintln(w, "  --plate-solver MODE auto (seeded Gaia, then astrometry.net/ASTAP), gaia, astrometry-local, astap, astrometry-web")
+	fmt.Fprintln(w, "  --plate-solver MODE auto, gaia, astrometry-local, astap, native (Gaia quad index), astrometry-web")
+	fmt.Fprintln(w, "  --blind-index FILE / --build-blind-index FILE  native Gaia quad index for offline blind solving")
+	fmt.Fprintln(w, "  --blind-allsky / --blind-max-tiles N  query Gaia sky tiles before building (bounded by N)")
 	fmt.Fprintln(w, "  --astrometry-cmd CMD local solve-field command (default: solve-field; needs installed index files)")
 	fmt.Fprintln(w, "  --astap-cmd CMD     local ASTAP blind solver (default: astap; needs a D05-D80 database)")
 	fmt.Fprintln(w, "  --astrometry-api-key KEY / AN_API_KEY  nova.astrometry.net key for blind web solves")
@@ -5868,6 +5881,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.ASTAPCmd != "" && o.ASTAPCmd != "astap" {
 		add("--astap-cmd " + quoteReportArg(o.ASTAPCmd))
 	}
+	if o.BlindIndex != "" {
+		add("--blind-index " + quoteReportArg(o.BlindIndex))
+	}
 	if o.AstrometryURL != "" && o.AstrometryURL != astrometryDefaultAPIURL {
 		add("--astrometry-url " + quoteReportArg(o.AstrometryURL))
 	}
@@ -6311,6 +6327,8 @@ type runOptions struct {
 	PlateCenter string
 	// PlateSolver selects the solve chain: auto (seeded Gaia, then
 	// astrometry.net), gaia, astrometry-local or astrometry-web.
+	BlindIndex        string
+	BuildBlindIndex   string
 	ConeCatalog       string
 	ConeRadiusArcsec  float64
 	PlateSolver       string
@@ -12858,6 +12876,12 @@ func runBlindBenchmark(dir string, solvers []string, o *cliOptions) error {
 				sol, serr = solveAstrometryLocal(path, o.AstrometryCmd, hint, timeout)
 			case "astap":
 				sol, serr = solveASTAPLocal(path, o.ASTAPCmd, timeout)
+			case "native":
+				if frame, derr := decodeImageFile(path, 0, 0); derr != nil {
+					serr = derr
+				} else {
+					sol, serr = nativeBlindSolve(detectStars(frame, 200), o.BlindIndex, hint)
+				}
 			case "astrometry-web":
 				sol, serr = solveAstrometryWeb(path, o.AstrometryURL, apiKey, hint, timeout)
 			default:
@@ -15242,6 +15266,358 @@ func refineAstrometrySolution(sol *plateSolution, stars []star) *plateSolution {
 	return refined
 }
 
+// Native blind-solver prototype (roadmap item 73). It builds a Gaia-derived
+// index of parity-tolerant four-star descriptors from the local Gaia cache,
+// votes for HEALPix tiles from image quads, and verifies the winning tile with
+// the existing Gaia matcher and WCS fit. No external solver is involved.
+const (
+	nativeIndexVersion = 2
+	nativeQuadBin      = 0.02
+	nativeBrightest    = 100
+)
+
+// nativeScaleBand models the density/scale trade-off used by Astrometry.net
+// index bands: wide fields use fewer bright stars, narrow fields more.
+var nativeScaleBands = []struct {
+	ID                   string
+	MaxStars             int
+	MinArcsec, MaxArcsec float64
+}{
+	{"wide", 25, 5, 60},
+	{"medium", 50, 0.8, 6},
+	{"narrow", nativeBrightest, 0.05, 1.2},
+}
+
+type nativeBandInfo struct {
+	ID        string  `json:"id"`
+	MaxStars  int     `json:"max_stars"`
+	MinArcsec float64 `json:"min_arcsec_per_px"`
+	MaxArcsec float64 `json:"max_arcsec_per_px"`
+}
+
+type nativeIndexEntry struct {
+	Ipix    int     `json:"ipix"`
+	Band    string  `json:"band"`
+	Longest float64 `json:"longest"`
+}
+
+type nativeBlindIndex struct {
+	Version   int                           `json:"version"`
+	Nside     int                           `json:"nside"`
+	Bin       float64                       `json:"bin"`
+	Brightest int                           `json:"brightest"`
+	Bands     []nativeBandInfo              `json:"bands"`
+	Tiles     map[int][]gaiaStar            `json:"tiles"`
+	Quads     map[string][]nativeIndexEntry `json:"quads"`
+}
+
+type nativeQuadSample struct {
+	Key     string
+	Longest float64
+}
+
+func nativeBin(v float64) int64 { return int64(math.Round(v / nativeQuadBin)) }
+
+// nativeQuadKey encodes a four-star pattern in a scale-, rotation-,
+// translation- and parity-invariant form. The longest pair is the backbone;
+// the two remaining stars are expressed in backbone-normalised coordinates.
+func nativeQuadKey(pts []point2D) (string, float64, bool) {
+	if len(pts) != 4 {
+		return "", 0, false
+	}
+	best := 0.0
+	a, b := 0, 1
+	for i := 0; i < 4; i++ {
+		for j := i + 1; j < 4; j++ {
+			d := math.Hypot(pts[i].X-pts[j].X, pts[i].Y-pts[j].Y)
+			if d > best {
+				best, a, b = d, i, j
+			}
+		}
+	}
+	if best <= 0 {
+		return "", 0, false
+	}
+	ex, ey := (pts[b].X-pts[a].X)/best, (pts[b].Y-pts[a].Y)/best
+	rest := make([]int, 0, 2)
+	for i := range 4 {
+		if i != a && i != b {
+			rest = append(rest, i)
+		}
+	}
+	type uv struct{ u, v float64 }
+	coord := func(i int) uv {
+		dx, dy := pts[i].X-pts[a].X, pts[i].Y-pts[a].Y
+		return uv{u: (dx*ex + dy*ey) / best, v: math.Abs((-dx*ey + dy*ex) / best)}
+	}
+	p, q := coord(rest[0]), coord(rest[1])
+	if q.u < p.u || (q.u == p.u && q.v < p.v) {
+		p, q = q, p
+	}
+	return fmt.Sprintf("%d:%d:%d:%d", nativeBin(p.u), nativeBin(p.v), nativeBin(q.u), nativeBin(q.v)), best, true
+}
+
+func nativeQuads(pts []point2D) []nativeQuadSample {
+	out := make([]nativeQuadSample, 0, len(pts))
+	type neighbor struct {
+		idx int
+		d2  float64
+	}
+	for i := range pts {
+		near := make([]neighbor, 0, len(pts)-1)
+		for j := range pts {
+			if j == i {
+				continue
+			}
+			d := math.Hypot(pts[i].X-pts[j].X, pts[i].Y-pts[j].Y)
+			near = append(near, neighbor{j, d * d})
+		}
+		sort.Slice(near, func(a, b int) bool { return near[a].d2 < near[b].d2 })
+		if len(near) < 3 {
+			continue
+		}
+		quad := []point2D{pts[i], pts[near[0].idx], pts[near[1].idx], pts[near[2].idx]}
+		key, longest, ok := nativeQuadKey(quad)
+		if ok {
+			out = append(out, nativeQuadSample{Key: key, Longest: longest})
+		}
+	}
+	return out
+}
+
+// buildNativeIndexFromCache creates the index from cached Gaia tiles. The
+// cache must already contain tiles; this prototype does not perform a
+// whole-sky TAP sweep.
+func buildNativeIndexFromCache(cacheDir string, nside, brightest int) (*nativeBlindIndex, error) {
+	if brightest <= 0 {
+		brightest = nativeBrightest
+	}
+	idx := &nativeBlindIndex{
+		Version: nativeIndexVersion, Nside: nside, Bin: nativeQuadBin,
+		Brightest: brightest, Tiles: make(map[int][]gaiaStar), Quads: make(map[string][]nativeIndexEntry),
+	}
+	for _, band := range nativeScaleBands {
+		idx.Bands = append(idx.Bands, nativeBandInfo{band.ID, band.MaxStars, band.MinArcsec, band.MaxArcsec})
+	}
+	pattern := filepath.Join(cacheDir, fmt.Sprintf("healpix_n%d_p*.json", nside))
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var tile gaiaTile
+		if err := json.Unmarshal(data, &tile); err != nil || tile.Nside != nside || len(tile.Stars) < 4 {
+			continue
+		}
+		stars := append([]gaiaStar{}, tile.Stars...)
+		sort.SliceStable(stars, func(i, j int) bool { return stars[i].MagG < stars[j].MagG })
+		if len(stars) > brightest {
+			stars = stars[:brightest]
+		}
+		idx.Tiles[tile.Ipix] = stars
+		for _, band := range nativeScaleBands {
+			count := band.MaxStars
+			if count > len(stars) {
+				count = len(stars)
+			}
+			if count < 4 {
+				continue
+			}
+			pts, _ := projectGaiaTangent(stars[:count])
+			for _, q := range nativeQuads(pts) {
+				key := band.ID + "|" + q.Key
+				hits := idx.Quads[key]
+				hits = append(hits, nativeIndexEntry{Ipix: tile.Ipix, Band: band.ID, Longest: q.Longest})
+				if len(hits) > 32 {
+					hits = hits[len(hits)-32:]
+				}
+				idx.Quads[key] = hits
+			}
+		}
+	}
+	if len(idx.Tiles) == 0 {
+		return nil, fmt.Errorf("no nside=%d Gaia tiles in %s; run --test-gaia R,D first", nside, cacheDir)
+	}
+	return idx, nil
+}
+
+func nativeDefaultIndexPath() string {
+	return filepath.Join(gaiaDefaultCacheDir(), "blind_index.json")
+}
+
+func runBuildBlindIndex(path, cacheDir string, nside, brightest int) error {
+	if strings.TrimSpace(path) == "" {
+		path = nativeDefaultIndexPath()
+	}
+	if strings.TrimSpace(cacheDir) == "" {
+		cacheDir = gaiaDefaultCacheDir()
+	}
+	idx, err := buildNativeIndexFromCache(cacheDir, nside, brightest)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(idx)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(path, func(out io.Writer) error {
+		_, err := out.Write(data)
+		return err
+	}); err != nil {
+		return err
+	}
+	logf("Blind index: wrote %s (%d tiles, %d quad keys)", path, len(idx.Tiles), len(idx.Quads))
+	return nil
+}
+
+// runBuildAllSkyBlindIndex populates the Gaia cache tile by tile at the chosen
+// nside (or reuses cached tiles in offline mode), then builds the quad index.
+// It is bounded by --blind-max-tiles so a partial sky can be indexed first.
+func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, brightest int, offline bool) error {
+	if nside < 1 || nside > 8192 {
+		return fmt.Errorf("--gaia-nside must be in [1,8192] for an all-sky index, got %d", nside)
+	}
+	if strings.TrimSpace(path) == "" {
+		path = nativeDefaultIndexPath()
+	}
+	if strings.TrimSpace(cacheDir) == "" {
+		cacheDir = gaiaDefaultCacheDir()
+	}
+	total := 12 * nside * nside
+	if maxTiles > 0 && maxTiles < total {
+		total = maxTiles
+	}
+	failed := 0
+	for ipix := 0; ipix < total; ipix++ {
+		if offline {
+			if _, ok := gaiaLoadTileCache(cacheDir, nside, ipix); !ok {
+				continue
+			}
+		} else if _, err := gaiaGetTile(cacheDir, mirror, nside, ipix, gaiaDefaultMagLimit, false, false); err != nil {
+			failed++
+			logf("  blind index: tile %d/%d failed: %v", ipix, total, err)
+			continue
+		}
+		if ipix > 0 && ipix%10 == 0 {
+			logf("  blind index: %d/%d tiles", ipix, total)
+		}
+	}
+	if failed > total/10 {
+		return fmt.Errorf("blind index: %d of %d Gaia tile queries failed", failed, total)
+	}
+	return runBuildBlindIndex(path, cacheDir, nside, brightest)
+}
+
+// nativeBlindSolve votes for Gaia tiles from image quads and verifies the
+// best candidates with the existing matcher, WCS fit and hypothesis metrics.
+func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plateSolution, error) {
+	if len(stars) < 4 {
+		return nil, errors.New("native blind solve: need at least 4 detected stars")
+	}
+	if strings.TrimSpace(indexPath) == "" {
+		indexPath = nativeDefaultIndexPath()
+	}
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		return nil, fmt.Errorf("native blind solve: no index %s: %w (build it with --build-blind-index)", indexPath, err)
+	}
+	var idx nativeBlindIndex
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return nil, fmt.Errorf("native blind solve: bad index: %w", err)
+	}
+	if idx.Version != nativeIndexVersion || len(idx.Quads) == 0 {
+		return nil, errors.New("native blind solve: unsupported or empty index")
+	}
+	ordered := append([]star{}, stars...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Flux > ordered[j].Flux })
+	if len(ordered) > nativeBrightest {
+		ordered = ordered[:nativeBrightest]
+	}
+	pts := make([]point2D, len(ordered))
+	for i, s := range ordered {
+		pts[i] = point2D{X: s.X, Y: s.Y}
+	}
+	activeBands := make([]nativeBandInfo, 0, len(idx.Bands))
+	if hintArcsec > 0 {
+		for _, band := range idx.Bands {
+			if hintArcsec >= band.MinArcsec && hintArcsec <= band.MaxArcsec {
+				activeBands = append(activeBands, band)
+			}
+		}
+	}
+	if len(activeBands) == 0 {
+		activeBands = idx.Bands
+	}
+	imageQuads := nativeQuads(pts)
+	votes := make(map[int]int)
+	for _, q := range imageQuads {
+		if q.Longest <= 0 {
+			continue
+		}
+		for _, band := range activeBands {
+			for _, hit := range idx.Quads[band.ID+"|"+q.Key] {
+				arcsec := (hit.Longest / q.Longest) * (180.0 / math.Pi * 3600.0)
+				if arcsec < 0.05 || arcsec > 60 {
+					continue
+				}
+				if hintArcsec > 0 && (arcsec/hintArcsec < 0.6 || arcsec/hintArcsec > 1.6) {
+					continue
+				}
+				votes[hit.Ipix]++
+			}
+		}
+	}
+	if len(votes) == 0 {
+		return nil, fmt.Errorf("native blind solve: no quad matches in %d image quads", len(imageQuads))
+	}
+	type candidate struct{ ipix, count int }
+	list := make([]candidate, 0, len(votes))
+	for ipix, n := range votes {
+		list = append(list, candidate{ipix, n})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].count != list[j].count {
+			return list[i].count > list[j].count
+		}
+		return list[i].ipix < list[j].ipix
+	})
+	if len(list) > 5 {
+		list = list[:5]
+	}
+	var lastErr error
+	for _, c := range list {
+		catalog := propagateGaiaStars(idx.Tiles[c.ipix], plateEpochYear)
+		if len(catalog) < 4 {
+			continue
+		}
+		matches, ok := matchStarsToGaia(ordered, catalog, 5.0)
+		if !ok {
+			lastErr = fmt.Errorf("tile %d: no consistent transform", c.ipix)
+			continue
+		}
+		sol, err := plateSolutionFromGaia(ordered, catalog, "native")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		fov := 0.008
+		sol.Verify = verifySolution(ordered, catalog, matches, 5.0, fov)
+		logf("  plate: native blind solve tile %d (%d votes)", c.ipix, c.count)
+		return sol, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no candidate tile verified")
+	}
+	return nil, fmt.Errorf("native blind solve: %w", lastErr)
+}
+
 // solvePlateWithFallback is the single entry point used by the stacking
 // pipeline, --post-only and standalone image mode. It tries the seeded Gaia
 // solver when a pointing is known, then falls back to a genuine blind solve
@@ -15255,9 +15631,9 @@ func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float6
 		mode = "auto"
 	}
 	switch mode {
-	case "auto", "gaia", "astrometry-local", "astap", "astrometry-web":
+	case "auto", "gaia", "astrometry-local", "astap", "native", "astrometry-web":
 	default:
-		return nil, fmt.Errorf("--plate-solver must be auto, gaia, astrometry-local, astap or astrometry-web, got %q", mode)
+		return nil, fmt.Errorf("--plate-solver must be auto, gaia, astrometry-local, astap, native or astrometry-web, got %q", mode)
 	}
 	timeout := time.Duration(o.AstrometryTimeout) * time.Second
 	if timeout <= 0 {
@@ -15310,6 +15686,22 @@ func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float6
 			logf("  plate: local ASTAP unavailable (%v)", err)
 		}
 	}
+	if sol == nil && (mode == "native" || mode == "auto") {
+		indexPath := o.BlindIndex
+		if indexPath == "" {
+			indexPath = nativeDefaultIndexPath()
+		}
+		if _, statErr := os.Stat(indexPath); statErr == nil || mode == "native" {
+			sol, err = nativeBlindSolve(stars, indexPath, expectedPlateScale(o.SolverFocalLength, o.SolverPixelSize))
+			if err == nil {
+				logf("  plate: blind solve via native Gaia quad index")
+			} else if mode == "native" {
+				return nil, err
+			} else {
+				logf("  plate: native quad index unavailable (%v)", err)
+			}
+		}
+	}
 	if sol == nil && (mode == "astrometry-web" || mode == "auto") {
 		sol, err = solveAstrometryWeb(imagePath, o.AstrometryURL, apiKey, hint, timeout)
 		if err == nil {
@@ -15334,6 +15726,7 @@ func solverOptionsFromCLI(o *cliOptions) runOptions {
 		PlateSolver:       o.PlateSolver,
 		AstrometryCmd:     o.AstrometryCmd,
 		ASTAPCmd:          o.ASTAPCmd,
+		BlindIndex:        o.BlindIndex,
 		AstrometryAPIKey:  o.AstrometryAPIKey,
 		AstrometryURL:     o.AstrometryURL,
 		AstrometryTimeout: o.AstrometryTimeout,
@@ -18161,6 +18554,76 @@ func testAstrometryLocalSolver() error {
 	return nil
 }
 
+func testNativeBlindIndex() error {
+	dir, err := os.MkdirTemp("", "skystacker-native-index-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	w := rotatedWCS(1.0, 0.3, 2.0, 23, true)
+	frame, catalog := synthSkyField(w, 42, 80, 20, 0.1)
+	ipix := healpixAng2PixNested(gaiaDefaultNside, w.CRVAL1, w.CRVAL2)
+	tilePath := filepath.Join(dir, fmt.Sprintf("healpix_n%d_p%d.json", gaiaDefaultNside, ipix))
+	tileData, err := json.Marshal(gaiaTile{Version: gaiaCacheVersion, Nside: gaiaDefaultNside, Ipix: ipix, Stars: catalog})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(tilePath, tileData, 0o644); err != nil {
+		return err
+	}
+	idx, err := buildNativeIndexFromCache(dir, gaiaDefaultNside, nativeBrightest)
+	if err != nil {
+		return err
+	}
+	if len(idx.Tiles) != 1 || len(idx.Quads) == 0 || len(idx.Bands) != len(nativeScaleBands) {
+		return fmt.Errorf("index: %d tiles, %d quads, %d bands", len(idx.Tiles), len(idx.Quads), len(idx.Bands))
+	}
+	hasBandKey := false
+	for key := range idx.Quads {
+		if strings.HasPrefix(key, "medium|") {
+			hasBandKey = true
+			break
+		}
+	}
+	if !hasBandKey {
+		return errors.New("index has no medium band quads")
+	}
+	indexPath := filepath.Join(dir, "blind_index.json")
+	data, err := json.Marshal(idx)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(indexPath, data, 0o644); err != nil {
+		return err
+	}
+	sol, err := nativeBlindSolve(frame, indexPath, 2.0)
+	if err != nil {
+		return err
+	}
+	if sol.Method != "native" || sol.NMatches < 10 {
+		return fmt.Errorf("native solve: method=%s matches=%d", sol.Method, sol.NMatches)
+	}
+	if math.Abs(sol.WCS.CRVAL1-w.CRVAL1) > 0.01 || math.Abs(sol.WCS.CRVAL2-w.CRVAL2) > 0.01 {
+		return fmt.Errorf("native solve centre: got (%.4f,%.4f), want (%.4f,%.4f)",
+			sol.WCS.CRVAL1, sol.WCS.CRVAL2, w.CRVAL1, w.CRVAL2)
+	}
+	opts, err := parseArgs([]string{"--plate-solver", "native", "--blind-index", indexPath, "--build-blind-index", indexPath})
+	if err != nil || opts.PlateSolver != "native" || opts.BlindIndex != indexPath || opts.BuildBlindIndex != indexPath {
+		return fmt.Errorf("native flags: %+v err=%v", opts, err)
+	}
+	if _, err := nativeBlindSolve(frame, filepath.Join(dir, "missing.json"), 2.0); err == nil {
+		return errors.New("missing native index should fail")
+	}
+	allSkyPath := filepath.Join(dir, "allsky_index.json")
+	if err := runBuildAllSkyBlindIndex(allSkyPath, dir, "", gaiaDefaultNside, 1, nativeBrightest, true); err != nil {
+		return fmt.Errorf("offline all-sky build: %v", err)
+	}
+	if data, err := os.ReadFile(allSkyPath); err != nil || !strings.Contains(string(data), `"bands"`) {
+		return fmt.Errorf("all-sky index missing bands: %v", err)
+	}
+	return nil
+}
+
 func testBlindBenchmark() error {
 	dir, err := os.MkdirTemp("", "skystacker-benchmark-")
 	if err != nil {
@@ -19970,6 +20433,7 @@ func runSelfTests() int {
 		{"blind solve hypothesis verification", testScaleRatioVerification},
 		{"cone-search cross-match client", testConeSearchClient},
 		{"blind solve benchmark harness", testBlindBenchmark},
+		{"native Gaia quad blind solver", testNativeBlindIndex},
 		{"astrometry web API adapter", testAstrometryWebSolver},
 		{"blind solver fallback chain", testBlindSolverFallback},
 		{"rejection buffer pool", testRejectionBufferPool},
@@ -30525,6 +30989,20 @@ func main() {
 		}
 		return
 	}
+	if opts.BuildBlindIndex != "" {
+		var err error
+		if opts.BlindAllSky {
+			err = runBuildAllSkyBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaMirror,
+				opts.GaiaNside, opts.BlindMaxTiles, nativeBrightest, opts.GaiaOffline)
+		} else {
+			err = runBuildBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaNside, nativeBrightest)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if opts.GaiaTest != "" {
 		if err := testGaiaCLI(opts); err != nil {
 			fmt.Fprintln(os.Stderr, "skystacker:", err)
@@ -30727,6 +31205,8 @@ func main() {
 		PlateSolver:            opts.PlateSolver,
 		AstrometryCmd:          opts.AstrometryCmd,
 		ASTAPCmd:               opts.ASTAPCmd,
+		BlindIndex:             opts.BlindIndex,
+		BuildBlindIndex:        opts.BuildBlindIndex,
 		AstrometryAPIKey:       opts.AstrometryAPIKey,
 		AstrometryURL:          opts.AstrometryURL,
 		AstrometryTimeout:      opts.AstrometryTimeout,

@@ -86,7 +86,10 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. |
 | `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | Survey selection and timeout. |
 | `--photometry` | off | Ensemble Gaia aperture photometry. |
-| `--blind-benchmark DIR` / `--benchmark-solvers LIST` | — | Head-to-head solve corpus CSV. |
+| `--blind-benchmark DIR` / `--benchmark-solvers LIST` | — | Head-to-head solve corpus CSV (solvers include `native`). |
+| `--blind-index FILE` | `<gaia-cache-dir>/blind_index.json` | Gaia quad index for `--plate-solver native`. |
+| `--build-blind-index FILE` | — | Build that index from cached Gaia tiles and exit. |
+| `--blind-allsky` / `--blind-max-tiles N` | off / `0` | Sweep Gaia sky tiles before building; bound the sweep to N tiles. |
 
 ## Scientific outputs
 

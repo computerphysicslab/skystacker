@@ -80,6 +80,16 @@ catalogue/cache versions.
 | `diagnostics.txt/.json` | `--diagnose`, `--diagnose-integrated` |
 | `master_*.f32raw/.jpg` | `--export-masters` |
 
+### Native blind index
+
+`blind_index.json` (produced by `--build-blind-index`) is a compact JSON
+artefact (version 2) with `version`, `nside`, `bin`, `brightest`, `bands`,
+`tiles` (brightest Gaia stars per HEALPix tile) and `quads`. Quad keys are
+prefixed with a scale band (`wide|`, `medium|`, `narrow|`) and values contain
+tile ids, band and backbone length in the catalogue's tangent-plane units. The
+index is portable between machines and lets `--plate-solver native` work fully
+offline for the indexed fields.
+
 ### Layered SVG schema
 
 `stacked_sky_map.svg` and `<base>_sky_map.svg` are plain SVG 1.1 with stable

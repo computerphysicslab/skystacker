@@ -32,7 +32,7 @@ All documents are written in English.
 - Output paths under `/tmp/` are scratch directories used for examples; replace
   them with your own results directory in production.
 - Every example can be checked locally: `--version` prints the build version and
-  `--selftest` runs the embedded regression suite (262 registered cases in
+  `--selftest` runs the embedded regression suite (263 registered cases in
   v0.6.1).
 
 ## Status

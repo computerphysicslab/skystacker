@@ -193,7 +193,7 @@ The earlier 4-frame row (2m 02s) used Go 1.20.3 and the external dcraw path; it 
 
 Commands: `/home/jips/.local/bin/skystacker --output /tmp/bench_go127 --overwrite --stack-only --limit 4 --dark assets/OrionNebula/darks --bias assets/OrionNebula/biases assets/OrionNebula/lights` and the same output dir with `--resume --starless`. Same data and flags as the Go 1.26.11 rows above; the 59.937 s → 39.031 s delta includes Go 1.27 runtime improvements and normal run-to-run variance on this thermally throttled laptop, not a controlled A/B.
 
-All 262 self-tests, `go vet`, `go test`, goPureRaw CGO=0/race tests, race build, and six cross-compilation targets are green on go1.27.4.
+All 263 self-tests, `go vet`, `go test`, goPureRaw CGO=0/race tests, race build, and six cross-compilation targets are green on go1.27.4.
 
 ### Sigma-clip kernel microbenchmark (fused vs two-pass, 2026-11-17)
 
