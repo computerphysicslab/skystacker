@@ -90,6 +90,10 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--blind-index FILE` | `<gaia-cache-dir>/blind_index.json` | Gaia quad index for `--plate-solver native`. |
 | `--build-blind-index FILE` | — | Build that index from cached Gaia tiles and exit. |
 | `--blind-allsky` / `--blind-max-tiles N` | off / `0` | Sweep Gaia sky tiles before building; bound the sweep to N tiles. |
+| `--blind-catalog ID` | — | Use a published magnitude-limited catalog by id. |
+| `--list-blind-catalogs` | off | Print the catalog registry and exit. |
+| `--download-blind-catalog ID` | — | Download and verify a catalog into the local cache. |
+| `--blind-mag-limit M` / `--blind-brightest N` | `14` / `100` | Gaia magnitude limit and stars per tile for catalog builds. |
 
 ## Scientific outputs
 

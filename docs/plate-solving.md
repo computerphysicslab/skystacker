@@ -211,6 +211,25 @@ without a hint all bands are searched. Votes select the best tiles and the
 existing `matchStarsToGaia` → `fitWCSFromMatches` → `verifySolution` chain
 produces the usual `plate_solution.json` with `Method: "native"`.
 
+### Published magnitude-limited catalogs
+
+Small, versioned indexes live in `catalogs/` and are registered in
+`catalogs/manifest.json`. They let users solve offline without building an
+index themselves:
+
+```bash
+skystacker --list-blind-catalogs
+skystacker --process-image photo.jpg --image-op plate-solve \
+  --image-output /tmp/out --plate-solver native --blind-catalog mag07
+skystacker --download-blind-catalog mag07   # outside a checkout, verifies SHA-256
+```
+
+`mag07` is a ~1.3 MB compressed all-sky index for wide fields; `mag10` is
+declared as buildable locally with
+`--build-blind-index FILE --blind-allsky --gaia-nside 4 --blind-mag-limit 10 --blind-brightest 300`.
+See [catalogs/README.md](../catalogs/README.md) for the format and publishing
+workflow.
+
 **Scope of the prototype:** `--blind-allsky` can now sweep tiles across the sky
 at a chosen `--gaia-nside` (bounded by `--blind-max-tiles`), but a fine-grained
 all-sky index still needs a large TAP campaign and index tooling. Coarse nside
@@ -360,6 +379,10 @@ Integration rules:
 | `--build-blind-index FILE` | — | Build the native index from cached Gaia tiles and exit. |
 | `--blind-allsky` | off | With `--build-blind-index`: query Gaia tiles across the sky first. |
 | `--blind-max-tiles N` | `0` (all) | Bound the all-sky tile sweep (useful for a first pass). |
+| `--blind-catalog ID` | — | Use a published catalog from `catalogs/manifest.json`. |
+| `--list-blind-catalogs` | off | List available/buildable catalogs and exit. |
+| `--download-blind-catalog ID` | — | Download a catalog into the cache with SHA-256 verification. |
+| `--blind-mag-limit M` / `--blind-brightest N` | `14` / `100` | Catalog build parameters. |
 | `--plate-center R,D` | — | Explicit RA/Dec seed in decimal degrees. |
 | `--astrometry-cmd CMD` | `solve-field` | Local astrometry.net command (quoted argv supported). |
 | `--astap-cmd CMD` | `astap` | Local ASTAP command. |

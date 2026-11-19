@@ -48,6 +48,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"crypto/sha3"
@@ -221,6 +222,11 @@ type cliOptions struct {
 	BenchmarkSolvers       string
 	BlindIndex             string
 	BuildBlindIndex        string
+	BlindCatalog           string
+	ListBlindCatalogs      bool
+	DownloadBlindCatalog   string
+	BlindMagLimit          float64
+	BlindBrightest         int
 	BlindAllSky            bool
 	BlindMaxTiles          int
 	ConeCatalog            string
@@ -492,6 +498,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.BlindBenchmark, "blind-benchmark", "", "run a head-to-head blind-solve benchmark on a corpus directory and write blind_benchmark.csv")
 	fs.StringVar(&o.BlindIndex, "blind-index", "", "native Gaia quad index for --plate-solver native (default: <gaia-cache-dir>/blind_index.json)")
 	fs.StringVar(&o.BuildBlindIndex, "build-blind-index", "", "build a native Gaia quad index from the Gaia cache and write it to this file, then exit")
+	fs.StringVar(&o.BlindCatalog, "blind-catalog", "", "use a published magnitude-limited catalog by id (see --list-blind-catalogs)")
+	fs.BoolVar(&o.ListBlindCatalogs, "list-blind-catalogs", false, "list downloadable plate-solving catalogs and exit")
+	fs.StringVar(&o.DownloadBlindCatalog, "download-blind-catalog", "", "download a catalog into the local cache with checksum verification, then exit")
+	fs.Float64Var(&o.BlindMagLimit, "blind-mag-limit", 14, "Gaia G-band magnitude limit when building a catalog")
+	fs.IntVar(&o.BlindBrightest, "blind-brightest", 100, "brightest stars per HEALPix tile when building a catalog")
 	fs.BoolVar(&o.BlindAllSky, "blind-allsky", false, "with --build-blind-index: query Gaia tiles across the sky before building the index")
 	fs.IntVar(&o.BlindMaxTiles, "blind-max-tiles", 0, "maximum number of tiles for --blind-allsky (0 = whole sky at --gaia-nside)")
 	fs.StringVar(&o.BenchmarkSolvers, "benchmark-solvers", "astrometry-local,astap,astrometry-web", "comma-separated solvers for --blind-benchmark")
@@ -634,7 +645,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-max-tiles" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -867,6 +878,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.BlindMaxTiles < 0 {
 		return nil, fmt.Errorf("--blind-max-tiles must be >= 0, got %d", o.BlindMaxTiles)
+	}
+	if o.BlindMagLimit < 3 || o.BlindMagLimit > 21 {
+		return nil, fmt.Errorf("--blind-mag-limit must be in [3,21], got %g", o.BlindMagLimit)
+	}
+	if o.BlindBrightest < 4 {
+		return nil, fmt.Errorf("--blind-brightest must be >= 4, got %d", o.BlindBrightest)
 	}
 	if (o.SolverFocalLength > 0) != (o.SolverPixelSize > 0) {
 		return nil, errors.New("--solver-focal-length and --solver-pixel-size must be supplied together")
@@ -1383,6 +1400,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --plate-solver MODE auto, gaia, astrometry-local, astap, native (Gaia quad index), astrometry-web")
 	fmt.Fprintln(w, "  --blind-index FILE / --build-blind-index FILE  native Gaia quad index for offline blind solving")
 	fmt.Fprintln(w, "  --blind-allsky / --blind-max-tiles N  query Gaia sky tiles before building (bounded by N)")
+	fmt.Fprintln(w, "  --blind-mag-limit M / --blind-brightest N  Gaia magnitude limit and stars per tile when building")
+	fmt.Fprintln(w, "  --blind-catalog ID / --list-blind-catalogs / --download-blind-catalog ID  published catalogs")
 	fmt.Fprintln(w, "  --astrometry-cmd CMD local solve-field command (default: solve-field; needs installed index files)")
 	fmt.Fprintln(w, "  --astap-cmd CMD     local ASTAP blind solver (default: astap; needs a D05-D80 database)")
 	fmt.Fprintln(w, "  --astrometry-api-key KEY / AN_API_KEY  nova.astrometry.net key for blind web solves")
@@ -6328,6 +6347,7 @@ type runOptions struct {
 	// PlateSolver selects the solve chain: auto (seeded Gaia, then
 	// astrometry.net), gaia, astrometry-local or astrometry-web.
 	BlindIndex        string
+	BlindCatalog      string
 	BuildBlindIndex   string
 	ConeCatalog       string
 	ConeRadiusArcsec  float64
@@ -15272,7 +15292,7 @@ func refineAstrometrySolution(sol *plateSolution, stars []star) *plateSolution {
 // the existing Gaia matcher and WCS fit. No external solver is involved.
 const (
 	nativeIndexVersion = 2
-	nativeQuadBin      = 0.02
+	nativeQuadBin      = 0.05
 	nativeBrightest    = 100
 )
 
@@ -15449,6 +15469,181 @@ func nativeDefaultIndexPath() string {
 	return filepath.Join(gaiaDefaultCacheDir(), "blind_index.json")
 }
 
+// Published magnitude-limited plate-solving catalogs are described by a
+// small manifest stored in catalogs/manifest.json. Each entry names a portable
+// index file, its Gaia magnitude limit and nside, and a SHA-256 checksum.
+type blindCatalog struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	MagLimit    float64 `json:"mag_limit"`
+	Nside       int     `json:"nside"`
+	Brightest   int     `json:"brightest"`
+	File        string  `json:"file"`
+	URL         string  `json:"url,omitempty"`
+	SHA256      string  `json:"sha256"`
+	Bytes       int64   `json:"bytes"`
+	Stars       int     `json:"stars"`
+	Quads       int     `json:"quads"`
+	Status      string  `json:"status"`
+	Description string  `json:"description"`
+}
+
+type blindCatalogManifest struct {
+	Version  int            `json:"version"`
+	Catalogs []blindCatalog `json:"catalogs"`
+}
+
+func blindCatalogManifestPath() (string, error) {
+	var candidates []string
+	if dir := os.Getenv("SKYSTACKER_CATALOGS"); dir != "" {
+		candidates = append(candidates, filepath.Join(dir, "manifest.json"))
+	}
+	candidates = append(candidates,
+		filepath.Join("catalogs", "manifest.json"),
+		filepath.Join(gaiaDefaultCacheDir(), "catalogs", "manifest.json"))
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("no catalog manifest found; set SKYSTACKER_CATALOGS or run from the SkyStacker repository")
+}
+
+func loadBlindCatalogManifest() (*blindCatalogManifest, string, error) {
+	path, err := blindCatalogManifestPath()
+	if err != nil {
+		return nil, "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	var manifest blindCatalogManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, "", fmt.Errorf("catalog manifest %s: %w", path, err)
+	}
+	return &manifest, filepath.Dir(path), nil
+}
+
+func findBlindCatalog(id string) (*blindCatalog, string, error) {
+	manifest, dir, err := loadBlindCatalogManifest()
+	if err != nil {
+		return nil, "", err
+	}
+	for i := range manifest.Catalogs {
+		if manifest.Catalogs[i].ID == id {
+			return &manifest.Catalogs[i], dir, nil
+		}
+	}
+	return nil, "", fmt.Errorf("unknown catalog %q (see --list-blind-catalogs)", id)
+}
+
+func blindCatalogURL(c *blindCatalog) string {
+	if c.URL != "" {
+		return c.URL
+	}
+	return "https://raw.githubusercontent.com/computerphysicslab/skystacker/main/catalogs/" + c.File
+}
+
+func blindCatalogCachePath(c *blindCatalog) string {
+	return filepath.Join(gaiaDefaultCacheDir(), "catalogs", c.File)
+}
+
+func verifyBlindCatalog(data []byte, c *blindCatalog) error {
+	if c.SHA256 == "" {
+		return nil
+	}
+	got := hex.EncodeToString(sha256Sum(data))
+	if !strings.EqualFold(got, c.SHA256) {
+		return fmt.Errorf("catalog %s checksum mismatch: got %s, want %s", c.ID, got, c.SHA256)
+	}
+	return nil
+}
+
+func sha256Sum(data []byte) []byte {
+	sum := sha256.Sum256(data)
+	return sum[:]
+}
+
+func resolveBlindCatalog(id string) (string, error) {
+	c, dir, err := findBlindCatalog(id)
+	if err != nil {
+		return "", err
+	}
+	if c.Status == "buildable" {
+		return "", fmt.Errorf("catalog %s is buildable but not published; run skystacker --build-blind-index <file> --blind-allsky --gaia-nside %d --blind-mag-limit %g --blind-brightest %d",
+			id, c.Nside, c.MagLimit, c.Brightest)
+	}
+	local := blindCatalogCachePath(c)
+	for _, path := range []string{filepath.Join(dir, c.File), local} {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			if err := verifyBlindCatalog(data, c); err != nil {
+				return "", err
+			}
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("catalog %s is not available locally; run skystacker --download-blind-catalog %s", id, id)
+}
+
+func downloadBlindCatalog(id string) error {
+	c, _, err := findBlindCatalog(id)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(blindCatalogCachePath(c)), 0o755); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, blindCatalogURL(c), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "skystacker/"+version+" (+"+repoURL+")")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download catalog %s: %w", id, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("download catalog %s: HTTP %d", id, resp.StatusCode)
+	}
+	if c.Bytes > 0 && resp.ContentLength > 0 && resp.ContentLength != c.Bytes {
+		return fmt.Errorf("catalog %s: expected %d bytes, got %d", id, c.Bytes, resp.ContentLength)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 512<<20))
+	if err != nil {
+		return err
+	}
+	if err := verifyBlindCatalog(data, c); err != nil {
+		return err
+	}
+	path := blindCatalogCachePath(c)
+	if err := writeFileAtomic(path, func(out io.Writer) error {
+		_, err := out.Write(data)
+		return err
+	}); err != nil {
+		return err
+	}
+	logf("Catalog %s: downloaded %d bytes to %s (%s)", id, len(data), path, c.Title)
+	return nil
+}
+
+func listBlindCatalogs() error {
+	manifest, _, err := loadBlindCatalogManifest()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Available plate-solving catalogs (manifest version %d):\n", manifest.Version)
+	for _, c := range manifest.Catalogs {
+		fmt.Printf("  %-8s G<=%-4g nside=%-3d %8d bytes  %-9s %s\n", c.ID, c.MagLimit, c.Nside, c.Bytes, c.Status, c.Title)
+	}
+	fmt.Println("Use --blind-catalog ID or --download-blind-catalog ID.")
+	return nil
+}
+
 func runBuildBlindIndex(path, cacheDir string, nside, brightest int) error {
 	if strings.TrimSpace(path) == "" {
 		path = nativeDefaultIndexPath()
@@ -15464,6 +15659,18 @@ func runBuildBlindIndex(path, cacheDir string, nside, brightest int) error {
 	if err != nil {
 		return err
 	}
+	if strings.HasSuffix(path, ".gz") {
+		var compressed bytes.Buffer
+		zw := gzip.NewWriter(&compressed)
+		if _, err := zw.Write(data); err != nil {
+			zw.Close()
+			return err
+		}
+		if err := zw.Close(); err != nil {
+			return err
+		}
+		data = compressed.Bytes()
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -15473,14 +15680,49 @@ func runBuildBlindIndex(path, cacheDir string, nside, brightest int) error {
 	}); err != nil {
 		return err
 	}
-	logf("Blind index: wrote %s (%d tiles, %d quad keys)", path, len(idx.Tiles), len(idx.Quads))
+	logf("Blind index: wrote %s (%d tiles, %d quad keys, %d bytes)", path, len(idx.Tiles), len(idx.Quads), len(data))
 	return nil
+}
+
+func angularSeparation(ra1, dec1, ra2, dec2 float64) float64 {
+	dra := ra2 - ra1
+	ddec := dec2 - dec1
+	a := math.Pow(math.Sin(ddec/2), 2) + math.Cos(dec1)*math.Cos(dec2)*math.Pow(math.Sin(dra/2), 2)
+	if a < 0 {
+		a = 0
+	}
+	return 2 * math.Asin(math.Min(1, math.Sqrt(a)))
+}
+
+// nativeCandidateStars gathers catalog stars around a winning HEALPix cell.
+// Using an angular radius instead of the cell's star list alone lets quads and
+// matches cross tile boundaries, which matters for wide-field images.
+func nativeCandidateStars(idx *nativeBlindIndex, ipix int) []gaiaStar {
+	ra0, dec0 := healpixPix2AngNested(idx.Nside, ipix)
+	cellRad := math.Sqrt(4 * math.Pi / float64(12*idx.Nside*idx.Nside))
+	radius := cellRad * 1.5
+	out := make([]gaiaStar, 0, 64)
+	seen := make(map[string]bool)
+	for _, stars := range idx.Tiles {
+		for _, s := range stars {
+			if angularSeparation(ra0, dec0, s.RA, s.Dec) > radius {
+				continue
+			}
+			key := fmt.Sprintf("%.7f:%.7f", s.RA, s.Dec)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, s)
+		}
+	}
+	return propagateGaiaStars(out, plateEpochYear)
 }
 
 // runBuildAllSkyBlindIndex populates the Gaia cache tile by tile at the chosen
 // nside (or reuses cached tiles in offline mode), then builds the quad index.
 // It is bounded by --blind-max-tiles so a partial sky can be indexed first.
-func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, brightest int, offline bool) error {
+func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, brightest int, magLimit float64, offline bool) error {
 	if nside < 1 || nside > 8192 {
 		return fmt.Errorf("--gaia-nside must be in [1,8192] for an all-sky index, got %d", nside)
 	}
@@ -15500,7 +15742,7 @@ func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, br
 			if _, ok := gaiaLoadTileCache(cacheDir, nside, ipix); !ok {
 				continue
 			}
-		} else if _, err := gaiaGetTile(cacheDir, mirror, nside, ipix, gaiaDefaultMagLimit, false, false); err != nil {
+		} else if _, err := gaiaGetTile(cacheDir, mirror, nside, ipix, magLimit, false, true); err != nil {
 			failed++
 			logf("  blind index: tile %d/%d failed: %v", ipix, total, err)
 			continue
@@ -15517,6 +15759,31 @@ func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, br
 
 // nativeBlindSolve votes for Gaia tiles from image quads and verifies the
 // best candidates with the existing matcher, WCS fit and hypothesis metrics.
+// readNativeIndex loads a plain JSON index or a gzip-compressed .json.gz
+// catalog. Compression keeps published catalogs small enough for the repo.
+func readNativeIndex(path string) (*nativeBlindIndex, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(path, ".gz") {
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("gzip index: %w", err)
+		}
+		defer zr.Close()
+		data, err = io.ReadAll(zr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var idx nativeBlindIndex
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return nil, fmt.Errorf("bad index: %w", err)
+	}
+	return &idx, nil
+}
+
 func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plateSolution, error) {
 	if len(stars) < 4 {
 		return nil, errors.New("native blind solve: need at least 4 detected stars")
@@ -15524,13 +15791,9 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 	if strings.TrimSpace(indexPath) == "" {
 		indexPath = nativeDefaultIndexPath()
 	}
-	data, err := os.ReadFile(indexPath)
+	idx, err := readNativeIndex(indexPath)
 	if err != nil {
 		return nil, fmt.Errorf("native blind solve: no index %s: %w (build it with --build-blind-index)", indexPath, err)
-	}
-	var idx nativeBlindIndex
-	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, fmt.Errorf("native blind solve: bad index: %w", err)
 	}
 	if idx.Version != nativeIndexVersion || len(idx.Quads) == 0 {
 		return nil, errors.New("native blind solve: unsupported or empty index")
@@ -15592,25 +15855,46 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 		list = list[:5]
 	}
 	var lastErr error
-	for _, c := range list {
-		catalog := propagateGaiaStars(idx.Tiles[c.ipix], plateEpochYear)
+	verify := func(catalog []gaiaStar, label string) *plateSolution {
 		if len(catalog) < 4 {
-			continue
+			lastErr = errors.New(label + ": too few catalogue stars")
+			return nil
 		}
 		matches, ok := matchStarsToGaia(ordered, catalog, 5.0)
 		if !ok {
-			lastErr = fmt.Errorf("tile %d: no consistent transform", c.ipix)
-			continue
+			lastErr = fmt.Errorf("%s: no consistent transform", label)
+			return nil
 		}
 		sol, err := plateSolutionFromGaia(ordered, catalog, "native")
 		if err != nil {
 			lastErr = err
-			continue
+			return nil
 		}
-		fov := 0.008
-		sol.Verify = verifySolution(ordered, catalog, matches, 5.0, fov)
-		logf("  plate: native blind solve tile %d (%d votes)", c.ipix, c.count)
+		sol.Verify = verifySolution(ordered, catalog, matches, 5.0, 0.008)
+		logf("  plate: native blind solve %s", label)
+		return sol
+	}
+	// Wide fields can span several HEALPix cells, so verify the union of the
+	// voted cells before trying them individually.
+	combined := make([]gaiaStar, 0, 128)
+	seen := make(map[string]bool)
+	for _, c := range list {
+		for _, s := range nativeCandidateStars(idx, c.ipix) {
+			key := fmt.Sprintf("%.7f:%.7f", s.RA, s.Dec)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			combined = append(combined, s)
+		}
+	}
+	if sol := verify(combined, "combined cells"); sol != nil {
 		return sol, nil
+	}
+	for _, c := range list {
+		if sol := verify(nativeCandidateStars(idx, c.ipix), fmt.Sprintf("tile %d (%d votes)", c.ipix, c.count)); sol != nil {
+			return sol, nil
+		}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("no candidate tile verified")
@@ -15688,10 +15972,20 @@ func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float6
 	}
 	if sol == nil && (mode == "native" || mode == "auto") {
 		indexPath := o.BlindIndex
-		if indexPath == "" {
+		if o.BlindCatalog != "" {
+			var catalogErr error
+			indexPath, catalogErr = resolveBlindCatalog(o.BlindCatalog)
+			if catalogErr != nil {
+				if mode == "native" {
+					return nil, catalogErr
+				}
+				logf("  plate: catalog %s unavailable (%v)", o.BlindCatalog, catalogErr)
+				indexPath = ""
+			}
+		} else if indexPath == "" {
 			indexPath = nativeDefaultIndexPath()
 		}
-		if _, statErr := os.Stat(indexPath); statErr == nil || mode == "native" {
+		if indexPath != "" {
 			sol, err = nativeBlindSolve(stars, indexPath, expectedPlateScale(o.SolverFocalLength, o.SolverPixelSize))
 			if err == nil {
 				logf("  plate: blind solve via native Gaia quad index")
@@ -15727,6 +16021,7 @@ func solverOptionsFromCLI(o *cliOptions) runOptions {
 		AstrometryCmd:     o.AstrometryCmd,
 		ASTAPCmd:          o.ASTAPCmd,
 		BlindIndex:        o.BlindIndex,
+		BlindCatalog:      o.BlindCatalog,
 		AstrometryAPIKey:  o.AstrometryAPIKey,
 		AstrometryURL:     o.AstrometryURL,
 		AstrometryTimeout: o.AstrometryTimeout,
@@ -18554,6 +18849,89 @@ func testAstrometryLocalSolver() error {
 	return nil
 }
 
+func testBlindCatalogManifest() error {
+	dir, err := os.MkdirTemp("", "skystacker-catalogs-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	manifestDir := filepath.Join(dir, "catalogs")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		return err
+	}
+	data := []byte("dummy plate-solving index")
+	sum := hex.EncodeToString(sha256Sum(data))
+	manifest := blindCatalogManifest{Version: 1, Catalogs: []blindCatalog{{
+		ID: "test", Title: "Test catalog", MagLimit: 7, Nside: 4, Brightest: 100,
+		File: "test.json", SHA256: sum, Bytes: int64(len(data)), Status: "available",
+	}}}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	manifestPath := filepath.Join(manifestDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, manifestData, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "test.json"), data, 0o644); err != nil {
+		return err
+	}
+	oldCatalogs, hadCatalogs := os.LookupEnv("SKYSTACKER_CATALOGS")
+	oldCache, hadCache := os.LookupEnv("XDG_CACHE_HOME")
+	os.Setenv("SKYSTACKER_CATALOGS", manifestDir)
+	os.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	defer func() {
+		if hadCatalogs {
+			os.Setenv("SKYSTACKER_CATALOGS", oldCatalogs)
+		} else {
+			os.Unsetenv("SKYSTACKER_CATALOGS")
+		}
+		if hadCache {
+			os.Setenv("XDG_CACHE_HOME", oldCache)
+		} else {
+			os.Unsetenv("XDG_CACHE_HOME")
+		}
+	}()
+	path, err := resolveBlindCatalog("test")
+	if err != nil || !strings.HasSuffix(path, "test.json") {
+		return fmt.Errorf("catalog resolution: %s err=%v", path, err)
+	}
+	manifest.Catalogs[0].SHA256 = strings.Repeat("0", 64)
+	manifestData, _ = json.Marshal(manifest)
+	if err := os.WriteFile(manifestPath, manifestData, 0o644); err != nil {
+		return err
+	}
+	if _, err := resolveBlindCatalog("test"); err == nil {
+		return errors.New("checksum mismatch should fail")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(data)
+	}))
+	defer srv.Close()
+	manifest.Catalogs[0].SHA256 = sum
+	manifest.Catalogs[0].URL = srv.URL
+	manifestData, _ = json.Marshal(manifest)
+	if err := os.WriteFile(manifestPath, manifestData, 0o644); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(manifestDir, "test.json")); err != nil {
+		return err
+	}
+	if err := downloadBlindCatalog("test"); err != nil {
+		return fmt.Errorf("catalog download: %v", err)
+	}
+	path, err = resolveBlindCatalog("test")
+	if err != nil || !strings.Contains(path, "catalogs") {
+		return fmt.Errorf("downloaded catalog resolution: %s err=%v", path, err)
+	}
+	opts, err := parseArgs([]string{"--blind-catalog", "test", "--blind-mag-limit", "7",
+		"--blind-brightest", "50", "--download-blind-catalog", "test"})
+	if err != nil || opts.BlindCatalog != "test" || opts.BlindMagLimit != 7 || opts.BlindBrightest != 50 {
+		return fmt.Errorf("catalog flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testNativeBlindIndex() error {
 	dir, err := os.MkdirTemp("", "skystacker-native-index-")
 	if err != nil {
@@ -18615,7 +18993,7 @@ func testNativeBlindIndex() error {
 		return errors.New("missing native index should fail")
 	}
 	allSkyPath := filepath.Join(dir, "allsky_index.json")
-	if err := runBuildAllSkyBlindIndex(allSkyPath, dir, "", gaiaDefaultNside, 1, nativeBrightest, true); err != nil {
+	if err := runBuildAllSkyBlindIndex(allSkyPath, dir, "", gaiaDefaultNside, 1, nativeBrightest, 14, true); err != nil {
 		return fmt.Errorf("offline all-sky build: %v", err)
 	}
 	if data, err := os.ReadFile(allSkyPath); err != nil || !strings.Contains(string(data), `"bands"`) {
@@ -20434,6 +20812,7 @@ func runSelfTests() int {
 		{"cone-search cross-match client", testConeSearchClient},
 		{"blind solve benchmark harness", testBlindBenchmark},
 		{"native Gaia quad blind solver", testNativeBlindIndex},
+		{"blind catalog manifest and download", testBlindCatalogManifest},
 		{"astrometry web API adapter", testAstrometryWebSolver},
 		{"blind solver fallback chain", testBlindSolverFallback},
 		{"rejection buffer pool", testRejectionBufferPool},
@@ -30989,11 +31368,25 @@ func main() {
 		}
 		return
 	}
+	if opts.ListBlindCatalogs {
+		if err := listBlindCatalogs(); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if opts.DownloadBlindCatalog != "" {
+		if err := downloadBlindCatalog(opts.DownloadBlindCatalog); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if opts.BuildBlindIndex != "" {
 		var err error
 		if opts.BlindAllSky {
 			err = runBuildAllSkyBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaMirror,
-				opts.GaiaNside, opts.BlindMaxTiles, nativeBrightest, opts.GaiaOffline)
+				opts.GaiaNside, opts.BlindMaxTiles, opts.BlindBrightest, opts.BlindMagLimit, opts.GaiaOffline)
 		} else {
 			err = runBuildBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaNside, nativeBrightest)
 		}
@@ -31206,6 +31599,7 @@ func main() {
 		AstrometryCmd:          opts.AstrometryCmd,
 		ASTAPCmd:               opts.ASTAPCmd,
 		BlindIndex:             opts.BlindIndex,
+		BlindCatalog:           opts.BlindCatalog,
 		BuildBlindIndex:        opts.BuildBlindIndex,
 		AstrometryAPIKey:       opts.AstrometryAPIKey,
 		AstrometryURL:          opts.AstrometryURL,

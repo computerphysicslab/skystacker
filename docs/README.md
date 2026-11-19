@@ -22,6 +22,7 @@ All documents are written in English.
 | [output-formats.md](output-formats.md) | TIFF/FITS/XISF/BigTIFF, float32 raw planes, layered SVG, CSV and JSON schemas. |
 | [integration.md](integration.md) | Calling SkyStacker from another application: exit codes, reports, batch mode, remote use. |
 | [troubleshooting.md](troubleshooting.md) | Common failures and the exact logs that identify them. |
+| [catalogs/README.md](../catalogs/README.md) | Published magnitude-limited Gaia quad indexes, download, checksums and publishing workflow. |
 
 ## Conventions used in examples
 
@@ -32,7 +33,7 @@ All documents are written in English.
 - Output paths under `/tmp/` are scratch directories used for examples; replace
   them with your own results directory in production.
 - Every example can be checked locally: `--version` prints the build version and
-  `--selftest` runs the embedded regression suite (263 registered cases in
+  `--selftest` runs the embedded regression suite (264 registered cases in
   v0.6.1).
 
 ## Status

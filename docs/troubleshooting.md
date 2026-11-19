@@ -38,6 +38,10 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
   add nearby fields to the cache and rebuild.
 - `no candidate tile verified` — the index voted but Gaia matching failed;
   check the focal-length hint and the quality of the detected centroids.
+- `unknown catalog` / `catalog is not available locally` — run
+  `--list-blind-catalogs`, then `--download-blind-catalog ID`.
+- `catalog checksum mismatch` — the download is corrupt or the manifest is
+  stale; delete the cached copy under `~/.cache/skystacker/catalogs/` and retry.
 - `blind index: N of M Gaia tile queries failed` — TAP throttling or an archive
   problem during `--blind-allsky`; rerun with a smaller `--blind-max-tiles` or
   use `--gaia-offline` to rebuild from cached tiles only.
@@ -83,7 +87,7 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
 
 ## Self-test and build
 
-- `--selftest` must print `all 263 self-tests passed`; a failure exits `1`.
+- `--selftest` must print `all 264 self-tests passed`; a failure exits `1`.
 - `gofmt -l *.go` must print nothing and `go vet ./...` must be clean.
 - Always install the rebuilt binary on `PATH` and verify `which skystacker` and
   `skystacker --version` before running a production batch.

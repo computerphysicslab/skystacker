@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-19 · **Current state:** v0.6.1, 263 registered self-tests,
+**Updated:** 2026-11-19 · **Current state:** v0.6.1, 264 registered self-tests,
 Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
@@ -112,7 +112,7 @@ the authoritative view.
 | 44 | **Satellite-streak extraction (Median Radon Transform)** | M–L (~3–5 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §13 | Deterministic line-integral detection of sub-noise streaks on the linear master; write a streak mask and report, complementing max-stack diagnostics. |
 | 45 | **Higher-order SIP fit (order 3-5) with inverse AP/BP terms** | M (~2–4 h) | **Blocked** — needs item 13 | [01](research/01-architecture-and-core-engine.md) §6.3, [02](research/02-astrometry-and-identification.md) §2.2 | Extend the least-squares SIP fit beyond order 2 and include linear inverse coefficients; corner-residual gate <0.2 px. |
 | 57 | **Spline-distortion model R&D spike** | L (~5–8 h) | **Deferred** | [02](research/02-astrometry-and-identification.md) §10.2 | Evaluate thin-plate/RBF surface splines versus order-2 SIP using PI ImageSolver parameters (<0.005 px convergence, 4000 control points, XISF-native); research spike only, no commitment. |
-| 73 | **Native all-sky quad-hash blind solver (R&D)** | L–XL (~8–16 h) | **Open** — prototype shipped 2026-11-19 | [02](research/02-astrometry-and-identification.md) §15 | `--plate-solver native` + `--build-blind-index` ship a working Gaia quad index: parity-tolerant 4-star descriptors, three density/scale bands (`wide`/`medium`/`narrow`), tile voting and existing Gaia matcher/WCS fit; `--blind-allsky`/`--blind-max-tiles` sweep sky tiles into the cache. `testNativeBlindIndex` solves a synthetic mirrored field and exercises the offline all-sky path. Fine-grained full-sky index generation and large-index tooling remain open. |
+| 73 | **Native all-sky quad-hash blind solver (R&D)** | L–XL (~8–16 h) | **Open** — prototype shipped 2026-11-19 | [02](research/02-astrometry-and-identification.md) §15 | `--plate-solver native` + `--build-blind-index` ship a working Gaia quad index: parity-tolerant 4-star descriptors, three density/scale bands (`wide`/`medium`/`narrow`), tile voting and existing Gaia matcher/WCS fit; `--blind-allsky`/`--blind-max-tiles` sweep sky tiles into the cache. `testNativeBlindIndex` solves a synthetic mirrored field and exercises the offline all-sky path. Published magnitude-limited catalogs live in `catalogs/` with a checksummed manifest (`--blind-catalog`, `--list-blind-catalogs`, `--download-blind-catalog`); `mag07` is a real 1.3 MB all-sky index. Deeper/fine-grained all-sky indexes and large-index tooling remain open. |
 | 46 | **Full linear-light pipeline (normalisation, clipping, outputs)** | XL (~12-16 h) | **Deferred** | [04](research/04-calibration-and-self-flat.md) §7/§15 | Remove the sRGB-encoded approximation across calibration, normalisation, stacking and writers; item 6 is only the stopgap. |
 
 ## Deferred / explicitly rejected

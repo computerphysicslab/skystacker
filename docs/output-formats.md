@@ -88,7 +88,9 @@ artefact (version 2) with `version`, `nside`, `bin`, `brightest`, `bands`,
 prefixed with a scale band (`wide|`, `medium|`, `narrow|`) and values contain
 tile ids, band and backbone length in the catalogue's tangent-plane units. The
 index is portable between machines and lets `--plate-solver native` work fully
-offline for the indexed fields.
+offline for the indexed fields. Published catalogs are gzip-compressed
+(`.json.gz`) and registered in `catalogs/manifest.json` with SHA-256, byte
+count and build parameters; see [catalogs/README.md](../catalogs/README.md).
 
 ### Layered SVG schema
 
