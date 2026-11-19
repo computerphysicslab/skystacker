@@ -3,7 +3,7 @@
 **CURRENT STATUS (canonical, 2026-11-17):**
 
 - **Toolchain:** Go **1.27.4** at `/home/jips/.local/go1.27.4/bin`; `go 1.27` + `toolchain go1.27.4` in **both** modules; CI/release pinned to 1.27.4; local `go.work` (gitignored) bumped to 1.27.4.
-- **Self-tests:** **253 registered** (`skystacker --selftest`); a Go 1.26 `testing/synctest` rate-limiter test also runs via `go test ./...`. Lower counts (203 → 208 → 209) in the absorbed records are historical snapshots, preserved once in §1.
+- **Self-tests:** **260 registered** (`skystacker --selftest`); a Go 1.26 `testing/synctest` rate-limiter test also runs via `go test ./...`. Lower counts (203 → 208 → 209) in the absorbed records are historical snapshots, preserved once in §1.
 - **Full matrix green** on go1.27.4: `gofmt -l .` clean, `go vet ./...`, build, `go test ./...`, goPureRaw `CGO_ENABLED=0` + `-race`, race build, and six static cross-build targets (linux/darwin/windows × amd64/arm64). No source changes were needed and no JSON/report drift was observed.
 - **Module layout:** a single stdlib-only executable plus **one first-party module**, `github.com/computerphysicslab/skystacker/goPureRaw v0.1.1` — chosen **Option A (monorepo + subdirectory modules)**.
 - **Benchmarks re-baselined:** 4-frame native-CR2 sigma stack **39.031 s** (was 59.937 s on 1.26.11); `--resume --starless` **21.11 s** (was 23.00 s). Not a controlled A/B; thermal variance applies.
@@ -35,7 +35,7 @@ The absorbed files were written at different moments. The layers below fix each 
 | **Conservative adoption (historical)** | 2026-11-17 | go1.26.11 at `/home/jips/.local/go1.26.11`; `go 1.26` + `toolchain go1.26.11` in both modules; CI/release pinned to 1.26.11 | **208** | First executed upgrade; `go fix` modernizers + `testing/synctest` added. |
 | **Final adoption (append-only status)** | 2026-11-17 | go1.27.4 at `/home/jips/.local/go1.27.4/bin`; `go 1.27` + `toolchain go1.27.4` in both modules; CI/release pinned to 1.27.4; `go.work` bumped | **209** (recorded at the time) | Full matrix green; benchmarks re-baselined. |
 | **Modularization progress snapshot** | 2026-11-17 | goPureRaw v0.1.1 imported; `pr*` code deleted | (same as final-adoption row) | `GOWORK=off` green; 1-light CR2 E2E 7.5 s. |
-| **CURRENT (canonical)** | 2026-11-18 | Go 1.27.4, both modules `go 1.27` + `toolchain go1.27.4`, CI/release pinned, `go.work` gitignored | **253** | Single stdlib-only executable + one first-party module; full matrix green. |
+| **CURRENT (canonical)** | 2026-11-18 | Go 1.27.4, both modules `go 1.27` + `toolchain go1.27.4`, CI/release pinned, `go.work` gitignored | **260** | Single stdlib-only executable + one first-party module; full matrix green. |
 
 ### 1.1 Adopted state detail (final)
 
@@ -274,7 +274,7 @@ File formats / rejection rationale:
 - `research/MODULARIZATION_ANALYSIS.md` — current situation, Option A vs Option B with costs/benefits, decision, migration steps 1–6 with effort estimates, risks/caveats, "Progress" (steps 1–2) and "Progress update" (steps 3–4, goPureRaw v0.1.1).
 - `research/GEMINI_DEEP_RESEARCH_PROMPT-outcome.md` — Go 1.24–1.26 stdlib/runtime gains (Swiss Tables numbers, Green Tea GC numbers, `encoding/binary`/`io.ReadAll`, `testing/synctest`, `go fix`), Go 1.26 `simd/archsimd` limits, Seti Astro 32 GiB RAM note, reproducible benchmark methodology, feasibility matrix rows for toolchain/file formats, FITS Rice / BigTIFF / XISF Rev 2 proposals, embedded-ML infeasibility (284–456 MB) and the FITS/XISF still-open status (toolchain/engineering/file-format portions only).
 - `research/GEMINI_DEEP_RESEARCH_PROMPT.md` — §1 ground truth (0.6.1, single `main.go`, 203 self-tests, `CGO_ENABLED=0`, build/test constraints), §2 benchmark context (i7-8565U host), §4 F/G research questions (Go performance, reproducibility, file formats), §5 feasibility/roadmap guardrails.
-- Cross-document status framing: `research/01-architecture-and-core-engine.md` §18 (canonical 253 self-tests, current toolchain and open-items snapshots) — used to fix status layers; its engine/format content is not duplicated here.
+- Cross-document status framing: `research/01-architecture-and-core-engine.md` §18 (canonical 260 self-tests, current toolchain and open-items snapshots) — used to fix status layers; its engine/format content is not duplicated here.
 
 A cycle-7 curated corpus with Siril/APP/RAW-format facts is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §10.
 

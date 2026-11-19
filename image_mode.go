@@ -219,6 +219,7 @@ func imageWCS(o *cliOptions, f *frame, path, dir, base string) (*plateSolution, 
 		return nil, fmt.Errorf("only %d stars detected; cannot plate-solve", len(stars))
 	}
 	seedRA, seedDec := 0.0, 0.0
+	meta := readJPEGExif(path)
 	if o.PlateCenter != "" {
 		var err error
 		seedRA, seedDec, err = parseRADecArg(o.PlateCenter, "--plate-center")
@@ -227,10 +228,13 @@ func imageWCS(o *cliOptions, f *frame, path, dir, base string) (*plateSolution, 
 		}
 	} else if ra, dec, ok := referenceFITSSeed(path); ok {
 		seedRA, seedDec = ra, dec
+	} else if ra, dec, ok := meta.RADec(); ok {
+		seedRA, seedDec = ra, dec
 	}
-	oldOffline := plateGaiaOffline
+	oldOffline, oldEpoch := plateGaiaOffline, plateEpochYear
 	plateGaiaOffline = o.GaiaOffline
-	defer func() { plateGaiaOffline = oldOffline }()
+	plateEpochYear = meta.ObservationYear()
+	defer func() { plateGaiaOffline, plateEpochYear = oldOffline, oldEpoch }()
 	sol, err := solvePlateWithFallback(stars, f.Width, f.Height, seedRA, seedDec, path, solverOptionsFromCLI(o))
 	if err != nil {
 		return nil, err

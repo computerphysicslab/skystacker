@@ -591,7 +591,10 @@ frames unless `--external-allow-nonlinear` is given.
 | --- | --- | --- |
 | `--plate-solve` | Run TAN WCS plate solve after stacking or on the existing stack with `--post-only`; writes `plate_solution.json` | `false` |
 | `--plate-center RA,DEC` | Optional pointing seed in decimal degrees (falls back to FITS `RA`/`DEC`) | — |
-| `--plate-solver MODE` | `auto` (seeded Gaia, then astrometry.net), `gaia`, `astrometry-local`, `astrometry-web` | `auto` |
+| `--plate-solver MODE` | `auto` (seeded Gaia, then astrometry.net/ASTAP), `gaia`, `astrometry-local`, `astap`, `astrometry-web` | `auto` |
+| `--astap-cmd CMD` | local ASTAP blind-solver command (needs D05–D80 database) | `astap` |
+| `--cone-catalog NAME` / `--cone-radius N` | external VOTable cone search added to annotations (sdss, irsa, vizier; arcsec) | — / `60` |
+| `--blind-benchmark DIR` / `--benchmark-solvers LIST` | head-to-head blind-solve CSV over a corpus | — |
 | `--astrometry-cmd CMD` / `--astrometry-api-key KEY` | local `solve-field` command / nova API key (`AN_API_KEY` also read) | `solve-field` / — |
 | `--astrometry-url URL` / `--astrometry-timeout N` | nova API base URL / solve timeout in seconds | nova / `180` |
 | `--solver-focal-length MM` / `--solver-pixel-size UM` | optional plate-scale hint and post-solve sanity check | — |
@@ -717,7 +720,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 253 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 260 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 
