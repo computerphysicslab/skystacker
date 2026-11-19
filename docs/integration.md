@@ -90,6 +90,16 @@ Values may be strings, numbers, booleans or arrays:
 - `--blind-benchmark` plus a fixture corpus provides regression metrics across
   solver backends.
 
+## Consuming layered SVG products
+
+The sky-map SVG is designed for machine consumption: select groups by
+`#gaia-stars`, `#extended-objects`, `#sso-vectors`, `#labels` or `#footer`, or
+filter on `data-layer`/`class="skystacker-layer"`. Group ids and `data-*`
+attributes are stable; text content and styling may change. A web frontend can
+therefore hide the label layer, restyle point sources or render SSO arrows in a
+different colour without invoking SkyStacker again. The exact group schema is
+listed in [output-formats.md](output-formats.md).
+
 ## Limits
 
 | Resource | Control |

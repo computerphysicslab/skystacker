@@ -264,6 +264,13 @@ FITS header. `report.txt` records the method under `Plate solution:` and the
 command line under `Command line:`; `--json-report` adds a structured copy of
 the run report.
 
+Downstream products consume the same solution. `--sky-map` writes a layered SVG
+(independent groups for stars, extended objects, SSO motion vectors, labels and
+footer), and `--annotate --sso-ephemeris FILE` adds MPC-style Solar System
+objects with velocity arrows. Their schemas are described in
+[astrometry-products.md](astrometry-products.md) and
+[output-formats.md](output-formats.md).
+
 ## 6. Consuming the solution from another application
 
 SkyStacker is a CLI, not a daemon. A remote service can invoke it as a process

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ import (
 type skyMapSource struct {
 	X        float64
 	Y        float64
+	RA       float64
+	Dec      float64
 	Mag      float64
 	Name     string
 	Kind     string
@@ -29,11 +32,193 @@ type skyMapSource struct {
 	Extended bool
 }
 
+type skyVelocityVector struct {
+	X1          float64
+	Y1          float64
+	X2          float64
+	Y2          float64
+	Name        string
+	Observatory string
+}
+
+// Label placement constants mirror the layered annotation design: eight
+// selectable fields per label, sixteen candidate anchor positions (eight
+// directions at two radii) and twenty collision-resolution passes.
+const (
+	skyLabelFields             = 8
+	skyLabelCandidatePositions = 16
+	skyLabelCollisionPasses    = 20
+	skyLabelFontSize           = 10.0
+)
+
+var skyLabelFieldNames = [skyLabelFields]string{"name", "kind", "mag", "ra", "dec", "major", "minor", "pa"}
+
+// fieldRotationDeg returns the pixel x-axis position angle derived from the
+// CD matrix, in degrees.
+func fieldRotationDeg(w *wcsTan) float64 {
+	if w == nil {
+		return 0
+	}
+	return math.Atan2(w.CD[0][1], w.CD[1][1]) * 180.0 / math.Pi
+}
+
+// correctedPA maps a celestial position angle into the pixel frame, accounting
+// for field rotation and a mirrored CD matrix (negative determinant).
+func correctedPA(w *wcsTan, paDeg float64) float64 {
+	if w == nil {
+		return paDeg
+	}
+	sign := 1.0
+	if w.CD[0][0]*w.CD[1][1]-w.CD[0][1]*w.CD[1][0] < 0 {
+		sign = -1
+	}
+	return fieldRotationDeg(w) + sign*paDeg
+}
+
+type labelBox struct {
+	X, Y, W, H float64
+	Text       string
+}
+
+func labelText(s skyMapSource, fields int) string {
+	if fields <= 0 || fields > skyLabelFields {
+		fields = 1
+	}
+	parts := make([]string, 0, fields)
+	for i := 0; i < fields; i++ {
+		switch skyLabelFieldNames[i] {
+		case "name":
+			if s.Name != "" {
+				parts = append(parts, s.Name)
+			}
+		case "kind":
+			if s.Kind != "" {
+				parts = append(parts, s.Kind)
+			}
+		case "mag":
+			if s.Mag != 0 {
+				parts = append(parts, fmt.Sprintf("G=%.1f", s.Mag))
+			}
+		case "ra":
+			parts = append(parts, fmt.Sprintf("RA=%.3f", s.RA*180/math.Pi))
+		case "dec":
+			parts = append(parts, fmt.Sprintf("Dec=%.3f", s.Dec*180/math.Pi))
+		case "major":
+			if s.Major > 0 {
+				parts = append(parts, fmt.Sprintf("a=%.1f", s.Major))
+			}
+		case "minor":
+			if s.Minor > 0 {
+				parts = append(parts, fmt.Sprintf("b=%.1f", s.Minor))
+			}
+		case "pa":
+			if s.PA != 0 || s.Extended {
+				parts = append(parts, fmt.Sprintf("PA=%.1f", s.PA))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
+}
+
+func overlapArea(a, b labelBox) float64 {
+	dx := math.Min(a.X+a.W, b.X+b.W) - math.Max(a.X, b.X)
+	dy := math.Min(a.Y+a.H, b.Y+b.H) - math.Max(a.Y, b.Y)
+	if dx <= 0 || dy <= 0 {
+		return 0
+	}
+	return dx * dy
+}
+
+// placeLabels resolves collisions deterministically over 20 passes. Each
+// label checks 16 candidate anchors (8 directions x 2 radii) and keeps the
+// placement with the smallest overlap and distance penalty.
+func placeLabels(width, height int, sources []skyMapSource, fields int) []labelBox {
+	placed := make([]labelBox, 0, len(sources))
+	dirs := [8][2]float64{{1, 0}, {0.707, 0.707}, {0, 1}, {-0.707, 0.707}, {-1, 0}, {-0.707, -0.707}, {0, -1}, {0.707, -0.707}}
+	order := make([]int, len(sources))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool { return sources[order[i]].Mag < sources[order[j]].Mag })
+	for pass := range skyLabelCollisionPasses {
+		for _, idx := range order {
+			s := sources[idx]
+			text := labelText(s, fields)
+			if text == "" {
+				continue
+			}
+			w := float64(len(text)) * skyLabelFontSize * 0.62
+			h := skyLabelFontSize + 4
+			best := labelBox{}
+			bestScore := math.Inf(1)
+			for c := 0; c < skyLabelCandidatePositions; c++ {
+				d := dirs[c%8]
+				radius := 11.0
+				if c >= 8 {
+					radius = 22.0
+				}
+				x := s.X + d[0]*radius
+				y := s.Y + d[1]*radius
+				if d[0] < -0.5 {
+					x -= w
+				}
+				if d[1] < -0.5 {
+					y -= h
+				}
+				x = math.Max(2, math.Min(x, float64(width)-w-2))
+				y = math.Max(2, math.Min(y, float64(height)-h-2))
+				cand := labelBox{X: x, Y: y, W: w, H: h, Text: text}
+				score := math.Hypot(x-s.X, y-s.Y) + float64(c)*0.05
+				for _, other := range placed {
+					if other.Text == text && other.X == x && other.Y == y {
+						continue
+					}
+					score += overlapArea(cand, other) * 2
+				}
+				if score < bestScore {
+					bestScore, best = score, cand
+				}
+			}
+			found := false
+			for j := range placed {
+				if placed[j].Text == text {
+					placed[j] = best
+					found = true
+					break
+				}
+			}
+			if !found {
+				placed = append(placed, best)
+			}
+		}
+		if pass == skyLabelCollisionPasses-1 {
+			break
+		}
+	}
+	return placed
+}
+
 func buildSkyMapSVG(width, height int, sources []skyMapSource) string {
+	return buildSkyMapSVGLayers(width, height, sources, nil, 1)
+}
+
+// buildSkyMapSVGLayers writes a layered SVG: independent <g> groups for the
+// background, point sources, extended objects, SSO markers, velocity vectors,
+// labels and footer. Layers carry stable ids and class attributes so external
+// applications can toggle, restyle or recompose them.
+func buildSkyMapSVGLayers(width, height int, sources []skyMapSource, velocities []skyVelocityVector, labelFields int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\">\n", width, height, width, height)
-	fmt.Fprintf(&b, "<rect width=\"%d\" height=\"%d\" fill=\"#05070d\"/>\n", width, height)
+	fmt.Fprintln(&b, "<style>.skystacker-layer{isolation:isolate} .skystacker-hidden{display:none}</style>")
+	fmt.Fprintf(&b, "<g id=\"background\" class=\"skystacker-layer\" data-layer=\"background\"><rect width=\"%d\" height=\"%d\" fill=\"#05070d\"/></g>\n", width, height)
+	fmt.Fprintln(&b, "<g id=\"gaia-stars\" class=\"skystacker-layer\" data-layer=\"point-sources\">")
 	for _, s := range sources {
+		if s.Extended && s.Major > 0 && s.Minor > 0 {
+			continue
+		}
 		r := 1.5 + (18-s.Mag)*0.35
 		if r < 1.2 {
 			r = 1.2
@@ -42,15 +227,37 @@ func buildSkyMapSVG(width, height int, sources []skyMapSource) string {
 			r = 10
 		}
 		label := html.EscapeString(s.Name)
-		if s.Extended && s.Major > 0 && s.Minor > 0 {
-			fmt.Fprintf(&b, "<ellipse cx=\"%.2f\" cy=\"%.2f\" rx=\"%.2f\" ry=\"%.2f\" transform=\"rotate(%.1f %.2f %.2f)\" fill=\"none\" stroke=\"#55ccff\" stroke-width=\"1.2\"><title>%s (%s)</title></ellipse>\n",
-				s.X, s.Y, s.Major/2, s.Minor/2, s.PA, s.X, s.Y, label, html.EscapeString(s.Kind))
-		} else {
-			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"#ffe9b0\" opacity=\"0.85\"><title>%s (%s, G=%.2f)</title></circle>\n",
-				s.X, s.Y, r, label, html.EscapeString(s.Kind), s.Mag)
-		}
+		fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"#ffe9b0\" opacity=\"0.85\"><title>%s (%s, G=%.2f)</title></circle>\n",
+			s.X, s.Y, r, label, html.EscapeString(s.Kind), s.Mag)
 	}
-	fmt.Fprintf(&b, "<text x=\"8\" y=\"%d\" fill=\"#8899aa\" font-family=\"monospace\" font-size=\"11\">SkyStacker synthetic sky map — %d catalogued sources</text>\n</svg>\n", height-8, len(sources))
+	fmt.Fprintln(&b, "</g>")
+	fmt.Fprintln(&b, "<g id=\"extended-objects\" class=\"skystacker-layer\" data-layer=\"extended-sources\">")
+	for _, s := range sources {
+		if !s.Extended || s.Major <= 0 || s.Minor <= 0 {
+			continue
+		}
+		label := html.EscapeString(s.Name)
+		fmt.Fprintf(&b, "<ellipse cx=\"%.2f\" cy=\"%.2f\" rx=\"%.2f\" ry=\"%.2f\" transform=\"rotate(%.1f %.2f %.2f)\" fill=\"none\" stroke=\"#55ccff\" stroke-width=\"1.2\" data-pa=\"%.1f\"><title>%s (%s)</title></ellipse>\n",
+			s.X, s.Y, s.Major/2, s.Minor/2, s.PA, s.X, s.Y, s.PA, label, html.EscapeString(s.Kind))
+	}
+	fmt.Fprintln(&b, "</g>")
+	fmt.Fprintln(&b, "<g id=\"sso-vectors\" class=\"skystacker-layer\" data-layer=\"motion\">")
+	for _, v := range velocities {
+		fmt.Fprintf(&b, "<line x1=\"%.2f\" y1=\"%.2f\" x2=\"%.2f\" y2=\"%.2f\" stroke=\"#ff8f6b\" stroke-width=\"1.4\" marker-end=\"url(#sso-arrow)\" data-object=\"%s\" data-site=\"%s\"><title>%s velocity vector</title></line>\n",
+			v.X1, v.Y1, v.X2, v.Y2, html.EscapeString(v.Name), html.EscapeString(v.Observatory), html.EscapeString(v.Name))
+	}
+	fmt.Fprintln(&b, "</g>")
+	fmt.Fprintf(&b, "<defs><marker id=\"sso-arrow\" markerWidth=\"6\" markerHeight=\"6\" refX=\"5\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L6,3 L0,6 Z\" fill=\"#ff8f6b\"/></marker></defs>\n")
+	fmt.Fprintf(&b, "<g id=\"labels\" class=\"skystacker-layer\" data-layer=\"labels\" data-fields=\"%d\" data-candidates=\"%d\" data-passes=\"%d\">\n",
+		skyLabelFields, skyLabelCandidatePositions, skyLabelCollisionPasses)
+	for _, l := range placeLabels(width, height, sources, labelFields) {
+		fmt.Fprintf(&b, "<text x=\"%.2f\" y=\"%.2f\" fill=\"#d7e3f4\" font-family=\"monospace\" font-size=\"%.0f\">%s</text>\n",
+			l.X, l.Y+skyLabelFontSize, skyLabelFontSize, html.EscapeString(l.Text))
+	}
+	fmt.Fprintln(&b, "</g>")
+	fmt.Fprintf(&b, "<g id=\"footer\" class=\"skystacker-layer\" data-layer=\"footer\"><text x=\"8\" y=\"%d\" fill=\"#8899aa\" font-family=\"monospace\" font-size=\"11\">SkyStacker layered sky map — %d catalogued sources, %d motion vectors</text></g>\n",
+		height-8, len(sources), len(velocities))
+	fmt.Fprintln(&b, "</svg>")
 	return b.String()
 }
 
@@ -59,17 +266,33 @@ func skySourcesForImage(width, height int, ww *wcsTan, gaia []gaiaStar, extra []
 	for _, st := range gaia {
 		x, y := wcsTanForward(ww, st.RA, st.Dec)
 		if x >= 0 && y >= 0 && x < float64(width) && y < float64(height) {
-			sources = append(sources, skyMapSource{X: x, Y: y, Mag: st.MagG, Kind: "Gaia"})
+			sources = append(sources, skyMapSource{X: x, Y: y, RA: st.RA, Dec: st.Dec, Mag: st.MagG, Kind: "Gaia"})
 		}
 	}
 	for _, e := range extra {
-		x, y := wcsTanForward(ww, e.RA*math.Pi/180, e.Dec*math.Pi/180)
+		ra, dec := e.RA*math.Pi/180, e.Dec*math.Pi/180
+		x, y := wcsTanForward(ww, ra, dec)
 		if x >= 0 && y >= 0 && x < float64(width) && y < float64(height) {
-			sources = append(sources, skyMapSource{X: x, Y: y, Mag: e.Mag, Name: e.Name, Kind: e.Type,
-				Major: e.Major, Minor: e.Minor, PA: e.PA, Extended: e.Major > 0})
+			sources = append(sources, skyMapSource{X: x, Y: y, RA: ra, Dec: dec, Mag: e.Mag, Name: e.Name, Kind: e.Type,
+				Major: e.Major, Minor: e.Minor, PA: correctedPA(ww, e.PA), Extended: e.Major > 0})
 		}
 	}
 	return sources
+}
+
+// skyMapVectors loads an optional SSO ephemeris and projects its motion into
+// the solved frame. Missing files are reported and skipped; a bad ephemeris is
+// a hard error because the user explicitly requested the motion layer.
+func skyMapVectors(w *wcsTan, path string) []skyVelocityVector {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	e, err := loadSSOEphemeris(path)
+	if err != nil {
+		logf("Sky map: SSO ephemeris ignored: %v", err)
+		return nil
+	}
+	return ssoVectorsForWCS(w, e, 0, 0)
 }
 
 func readStackDimensions(outputDir string) (int, int, error) {
@@ -114,9 +337,10 @@ func runSkyMapSVG(outputDir string, opts runOptions) error {
 		return err
 	}
 	sources := skySourcesForImage(w, h, &ww, tile.Stars, extra)
+	vectors := skyMapVectors(&ww, opts.SsoEphemeris)
 	path := filepath.Join(outputDir, "stacked_sky_map.svg")
 	if err := writeFileAtomic(path, func(out io.Writer) error {
-		_, err := io.WriteString(out, buildSkyMapSVG(w, h, sources))
+		_, err := io.WriteString(out, buildSkyMapSVGLayers(w, h, sources, vectors, 1))
 		return err
 	}); err != nil {
 		return err
@@ -194,10 +418,11 @@ func runSkyMapForImage(f *frame, sol *plateSolution, dir, base string, opts runO
 		return err
 	}
 	sources := skySourcesForImage(f.Width, f.Height, &ww, tile.Stars, extra)
+	vectors := skyMapVectors(&ww, opts.SsoEphemeris)
 	stem := strings.TrimSuffix(base, filepath.Ext(base)) + "_sky_map.svg"
 	path := filepath.Join(dir, stem)
 	if err := writeFileAtomic(path, func(out io.Writer) error {
-		_, err := io.WriteString(out, buildSkyMapSVG(f.Width, f.Height, sources))
+		_, err := io.WriteString(out, buildSkyMapSVGLayers(f.Width, f.Height, sources, vectors, 1))
 		return err
 	}); err != nil {
 		return err

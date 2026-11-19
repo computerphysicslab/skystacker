@@ -28,6 +28,19 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
 - `429` responses are retried with backoff; the client limits concurrency to
   four active requests.
 
+## Annotation and SSO layers
+
+- `SSO ephemeris …: DATE-OBS header is required` — add a `# DATE-OBS <ISO>` line
+  to the ephemeris; velocity vectors need an observation epoch.
+- `object ID must start with a:/c:/p:/dp:/s:` — use MPC-style prefixes in the
+  first column of each ephemeris row.
+- `SSO: no complete site header; using geocentric positions` — add `# OBSERVATORY CODE`,
+  `# LAT` and `# LON` for a topocentric site; otherwise positions are geocentric.
+- `Sky map: SSO ephemeris ignored: …` — the file could not be parsed; the SVG is
+  still written without the `sso-vectors` layer.
+- Missing ellipse shapes in the SVG — an external catalogue entry needs both
+  `major` and `minor` to be positive; PA is already pixel-frame corrected.
+
 ## Calibration and stacking
 
 - `input folder mixes images of different dimensions` — move the mismatching
@@ -56,7 +69,7 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
 
 ## Self-test and build
 
-- `--selftest` must print `all 260 self-tests passed`; a failure exits `1`.
+- `--selftest` must print `all 262 self-tests passed`; a failure exits `1`.
 - `gofmt -l *.go` must print nothing and `go vet ./...` must be clean.
 - Always install the rebuilt binary on `PATH` and verify `which skystacker` and
   `skystacker --version` before running a production batch.

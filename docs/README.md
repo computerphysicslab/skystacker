@@ -16,10 +16,10 @@ All documents are written in English.
 | [quickstart.md](quickstart.md) | First stack, single-image processing, typical session workflow. |
 | [cli-reference.md](cli-reference.md) | Every CLI flag grouped by subsystem, with defaults and dependencies. |
 | [plate-solving.md](plate-solving.md) | All plate-solving paths, real-command examples, WCS outputs and integration recipes. |
-| [astrometry-products.md](astrometry-products.md) | Sky maps, HiPS survey cutouts, annotation, cone search, photometry. |
+| [astrometry-products.md](astrometry-products.md) | Layered SVG sky maps, HiPS cutouts, annotation, cone search, SSO velocity vectors and photometry. |
 | [calibration-and-stacking.md](calibration-and-stacking.md) | Master calibration, frame selection, rejection, weights, XNML ingestion. |
 | [post-processing.md](post-processing.md) | The eight display steps, presets and opt-in enhancements. |
-| [output-formats.md](output-formats.md) | TIFF/FITS/XISF/BigTIFF, float32 raw planes, CSV and JSON schemas. |
+| [output-formats.md](output-formats.md) | TIFF/FITS/XISF/BigTIFF, float32 raw planes, layered SVG, CSV and JSON schemas. |
 | [integration.md](integration.md) | Calling SkyStacker from another application: exit codes, reports, batch mode, remote use. |
 | [troubleshooting.md](troubleshooting.md) | Common failures and the exact logs that identify them. |
 
@@ -32,7 +32,7 @@ All documents are written in English.
 - Output paths under `/tmp/` are scratch directories used for examples; replace
   them with your own results directory in production.
 - Every example can be checked locally: `--version` prints the build version and
-  `--selftest` runs the embedded regression suite (260 registered cases in
+  `--selftest` runs the embedded regression suite (262 registered cases in
   v0.6.1).
 
 ## Status

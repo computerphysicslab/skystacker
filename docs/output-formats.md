@@ -75,10 +75,30 @@ catalogue/cache versions.
 | File | Producer |
 |---|---|
 | `catalog_matches.json`, `anomalies.json` | `--annotate` |
-| `stacked_sky_map.svg` | `--sky-map` |
+| `stacked_sky_map.svg` | `--sky-map` (layered `<g>` groups: background, gaia-stars, extended-objects, sso-vectors, labels, footer) |
 | `survey_reference.fits/.jpg` | `--survey-cutout` |
 | `diagnostics.txt/.json` | `--diagnose`, `--diagnose-integrated` |
 | `master_*.f32raw/.jpg` | `--export-masters` |
+
+### Layered SVG schema
+
+`stacked_sky_map.svg` and `<base>_sky_map.svg` are plain SVG 1.1 with stable
+group ids so consumers can select, restyle or hide layers without re-parsing
+the WCS:
+
+| Group id | `data-layer` | Content |
+|---|---|---|
+| `background` | `background` | Frame rectangle. |
+| `gaia-stars` | `point-sources` | Magnitude-sized `<circle>` elements with `<title>`. |
+| `extended-objects` | `extended-sources` | `<ellipse>` with `data-pa` (pixel-frame degrees). |
+| `sso-vectors` | `motion` | `<line>` with `data-object` and `data-site`, arrow marker `sso-arrow`. |
+| `labels` | `labels` | `<text>` from deterministic collision placement; group declares `data-fields="8"`, `data-candidates="16"`, `data-passes="20"`. |
+| `footer` | `footer` | Source and vector counts. |
+
+Every group also carries `class="skystacker-layer"` and
+`style="isolation:isolate"` via the embedded stylesheet. Ellipse position
+angles already include field rotation and mirror correction; consumers must not
+apply a second rotation.
 
 ## Coordinate conventions for consumers
 

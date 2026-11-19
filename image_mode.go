@@ -282,7 +282,10 @@ func runImageCommand(o *cliOptions) error {
 		if err != nil {
 			return err
 		}
-		return runSkyMapForImage(f, sol, dir, filepath.Base(paths[0]), runOptions{AnnotationCatalogs: o.AnnotationCatalogs})
+		return runSkyMapForImage(f, sol, dir, filepath.Base(paths[0]), runOptions{
+			AnnotationCatalogs: o.AnnotationCatalogs,
+			SsoEphemeris:       o.SsoEphemeris,
+		})
 	case "survey-cutout":
 		f, err := decodeImageFile(paths[0], 0, 0)
 		if err != nil {

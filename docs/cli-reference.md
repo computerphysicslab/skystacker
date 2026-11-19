@@ -81,6 +81,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--resample-sip` | off | Apply stored SIP in the stacking resampler. |
 | `--annotate` | off | Gaia projection + anomaly flags. |
 | `--annotation-catalogs LIST` | — | Extra JSON catalogues. |
+| `--sso-ephemeris FILE` | — | MPC-style SSO ephemeris with site header and mandatory `DATE-OBS`; velocity-vector layer. |
 | `--cone-catalog NAME` / `--cone-radius N` | — / `60` | SDSS/IRSA/VizieR cone search (arcsec). |
 | `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. |
 | `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | Survey selection and timeout. |

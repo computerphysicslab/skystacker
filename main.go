@@ -240,6 +240,7 @@ type cliOptions struct {
 	XNMLDir                string
 	Annotate               bool
 	AnnotationCatalogs     string
+	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
 	Provenance             bool
@@ -543,6 +544,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.XNMLDir, "xnml-dir", "", "fallback folder for .xnml sidecars when they are not next to the light frames")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
 	fs.StringVar(&o.AnnotationCatalogs, "annotation-catalogs", "", "comma-separated JSON catalogs (ra/dec degrees, optional name/type/mag/major/minor/pa) for multi-catalog cross-match")
+	fs.StringVar(&o.SsoEphemeris, "sso-ephemeris", "", "MPC-style SSO ephemeris with site header and DATE-OBS for velocity-vector annotation layers")
 	fs.StringVar(&o.RejectionMode, "rejection", "", "rejection heuristic: auto, mean, median or sigma (auto maps Min/Max/Percentile/Sigma/Winsorized/Linear-Fit bands onto shipped reducers)")
 	fs.StringVar(&o.PostPreset, "post-preset", "default", "post-processing order: default or detail-last (detail enhancement after denoise)")
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
@@ -624,7 +626,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -1110,6 +1112,170 @@ func interpCometEphem(pts []cometEphemPoint, t time.Time) (ra, dec float64) {
 	return pts[len(pts)-1].ra, pts[len(pts)-1].dec
 }
 
+// ssoObjectID is a parsed MPC-style designation. The prefix selects the
+// ephemeris kind: a = asteroid, c = comet, p = planet, dp = dwarf planet,
+// s = satellite.
+type ssoObjectID struct {
+	Prefix      string
+	Designation string
+}
+
+func parseSSOObjectID(token string) (ssoObjectID, bool) {
+	for _, prefix := range []string{"dp", "a", "c", "p", "s"} {
+		if strings.HasPrefix(token, prefix+":") {
+			return ssoObjectID{Prefix: prefix, Designation: strings.TrimPrefix(token, prefix+":")}, true
+		}
+	}
+	return ssoObjectID{}, false
+}
+
+type ssoEphemeris struct {
+	Objects     map[string][]cometEphemPoint
+	Order       []string
+	Observatory string
+	SiteKnown   bool
+	DateObs     time.Time
+}
+
+// loadSSOEphemeris reads an MPC-style ephemeris with comment headers. It
+// requires a DATE-OBS header: without an observation epoch velocity vectors
+// cannot be defined. A three-symbol IAU observatory code plus site coordinates
+// mark a topocentric site; otherwise the geocentric fallback is used.
+func loadSSOEphemeris(path string) (*ssoEphemeris, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	e := &ssoEphemeris{Objects: make(map[string][]cometEphemPoint)}
+	var siteLat, siteLon bool
+	sc := bufio.NewScanner(f)
+	lineno := 0
+	for sc.Scan() {
+		lineno++
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			header := strings.TrimSpace(strings.TrimPrefix(line, "#"))
+			fields := strings.Fields(header)
+			if len(fields) >= 2 {
+				key := strings.ToUpper(fields[0])
+				switch key {
+				case "OBSERVATORY", "OBS", "SITE", "IAU":
+					code := fields[1]
+					if len(code) == 3 {
+						e.Observatory = code
+					}
+				case "LAT":
+					siteLat = true
+				case "LON":
+					siteLon = true
+				case "DATE-OBS":
+					t, ok := parseEphemTimeStr(strings.TrimSpace(header[len(fields[0]):]))
+					if !ok {
+						return nil, fmt.Errorf("SSO ephemeris %s:%d: bad DATE-OBS", path, lineno)
+					}
+					e.DateObs = t
+				}
+			}
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			return nil, fmt.Errorf("SSO ephemeris %s:%d: need ID, time, ra_deg, dec_deg", path, lineno)
+		}
+		id, ok := parseSSOObjectID(fields[0])
+		if !ok {
+			return nil, fmt.Errorf("SSO ephemeris %s:%d: object ID must start with a:/c:/p:/dp:/s:, got %q", path, lineno, fields[0])
+		}
+		tstr := ""
+		var t time.Time
+		for i := 1; i < len(fields)-2; i++ {
+			if parsed, ok := parseEphemTimeStr(fields[i]); ok {
+				tstr, t = fields[i], parsed
+				break
+			}
+		}
+		if tstr == "" {
+			return nil, fmt.Errorf("SSO ephemeris %s:%d: cannot parse time in %q", path, lineno, line)
+		}
+		raDeg, err1 := strconv.ParseFloat(fields[len(fields)-2], 64)
+		decDeg, err2 := strconv.ParseFloat(fields[len(fields)-1], 64)
+		if err1 != nil || err2 != nil || raDeg < 0 || raDeg >= 360 || decDeg < -90 || decDeg > 90 {
+			return nil, fmt.Errorf("SSO ephemeris %s:%d: invalid ra/dec", path, lineno)
+		}
+		key := id.Prefix + ":" + id.Designation
+		if _, seen := e.Objects[key]; !seen {
+			e.Order = append(e.Order, key)
+		}
+		e.Objects[key] = append(e.Objects[key], cometEphemPoint{
+			t: t, ra: raDeg * math.Pi / 180, dec: decDeg * math.Pi / 180,
+		})
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if e.DateObs.IsZero() {
+		return nil, fmt.Errorf("SSO ephemeris %s: DATE-OBS header is required", path)
+	}
+	e.SiteKnown = siteLat && siteLon && e.Observatory != ""
+	if !e.SiteKnown {
+		logf("SSO: no complete site header; using geocentric positions")
+	}
+	for _, key := range e.Order {
+		pts := e.Objects[key]
+		sort.Slice(pts, func(i, j int) bool { return pts[i].t.Before(pts[j].t) })
+		e.Objects[key] = pts
+	}
+	return e, nil
+}
+
+func interpSSO(e *ssoEphemeris, id string, t time.Time) (float64, float64, bool) {
+	pts, ok := e.Objects[id]
+	if !ok || len(pts) == 0 {
+		return 0, 0, false
+	}
+	ra, dec := interpCometEphem(pts, t)
+	return ra, dec, true
+}
+
+// ssoVectorsForWCS projects one hour of motion at DATE-OBS into pixel space.
+// The arrow is visually scaled (20x, capped at 60 px) while preserving its
+// direction, so slow movers remain visible in a diagnostic overlay.
+func ssoVectorsForWCS(w *wcsTan, e *ssoEphemeris, width, height int) []skyVelocityVector {
+	if e == nil || w == nil {
+		return nil
+	}
+	out := make([]skyVelocityVector, 0, len(e.Order))
+	for _, id := range e.Order {
+		pts := e.Objects[id]
+		if len(pts) < 2 {
+			continue
+		}
+		ra1, dec1, ok1 := interpSSO(e, id, e.DateObs)
+		ra2, dec2, ok2 := interpSSO(e, id, e.DateObs.Add(time.Hour))
+		if !ok1 || !ok2 {
+			continue
+		}
+		x1, y1 := wcsTanForward(w, ra1, dec1)
+		x2, y2 := wcsTanForward(w, ra2, dec2)
+		dx, dy := (x2-x1)*20, (y2-y1)*20
+		if length := math.Hypot(dx, dy); length > 60 {
+			dx, dy = dx*60/length, dy*60/length
+		}
+		if math.Hypot(dx, dy) < 2 {
+			continue
+		}
+		out = append(out, skyVelocityVector{
+			X1: x1, Y1: y1, X2: x1 + dx, Y2: y1 + dy,
+			Name: id, Observatory: e.Observatory,
+		})
+	}
+	return out
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: skystacker [flags] [input-directory]")
 	fmt.Fprintln(w)
@@ -1219,6 +1385,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --xnml-dir PATH    fallback folder for .xnml sidecars (default: same folder as each light)")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
 	fmt.Fprintln(w, "  --annotation-catalogs LIST  extra JSON catalogs for cross-match (RA/Dec in degrees)")
+	fmt.Fprintln(w, "  --sso-ephemeris FILE        MPC-style SSO ephemeris (a:/c:/p:/dp:/s: IDs), site header and DATE-OBS")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
 	fmt.Fprintln(w, "  --provenance       write provenance.json (IVOA ProvenanceDM-style run graph)")
@@ -5526,6 +5693,9 @@ func resolvedFlagLines(o runOptions) []string {
 		if o.AnnotationCatalogs != "" {
 			add("--annotation-catalogs " + quoteReportArg(o.AnnotationCatalogs))
 		}
+		if o.SsoEphemeris != "" {
+			add("--sso-ephemeris " + quoteReportArg(o.SsoEphemeris))
+		}
 	}
 	if o.Starless {
 		add("--starless")
@@ -6059,6 +6229,7 @@ type runOptions struct {
 	XNMLDir                string
 	Annotate               bool
 	AnnotationCatalogs     string
+	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
 	Provenance             bool
@@ -12841,13 +13012,32 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 			red := color.RGBA{255, 0, 0, 255}
 			for _, c := range cat {
 				if c.major > 0 && c.minor > 0 {
-					drawEllipseOutline(rgba, c.x, c.y, c.major, c.minor, c.pa, green)
+					drawEllipseOutline(rgba, c.x, c.y, c.major, c.minor, correctedPA(&w, c.pa), green)
 				} else {
 					cross(c.x, c.y, green, 2)
 				}
 			}
 			for _, a := range anomalies {
 				cross(a.X, a.Y, red, 4)
+			}
+			if strings.TrimSpace(opts.SsoEphemeris) != "" {
+				ephem, serr := loadSSOEphemeris(opts.SsoEphemeris)
+				if serr != nil {
+					logf("Catalog annotation: SSO ephemeris ignored: %v", serr)
+				} else {
+					orange := color.RGBA{255, 143, 107, 255}
+					for _, v := range ssoVectorsForWCS(&w, ephem, iw, ih) {
+						steps := int(math.Max(math.Abs(v.X2-v.X1), math.Abs(v.Y2-v.Y1))) + 1
+						for k := 0; k <= steps; k++ {
+							f := float64(k) / float64(steps)
+							x := int(math.Round(v.X1 + f*(v.X2-v.X1)))
+							y := int(math.Round(v.Y1 + f*(v.Y2-v.Y1)))
+							if x >= 0 && y >= 0 && x < iw && y < ih {
+								rgba.Set(x, y, orange)
+							}
+						}
+					}
+				}
 			}
 			outPath := filepath.Join(outputDir, "stacked_annotated.jpg")
 			if of, err := os.Create(outPath); err == nil {
@@ -17782,6 +17972,109 @@ func testEXIFGPSSeed() error {
 	return nil
 }
 
+func testLayeredSVGAnnotation() error {
+	sources := []skyMapSource{
+		{X: 50, Y: 40, Mag: 8, Kind: "Gaia"},
+		{X: 150, Y: 60, RA: 1.0, Dec: 0.3, Mag: 11, Name: "NGC <test>", Kind: "galaxy", Major: 20, Minor: 10, PA: 30, Extended: true},
+		{X: 155, Y: 62, Mag: 12, Name: "Nearby", Kind: "star"},
+	}
+	velocities := []skyVelocityVector{{X1: 100, Y1: 100, X2: 130, Y2: 112, Name: "a:2026 AB1", Observatory: "568"}}
+	svg := buildSkyMapSVGLayers(300, 200, sources, velocities, 5)
+	for _, want := range []string{
+		`<g id="background"`, `<g id="gaia-stars"`, `<g id="extended-objects"`,
+		`<g id="sso-vectors"`, `<g id="labels"`, `<g id="footer"`,
+		`class="skystacker-layer"`, `data-candidates="16"`, `data-passes="20"`,
+		`&lt;test&gt;`, `RA=57.296`, `<line `, `marker-end="url(#sso-arrow)"`,
+	} {
+		if !strings.Contains(svg, want) {
+			return fmt.Errorf("layered SVG missing %q", want)
+		}
+	}
+	if skyLabelFields != 8 || skyLabelCandidatePositions != 16 || skyLabelCollisionPasses != 20 {
+		return fmt.Errorf("label placement constants: %d/%d/%d", skyLabelFields, skyLabelCandidatePositions, skyLabelCollisionPasses)
+	}
+	boxes := placeLabels(300, 200, sources, 2)
+	if len(boxes) != 3 {
+		return fmt.Errorf("label boxes: got %d, want 3", len(boxes))
+	}
+	for _, b := range boxes {
+		if b.X < 0 || b.Y < 0 || b.X+b.W > 300 || b.Y+b.H > 200 {
+			return fmt.Errorf("label outside frame: %+v", b)
+		}
+	}
+	w := rotatedWCS(1.0, 0.2, 2.0, 30, false)
+	if got := correctedPA(w, 20); math.Abs(got+10) > 1e-9 {
+		return fmt.Errorf("field-rotation PA: got %g, want -10", got)
+	}
+	mirrored := rotatedWCS(1.0, 0.2, 2.0, 30, true)
+	if got := correctedPA(mirrored, 20); math.Abs(got-130) > 1e-9 {
+		return fmt.Errorf("mirrored PA: got %g, want 130", got)
+	}
+	return nil
+}
+
+func testSSOAnnotation() error {
+	dir, err := os.MkdirTemp("", "skystacker-sso-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	body := "# OBSERVATORY 568\n# LAT 40.4\n# LON -3.7\n# DATE-OBS 2026-11-19T21:00:00Z\n"
+	for _, prefix := range []string{"a", "c", "p", "dp", "s"} {
+		body += fmt.Sprintf("%s:2026-TEST-%s 2026-11-19T21:00:00Z 83.8221 22.0145\n", prefix, prefix)
+		body += fmt.Sprintf("%s:2026-TEST-%s 2026-11-19T23:00:00Z 83.9123 22.1010\n", prefix, prefix)
+	}
+	path := filepath.Join(dir, "sso.txt")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return err
+	}
+	e, err := loadSSOEphemeris(path)
+	if err != nil {
+		return err
+	}
+	if len(e.Order) != 5 || e.Observatory != "568" || !e.SiteKnown || e.DateObs.IsZero() {
+		return fmt.Errorf("SSO ephemeris header: %+v", e)
+	}
+	for _, prefix := range []string{"a", "c", "p", "dp", "s"} {
+		if _, ok := parseSSOObjectID(prefix + ":2026 TEST"); !ok {
+			return fmt.Errorf("prefix %s not accepted", prefix)
+		}
+	}
+	if _, ok := parseSSOObjectID("x:2026 BAD"); ok {
+		return errors.New("unknown SSO prefix accepted")
+	}
+	w := rotatedWCS(83.8221*math.Pi/180, 22.0145*math.Pi/180, 2, 0, false)
+	vectors := ssoVectorsForWCS(w, e, 512, 512)
+	if len(vectors) != 5 {
+		return fmt.Errorf("SSO vectors: got %d, want 5", len(vectors))
+	}
+	svg := buildSkyMapSVGLayers(512, 512, nil, vectors, 1)
+	if !strings.Contains(svg, `<g id="sso-vectors"`) || !strings.Contains(svg, "a:2026-TEST-a") {
+		return fmt.Errorf("SSO layer missing: %s", svg[:min(len(svg), 400)])
+	}
+	noSite := filepath.Join(dir, "geocentric.txt")
+	geo := strings.Replace(body, "# LAT 40.4\n# LON -3.7\n", "", 1)
+	if err := os.WriteFile(noSite, []byte(geo), 0o644); err != nil {
+		return err
+	}
+	geocentric, err := loadSSOEphemeris(noSite)
+	if err != nil || geocentric.SiteKnown {
+		return fmt.Errorf("geocentric fallback: %+v err=%v", geocentric, err)
+	}
+	noDate := filepath.Join(dir, "nodate.txt")
+	if err := os.WriteFile(noDate, []byte(strings.Replace(body, "# DATE-OBS 2026-11-19T21:00:00Z\n", "", 1)), 0o644); err != nil {
+		return err
+	}
+	if _, err := loadSSOEphemeris(noDate); err == nil {
+		return errors.New("SSO ephemeris without DATE-OBS should fail")
+	}
+	opts, err := parseArgs([]string{"--sso-ephemeris", path})
+	if err != nil || opts.SsoEphemeris != path {
+		return fmt.Errorf("SSO flag: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testAstrometryWCSParse() error {
 	w, sip, err := parseAstrometryWCS(astrometryTestWCS())
 	if err != nil {
@@ -19659,6 +19952,8 @@ func runSelfTests() int {
 		{"donation footer", testDonationFooter},
 		{"dither diagnostic", testDitherDiagnostic},
 		{"sky map and survey cutout", testSkyProducts},
+		{"layered SVG annotation", testLayeredSVGAnnotation},
+		{"SSO velocity-vector annotation", testSSOAnnotation},
 		{"standalone image mode", testImageMode},
 		{"rejection heuristic", testRejectionHeuristic},
 		{"sidecar quoted argv", testCommandArgv},
@@ -30353,6 +30648,7 @@ func main() {
 		XNMLDir:                opts.XNMLDir,
 		Annotate:               opts.Annotate,
 		AnnotationCatalogs:     opts.AnnotationCatalogs,
+		SsoEphemeris:           opts.SsoEphemeris,
 		Starless:               opts.Starless,
 		JSONReport:             opts.JSONReport,
 		Provenance:             opts.Provenance,

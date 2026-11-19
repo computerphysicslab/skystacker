@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 260 passing.** Update this number after any test change.
+**Self-test count: 262 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -1742,7 +1742,7 @@ rejection and disk spill. `--scale N` downsamples.
 - Public API: `Options`, `Collect(ctx, Options) Report`, `Report.JSON()/WriteJSON()/Text()`. OS-specific collectors sit behind a `platform` interface with `//go:build` files for linux (`/proc`, cgroup, dpkg/rpm/apk/pacman), darwin (`sysctl`, `vm_stat`, `sw_vers`, brew) and windows (PowerShell/CIM, Get-HotFix); unknown OS degrades with `ErrUnsupported`.
 - Collectors cover host/OS, Go build info and `runtime/metrics`, CPU/load, memory/swap/cgroup, filesystems, top processes, tools, whitelisted+redacted env, program dir walk with file/byte counts and binary SHA-256, network interfaces and local package inventory. Every collector has a timeout and a 64 KiB command-output cap; failures go to `Report.Errors`.
 - CLI: `--diagnose`, `--diagnose-json`, `--diagnose-quick`, `--diagnose-integrated`, `--diagnose-timeout`, `--diagnose-top`, `--diagnose-updates`. Standalone mode exits early in `main()`; integrated mode writes `diagnostics.txt`/`.json` next to a normal report. E2E `--diagnose --diagnose-json --diagnose-updates` produced a 17 kB JSON and a readable text report on this host.
-- CI has a `goDiagnostics` job (vet, CGO=0 test, cross-build linux/darwin/windows); `goDiagnostics/README.md` documents the copy-paste `require`+`replace` protocol for other projects. Selftests 260.
+- CI has a `goDiagnostics` job (vet, CGO=0 test, cross-build linux/darwin/windows); `goDiagnostics/README.md` documents the copy-paste `require`+`replace` protocol for other projects. Selftests 262.
 
 ### Module naming convention (2026-11-18, mandatory)
 
@@ -1753,7 +1753,7 @@ rejection and disk spill. `--scale N` downsamples.
 ### Roadmap items 19–28 (2026-11-18)
 
 - Delivered: frame metrics CSV + include-list culling, `--keep-sharpest` HFR selection (applied to pass-2 inputs), metadata-matched calibration library, comet+stars recombination, `--batch` JSON queue (self-exec, no shell), PSF-based starless radii, stdlib à trous wavelet denoise, FFT Wiener deconvolution with tiled overlap-add, and Gaia ensemble photometry (`photometry.csv/.json`).
-- Each feature has a registered selftest; total **260**. E2E checks covered the batch queue, include-list + sharpest selection + metrics CSV, and post-only wavelets/Wiener/photometry.
+- Each feature has a registered selftest; total **262**. E2E checks covered the batch queue, include-list + sharpest selection + metrics CSV, and post-only wavelets/Wiener/photometry.
 - Item 27 (mosaic) remains blocked by item 13 (per-frame WCS). All other former *Open* items are now *Done*; `ROADMAP.md` is the authoritative tracker.
 - Item 34 validated 2026-11-18: three 16-light OrionNebula runs gave center/border 1.00972 (self-flat only), 1.00972 (plus global normalize) and 1.02599 (plus local normalize). Local normalization touches the same low-frequency field (tile-median ratio 1.2667) but the final shift is ~1.6%, not a runaway double division. The report emits an overlap warning with the measured ratio; `testSelfFlatNormalizeInteraction` covers the synthetic gradient-only case. Self-tests 246.
 - Item 47 delivered 2026-11-18: `donations.go` holds the public ETH/USDT-USDC and BTC addresses as constants, 110 rotating English templates with address placeholders, and terminal QR codes via MIT-licensed `github.com/skip2/go-qrcode`. The footer is printed only after a fully successful stack+postprocess run (verified: full run shows it, `--stack-only` and `--no-donation` do not); `--no-donation-qr` omits QR, `--donation` prints it standalone without processing images, and `--batch` children are suppressed. This is the first third-party build dependency; the binary remains pure Go and `CGO_ENABLED=0`.
@@ -1768,7 +1768,7 @@ rejection and disk spill. `--scale N` downsamples.
 ### Roadmap Open items delivered (2026-11-18)
 
 - Items 29-44 were implemented in one pass: dither diagnostic and small-dither warning, `--rejection` stack-size heuristic, quoted sidecar argv tokenizer, `--post-preset detail-last`, GHS parameter-mapping test, independent WCS/SIP fixture, Gaia DR4 TAP adaptation (<=4 concurrent, DataLink IDs, blackout guard), pooled rejection buffers with 64px tiles, XISF/PGM/PPM input, 16-bit/mono sidecar FITS, `--wavelet-adaptive`, `--dark-scale-entropy`, `--cosmic-reject`, 9-zone tilt diagnostics and `--streak-detect`.
-- All 260 selftests pass after items 58-62, 52, 68 and the solver-chain items 67/69/72/74/75/76/77; `ROADMAP.md` now shows 51 Done, 11 Open, 6 Blocked, 1 Executed/not accepted and 8 Deferred.
+- All 262 selftests pass after items 58-62, 52, 68, solver-chain items 67/69/72/74/75/76/77 and the annotation-layer items 50/55; `ROADMAP.md` now shows 53 Done, 9 Open, 6 Blocked, 1 Executed/not accepted and 8 Deferred.
 - Items 48-49 were then delivered: `sky_products.go` adds `--sky-map` (Gaia-based `stacked_sky_map.svg` at exact frame dimensions, with optional extended-object ellipses) and `--survey-cutout` (CDS hips2fits FITS at the solved frame's width/height/FOV/rotation, saved as `survey_reference.fits/.jpg` with a star-match diagnostic). Both are opt-in and never block offline runs.
 - Items 58-62 deliver the standalone image mode in `image_mode.go`: `--process-image PATH[,PATH...]` with `--image-op` for blur/sharpen/background/stretch/denoise/deconvolve/starless, sum/subtract/average/median/min/max, measure-transform/measure-quality (CSV+JSON), plus per-image sky-map and survey-cutout using the existing `sky_products.go` helpers. Inputs are never modified; outputs go to `--image-output`.
 

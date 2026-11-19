@@ -11,10 +11,17 @@ skystacker --post-only --sky-map --plate-solve \
 ```
 
 `--sky-map` projects cached Gaia sources with `wcsTanForward` into
-`stacked_sky_map.svg` at the exact image size and orientation. Point sources are
-circles sized by magnitude with labels for bright stars. Extended objects are
-drawn only when an external catalogue supplies major/minor axes and position
-angle. Standalone mode solve a file directly:
+`stacked_sky_map.svg` at the exact image size and orientation. The SVG is
+**layered**: independent `<g id="..." class="skystacker-layer">` groups are
+emitted for `background`, `gaia-stars`, `extended-objects`, `sso-vectors`,
+`labels` and `footer`. Each group carries a stable `data-layer` key so another
+application can toggle, restyle or recompose it without re-solving. Point
+sources are circles sized by magnitude; extended objects are drawn only when an
+external catalogue supplies major/minor axes and position angle. Ellipse PAs are
+corrected for field rotation from the CD matrix and negated for mirrored WCS
+solutions. Labels use eight selectable fields, sixteen candidate anchors (eight
+directions × two radii) and twenty deterministic collision passes. Standalone
+mode solves a file directly:
 
 ```bash
 skystacker --process-image photo.jpg --image-op sky-map \
@@ -60,6 +67,34 @@ unmatched detections farther than 8 px from any catalogue source are listed in
 Results are cached as JSON under `~/.cache/skystacker/gaia_cache/` and merged
 into the annotation table. See [plate-solving.md](plate-solving.md) §6 for the
 integration contract.
+
+## Solar System Objects and velocity vectors
+
+```bash
+skystacker --post-only --annotate --sky-map \
+  --sso-ephemeris sso.txt \
+  ./assets/OrionNebula/0_skystacker_results
+```
+
+The ephemeris file uses MPC-style object IDs and comment headers:
+
+```text
+# OBSERVATORY 568
+# LAT 40.4
+# LON -3.7
+# DATE-OBS 2026-11-19T21:00:00Z
+a:2026 AB1 2026-11-19T21:00:00Z 83.8221 22.0145
+a:2026 AB1 2026-11-19T23:00:00Z 83.9123 22.1010
+c:2026 C1  2026-11-19T21:00:00Z 84.0100 22.3000
+c:2026 C1  2026-11-19T23:00:00Z 84.0200 22.3500
+```
+
+Accepted prefixes: `a:` asteroid, `c:` comet, `p:` planet, `dp:` dwarf planet,
+`s:` satellite. `DATE-OBS` is mandatory; a three-symbol IAU observatory code
+plus `LAT`/`LON` marks a topocentric site. Without a complete site header
+SkyStacker logs a geocentric fallback. One hour of motion at `DATE-OBS` is
+projected through the solved WCS and drawn as an orange arrow in the
+`sso-vectors` SVG layer and in `stacked_annotated.jpg`.
 
 ## Ensemble photometry
 
