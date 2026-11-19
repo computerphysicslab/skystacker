@@ -1246,7 +1246,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --image-op OP / --image-output DIR  operation (see --help listing) and output directory")
 	fmt.Fprintln(w, "                     ops: blur sharpen background stretch denoise deconvolve starless")
 	fmt.Fprintln(w, "                          sum subtract average median min max measure-transform")
-	fmt.Fprintln(w, "                          measure-quality sky-map survey-cutout")
+	fmt.Fprintln(w, "                          measure-quality sky-map survey-cutout plate-solve")
 	fmt.Fprintln(w, "  --deconvolve-wiener    FFT Wiener deconvolution (uses --deconv-sigma)")
 	fmt.Fprintln(w, "  --photometry           ensemble Gaia photometry -> photometry.csv/.json")
 	fmt.Fprintln(w, "  --no-donation          suppress the final thank-you/donation footer")
