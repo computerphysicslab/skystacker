@@ -203,10 +203,11 @@ type cliOptions struct {
 	PostHDR     bool
 	PostStretch bool
 
-	NoCache     bool
-	CacheDir    string
-	KeepCache   bool
-	TestDebayer string
+	NoCache          bool
+	CacheDir         string
+	KeepCache        bool
+	TestDebayer      string
+	AcquisitionCheck string
 
 	GaiaTest               string
 	GaiaMirror             string
@@ -229,6 +230,10 @@ type cliOptions struct {
 	BlindBrightest         int
 	BlindAllSky            bool
 	BlindMaxTiles          int
+	BlindTileOffset        int
+	BlindRegion            string
+	BlindIndexInfo         string
+	BlindRefresh           bool
 	ConeCatalog            string
 	ConeRadiusArcsec       float64
 	PlateSolver            string
@@ -246,6 +251,7 @@ type cliOptions struct {
 	XISFRev2               bool
 	CreateBigTIFF          bool
 	HFRQuality             bool
+	MatchedFilter          bool
 	PSFScaleSNR            bool
 	XNMLDir                string
 	Annotate               bool
@@ -264,6 +270,7 @@ type cliOptions struct {
 	FrameMetrics           string
 	IncludeList            string
 	KeepSharpest           int
+	FrameExpr              string
 	CalibLibrary           string
 	CometCombine           bool
 	Batch                  string
@@ -284,12 +291,19 @@ type cliOptions struct {
 	ImageOutput            string
 	DeconvolveWiener       bool
 	Photometry             bool
+	AperturePhotometry     bool
 	DonationEnabled        bool
 	DonationQR             bool
 	DonationShow           bool
 	RejectionMode          string
 	PostPreset             string
 	BGMultiscale           bool
+	BgAsymmetric           bool
+	BgClipLow              float64
+	BgClipHigh             float64
+	BgHarmonicScale        int
+	BgPolyDegree           int
+	BgRBF                  bool
 	ConfigPath             string
 	Deconvolve             bool
 	DeconvSigma            float64
@@ -303,6 +317,7 @@ type cliOptions struct {
 	Resume                 bool
 	DrizzleUpsample        int
 	DrizzlePixfrac         float64
+	WHTContext             bool
 	ExternalBGE            string
 	ExternalDenoise        string
 	ExternalDeconv         string
@@ -491,6 +506,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.CacheDir, "cache-dir", "", "cache directory (default: <output>/_work/cache)")
 	fs.BoolVar(&o.KeepCache, "keep-cache", false, "keep the star/transform cache after a successful run (default: remove it)")
 	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
+	fs.StringVar(&o.AcquisitionCheck, "check-acquisition-keywords", "", "validate ROWORDER/BAYERPAT/XBAYROFF/YBAYROFF/EGAIN/PIERSIDE in a RAW/FITS file and exit")
 	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
 	fs.BoolVar(&o.PlateSolve, "plate-solve", false, "run TAN WCS plate solve after stacking or in --post-only (writes plate_solution.json)")
 	fs.StringVar(&o.PlateTest, "test-plate", "", "one-shot plate solve on RA,DEC in decimal degrees: prints WCS, then exits")
@@ -505,6 +521,10 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.IntVar(&o.BlindBrightest, "blind-brightest", 100, "brightest stars per HEALPix tile when building a catalog")
 	fs.BoolVar(&o.BlindAllSky, "blind-allsky", false, "with --build-blind-index: query Gaia tiles across the sky before building the index")
 	fs.IntVar(&o.BlindMaxTiles, "blind-max-tiles", 0, "maximum number of tiles for --blind-allsky (0 = whole sky at --gaia-nside)")
+	fs.IntVar(&o.BlindTileOffset, "blind-tile-offset", 0, "first tile index for a chunked --blind-allsky build")
+	fs.StringVar(&o.BlindRegion, "blind-region", "", "RA,DEC,RADIUS_DEG cone for a high-nside regional index")
+	fs.StringVar(&o.BlindIndexInfo, "blind-index-info", "", "print statistics for a blind index file and exit")
+	fs.BoolVar(&o.BlindRefresh, "blind-refresh", false, "re-query cached Gaia tiles instead of resuming from the cache")
 	fs.StringVar(&o.BenchmarkSolvers, "benchmark-solvers", "astrometry-local,astap,astrometry-web", "comma-separated solvers for --blind-benchmark")
 	fs.StringVar(&o.ConeCatalog, "cone-catalog", "", "external cone-search catalogue for annotations: sdss, irsa or vizier")
 	fs.Float64Var(&o.ConeRadiusArcsec, "cone-radius", 60, "cone-search radius in arcsec (SDSS max 180, IRSA default 10)")
@@ -559,6 +579,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.XISFRev2, "xisf-rev2", false, "with --xisf: add Rev 2 checksum and strict sample-mapping validation")
 	fs.BoolVar(&o.CreateBigTIFF, "bigtiff", false, "write BigTIFF float32 stacks (64-bit offsets, files >4 GiB)")
 	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
+	fs.BoolVar(&o.MatchedFilter, "matched-filter", false, "use matched-filter (T = alpha C^-1 S) star detection on linear frames")
 	fs.BoolVar(&o.PSFScaleSNR, "psf-scale-snr", false, "weight frames by PSF Scale SNR: multiply PSF quality weights by the relative scale from <basename>.xnml sidecars (zero when missing)")
 	fs.StringVar(&o.XNMLDir, "xnml-dir", "", "fallback folder for .xnml sidecars when they are not next to the light frames")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
@@ -579,6 +600,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.FrameMetrics, "frame-metrics", "", "write per-frame HFR/FWHM/eccentricity/SNR/background/weight CSV")
 	fs.StringVar(&o.IncludeList, "include-list", "", "file listing frame paths/names to keep (one per line, # comments)")
 	fs.IntVar(&o.KeepSharpest, "keep-sharpest", 0, "keep only the sharpest N% of frames by median star HFR (0 = all)")
+	fs.StringVar(&o.FrameExpr, "frame-expr", "", "expression over frame metrics: keep frames whose value > 0.5 and emit SSWEIGHT")
 	fs.StringVar(&o.CalibLibrary, "calib-library", "", "folder with calibration_library.json for metadata-based master matching")
 	fs.BoolVar(&o.CometCombine, "comet-combine", false, "with a comet stack: recombine stars and comet into stacked_comet_combined")
 	fs.StringVar(&o.Batch, "batch", "", "JSON file with a queue of CLI argument lists to run sequentially")
@@ -599,11 +621,18 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.ImageOutput, "image-output", "image_processing", "output directory for --process-image results")
 	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
 	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
+	fs.BoolVar(&o.AperturePhotometry, "aperture-photometry", false, "local annulus background, Kron/FLUX_RADIUS and segmentation masking in --photometry")
 	var noDonation, noDonationQR bool
 	fs.BoolVar(&noDonation, "no-donation", false, "suppress the rotating thank-you/donation footer after a successful full run")
 	fs.BoolVar(&noDonationQR, "no-donation-qr", false, "print the donation footer without terminal QR codes")
 	fs.BoolVar(&o.DonationShow, "donation", false, "print the rotating donation message and QR codes, then exit (no image processing)")
 	fs.BoolVar(&o.BGMultiscale, "bg-multiscale", false, "remove a coarse percentile-based background before the polynomial fit")
+	fs.BoolVar(&o.BgAsymmetric, "bg-asymmetric", false, "asymmetric MAD-clipped background with harmonic inpainting")
+	fs.Float64Var(&o.BgClipLow, "bg-clip-low", 3.0, "low-side sigma threshold for --bg-asymmetric (preserves nebulosity)")
+	fs.Float64Var(&o.BgClipHigh, "bg-clip-high", 1.5, "high-side sigma threshold for --bg-asymmetric (clips stars)")
+	fs.IntVar(&o.BgHarmonicScale, "bg-harmonic-scale", 5, "downsample scale [1,10] for asymmetric background")
+	fs.IntVar(&o.BgPolyDegree, "bg-poly-degree", 3, "polynomial degree [1,6] for asymmetric background")
+	fs.BoolVar(&o.BgRBF, "bg-rbf", false, "use Gaussian RBF instead of a polynomial in --bg-asymmetric")
 	fs.BoolVar(&o.Deconvolve, "deconvolve", false, "apply Richardson-Lucy deconvolution after background removal (slow)")
 	fs.Float64Var(&o.DeconvSigma, "deconv-sigma", 1.5, "Gaussian PSF sigma in pixels for --deconvolve")
 	fs.BoolVar(&o.DeconvolveGrid, "deconvolve-grid", false, "use a spatially gridded local PSF from star HFR for --deconvolve")
@@ -616,6 +645,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Resume, "resume", false, "if an existing stack is present in the output directory, continue with post-processing instead of re-stacking")
 	fs.IntVar(&o.DrizzleUpsample, "drizzle-upsample", 1, "write an extra drizzled upsample of the stack at N x scale (1 = off)")
 	fs.Float64Var(&o.DrizzlePixfrac, "drizzle-pixfrac", 1.0, "drizzle kernel footprint in input pixels (0..1)")
+	fs.BoolVar(&o.WHTContext, "wht-ctx", false, "write per-pixel WHT weight map and 32-bit CTX contributor mask")
 	fs.BoolVar(&o.WaveSharpen, "wavesharp", false, "multi-scale Gaussian detail enhancement (classical BXT-like baseline)")
 	fs.StringVar(&o.WaveGains, "wave-gains", "0.25,0.15,0.08", "coarse-to-fine detail gains for --wavesharp")
 	fs.StringVar(&o.ExternalBGE, "external-bge", "", "external AI background-extraction CLI: argv with {input} and {output} placeholders (no shell)")
@@ -645,7 +675,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -679,6 +709,15 @@ func parseArgs(args []string) (*cliOptions, error) {
 	o.PostOnly = postOnly
 	if o.BGDegree < 1 || o.BGDegree > 3 {
 		return nil, fmt.Errorf("--bg-degree must be 1, 2 or 3, got %d", o.BGDegree)
+	}
+	if o.BgHarmonicScale < 1 || o.BgHarmonicScale > 10 {
+		return nil, fmt.Errorf("--bg-harmonic-scale must be in [1,10], got %d", o.BgHarmonicScale)
+	}
+	if o.BgPolyDegree < 1 || o.BgPolyDegree > 6 {
+		return nil, fmt.Errorf("--bg-poly-degree must be in [1,6], got %d", o.BgPolyDegree)
+	}
+	if o.BgClipLow <= 0 || o.BgClipHigh <= 0 {
+		return nil, errors.New("--bg-clip-low and --bg-clip-high must be positive")
 	}
 	if o.StretchFactor < 0 {
 		return nil, fmt.Errorf("--stretch must be >= 0, got %g", o.StretchFactor)
@@ -796,6 +835,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.KeepSharpest < 0 || o.KeepSharpest > 100 {
 		return nil, fmt.Errorf("--keep-sharpest must be in [0, 100], got %d", o.KeepSharpest)
 	}
+	if o.FrameExpr != "" && !strings.HasPrefix(o.FrameExpr, "@") {
+		if _, err := parseFrameExpr(o.FrameExpr); err != nil {
+			return nil, fmt.Errorf("--frame-expr: %w", err)
+		}
+	}
 	switch o.RejectionMode {
 	case "", "auto", "mean", "median", "sigma":
 	default:
@@ -878,6 +922,14 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.BlindMaxTiles < 0 {
 		return nil, fmt.Errorf("--blind-max-tiles must be >= 0, got %d", o.BlindMaxTiles)
+	}
+	if o.BlindTileOffset < 0 {
+		return nil, fmt.Errorf("--blind-tile-offset must be >= 0, got %d", o.BlindTileOffset)
+	}
+	if o.BlindRegion != "" {
+		if _, err := parseBlindRegion(o.BlindRegion); err != nil {
+			return nil, err
+		}
 	}
 	if o.BlindMagLimit < 3 || o.BlindMagLimit > 21 {
 		return nil, fmt.Errorf("--blind-mag-limit must be in [3,21], got %g", o.BlindMagLimit)
@@ -1390,6 +1442,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --keep-cache       keep the star/transform cache after a successful run (default: remove it)")
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
 	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
+	fmt.Fprintln(w, "  --check-acquisition-keywords P  validate N.I.N.A. RAW/FITS acquisition keywords (JSON)")
 	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --plate-solve      run TAN WCS plate solve after stacking, or on the existing stack with --post-only (writes plate_solution.json)")
 	fmt.Fprintln(w, "  --test-plate R,D   one-shot plate solve on RA,DEC in decimal degrees, then exit")
@@ -1400,6 +1453,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --plate-solver MODE auto, gaia, astrometry-local, astap, native (Gaia quad index), astrometry-web")
 	fmt.Fprintln(w, "  --blind-index FILE / --build-blind-index FILE  native Gaia quad index for offline blind solving")
 	fmt.Fprintln(w, "  --blind-allsky / --blind-max-tiles N  query Gaia sky tiles before building (bounded by N)")
+	fmt.Fprintln(w, "  --blind-tile-offset N / --blind-refresh  chunked/resumed builds instead of re-querying cached tiles")
+	fmt.Fprintln(w, "  --blind-region RA,DEC,RADIUS / --blind-index-info FILE  regional index and metadata tooling")
 	fmt.Fprintln(w, "  --blind-mag-limit M / --blind-brightest N  Gaia magnitude limit and stars per tile when building")
 	fmt.Fprintln(w, "  --blind-catalog ID / --list-blind-catalogs / --download-blind-catalog ID  published catalogs")
 	fmt.Fprintln(w, "  --astrometry-cmd CMD local solve-field command (default: solve-field; needs installed index files)")
@@ -1413,6 +1468,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --xisf-rev2        with --xisf: SHA3-256 block checksum + strict sample validation")
 	fmt.Fprintln(w, "  --bigtiff          write stacked_sum/mean.bigtif with 64-bit offsets")
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
+	fmt.Fprintln(w, "  --matched-filter   matched-filter star detection (T = alpha C^-1 S, opt-in)")
 	fmt.Fprintln(w, "  --psf-scale-snr    PSF quality weights x XNML relative scale; frames without .xnml get zero weight")
 	fmt.Fprintln(w, "  --xnml-dir PATH    fallback folder for .xnml sidecars (default: same folder as each light)")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
@@ -1429,6 +1485,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --frame-metrics PATH   write per-frame quality CSV (SubframeSelector-style)")
 	fmt.Fprintln(w, "  --include-list PATH    keep only frames listed in PATH (one path per line)")
 	fmt.Fprintln(w, "  --keep-sharpest N      keep the sharpest N% of frames by median star HFR (0 = all)")
+	fmt.Fprintln(w, "  --frame-expr EXPR      keep frames whose expression value > 0.5, emit SSWEIGHT (@file supported)")
 	fmt.Fprintln(w, "  --calib-library PATH   match masters by exposure/temperature/ISO/gain metadata")
 	fmt.Fprintln(w, "  --comet-combine        recombine the comet stack with the stars stack (max/blend)")
 	fmt.Fprintln(w, "  --batch FILE           run a JSON queue of CLI invocations sequentially")
@@ -1448,17 +1505,21 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "                          measure-quality sky-map survey-cutout plate-solve")
 	fmt.Fprintln(w, "  --deconvolve-wiener    FFT Wiener deconvolution (uses --deconv-sigma)")
 	fmt.Fprintln(w, "  --photometry           ensemble Gaia photometry -> photometry.csv/.json")
+	fmt.Fprintln(w, "  --aperture-photometry  local annulus, Kron radius and segmentation masking with --photometry")
 	fmt.Fprintln(w, "  --no-donation          suppress the final thank-you/donation footer")
 	fmt.Fprintln(w, "  --no-donation-qr       omit terminal QR codes from the donation footer")
 	fmt.Fprintln(w, "  --donation             show the rotating message and QR codes, then exit (no images)")
 	fmt.Fprintln(w, "  --rejection MODE       auto/mean/median/sigma heuristic by stack size (opt-in)")
 	fmt.Fprintln(w, "  --post-preset NAME     default or detail-last (detail enhancement after denoise)")
 	fmt.Fprintln(w, "  --bg-multiscale    coarse percentile background before polynomial fit")
+	fmt.Fprintln(w, "  --bg-asymmetric    MAD-asymmetric clipped background + harmonic inpainting")
+	fmt.Fprintln(w, "  --bg-clip-low/-high F / --bg-harmonic-scale N / --bg-poly-degree N / --bg-rbf")
 	fmt.Fprintln(w, "  --deconvolve       Richardson-Lucy deconvolution (--deconv-sigma/--deconv-iters); slow")
 	fmt.Fprintln(w, "  --deconvolve-grid  local PSF from star HFR over a 3x3/4x4 grid (--deconv-grid-size)")
 	fmt.Fprintln(w, "  --narrowband M     HOO or SHO mapping from --nb-a/--nb-b/--nb-c mono .f32raw stacks")
 	fmt.Fprintln(w, "  --resume           reuse an existing stack in the output dir and continue with post-processing")
 	fmt.Fprintln(w, "  --drizzle-upsample N  write a drizzled N x upsample of the stack (1 = off)")
+	fmt.Fprintln(w, "  --wht-ctx             write stacked_wht.f32raw and stacked_ctx.u32raw sidecars")
 	fmt.Fprintln(w, "  --wavesharp        multi-scale detail enhancement (--wave-gains coarser..finer)")
 	fmt.Fprintln(w, "  --external-bge CMD / --external-denoise CMD / --external-deconv CMD / --external-starless CMD")
 	fmt.Fprintln(w, "                     run an external AI CLI via a private 32-bit float FITS sidecar; CMD is")
@@ -2609,6 +2670,145 @@ func boxBlurLuminance(gray []float32, w, h, radius int) []float32 {
 // estimateResidualNoise returns the median absolute deviation (times
 // 1.4826) of a zero-centred residual, which is the standard robust
 // estimate of the background noise sigma.
+// matchedFilterDetect implements the roadmap-54 statistic
+// T = α C⁻¹ S on a linear frame. C is diagonal with a locally estimated
+// variance per pixel, S is a Gaussian star template and α normalises T to
+// sigma units. Both positive (stars) and negative (absorbing features)
+// components are emitted, as in the calibrated blind-solver literature.
+func matchedFilterDetect(f *frame, sigma float64, maxStars int) []star {
+	if f == nil || f.Width <= 0 || f.Height <= 0 || len(f.Pix) < f.Width*f.Height*3 {
+		return nil
+	}
+	if sigma <= 0 {
+		sigma = 4.0
+	}
+	if maxStars <= 0 {
+		maxStars = 200
+	}
+	w, h := f.Width, f.Height
+	gray := grayscale(f)
+	blur := boxBlurLuminance(gray, w, h, 8)
+	residual := make([]float32, w*h)
+	absResidual := make([]float32, w*h)
+	for i := range residual {
+		residual[i] = gray[i] - blur[i]
+		absResidual[i] = float32(math.Abs(float64(residual[i])))
+	}
+	meanAbsBlur := boxBlurLuminance(absResidual, w, h, 12)
+	globalSigma := estimateResidualNoise(residual)
+	if globalSigma <= 1e-9 {
+		globalSigma = 1e-6
+	}
+	templateSigma := 1.6
+	radius := int(math.Ceil(2.5 * templateSigma))
+	var kernel []struct {
+		dx, dy int
+		weight float64
+	}
+	var norm float64
+	for dy := -radius; dy <= radius; dy++ {
+		for dx := -radius; dx <= radius; dx++ {
+			wt := math.Exp(-float64(dx*dx+dy*dy) / (2 * templateSigma * templateSigma))
+			kernel = append(kernel, struct {
+				dx, dy int
+				weight float64
+			}{dx, dy, wt})
+			norm += wt * wt
+		}
+	}
+	norm = math.Sqrt(norm)
+	response := make([]float32, w*h)
+	for y := radius; y < h-radius; y++ {
+		for x := radius; x < w-radius; x++ {
+			i := y*w + x
+			localSigma := float64(meanAbsBlur[i]) * 1.253
+			if localSigma < globalSigma*0.5 {
+				localSigma = globalSigma * 0.5
+			}
+			var sum float64
+			for _, k := range kernel {
+				j := (y+k.dy)*w + (x + k.dx)
+				sum += k.weight * float64(residual[j])
+			}
+			response[i] = float32(sum / (localSigma * norm))
+		}
+	}
+	seen := make([]bool, w*h)
+	out := make([]star, 0, maxStars)
+	type component struct {
+		pixels []int
+		sumT   float64
+		wx, wy float64
+	}
+	buildComponent := func(seed int, positive bool) component {
+		c := component{}
+		stack := []int{seed}
+		seen[seed] = true
+		for len(stack) > 0 {
+			idx := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			v := float64(response[idx])
+			if positive != (v > 0) {
+				continue
+			}
+			c.pixels = append(c.pixels, idx)
+			c.sumT += math.Abs(v)
+			x, y := idx%w, idx/w
+			c.wx += float64(x) * math.Abs(v)
+			c.wy += float64(y) * math.Abs(v)
+			for _, d := range []int{-1, 1, -w, w, -w - 1, -w + 1, w - 1, w + 1} {
+				n := idx + d
+				if n < 0 || n >= w*h || seen[n] {
+					continue
+				}
+				nx, ny := n%w, n/w
+				if int(math.Abs(float64(nx-x))) > 1 || int(math.Abs(float64(ny-y))) > 1 {
+					continue
+				}
+				nv := float64(response[n])
+				if positive == (nv > 0) && math.Abs(nv) >= sigma {
+					seen[n] = true
+					stack = append(stack, n)
+				}
+			}
+		}
+		return c
+	}
+	for _, positive := range []bool{true, false} {
+		for i, v := range response {
+			if seen[i] || (positive != (v > 0)) || math.Abs(float64(v)) < sigma {
+				continue
+			}
+			c := buildComponent(i, positive)
+			if len(c.pixels) < 2 || c.sumT <= 0 {
+				continue
+			}
+			flux := 0.0
+			for _, p := range c.pixels {
+				flux += math.Abs(float64(residual[p]))
+			}
+			if !positive {
+				flux = -flux
+			}
+			out = append(out, star{
+				X: c.wx / c.sumT, Y: c.wy / c.sumT,
+				Flux: flux, Size: len(c.pixels), HFR: math.Sqrt(float64(len(c.pixels)) / math.Pi),
+			})
+			if len(out) >= maxStars {
+				break
+			}
+		}
+		if len(out) >= maxStars {
+			break
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Flux > out[j].Flux })
+	if len(out) > maxStars {
+		out = out[:maxStars]
+	}
+	return out
+}
+
 func estimateResidualNoise(residual []float32) float64 {
 	const step = 4
 	n := (len(residual) + step - 1) / step
@@ -3709,6 +3909,117 @@ func writeRawFloat32RGB(w io.Writer, width, height int, pix []float32) error {
 	return nil
 }
 
+func writeMonoFloat32(w io.Writer, width, height int, pix []float32, magic string) error {
+	if len(pix) != width*height {
+		return fmt.Errorf("mono: buffer mismatch: got %d want %d", len(pix), width*height)
+	}
+	hdr := make([]byte, 16)
+	copy(hdr[:4], magic)
+	binary.LittleEndian.PutUint32(hdr[4:], uint32(width))
+	binary.LittleEndian.PutUint32(hdr[8:], uint32(height))
+	if _, err := w.Write(hdr); err != nil {
+		return err
+	}
+	for _, v := range pix {
+		if err := binary.Write(w, binary.LittleEndian, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readMonoFloat32(path string, magic string) (int, int, []float32, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	if len(data) < 16 || string(data[:4]) != magic {
+		return 0, 0, nil, fmt.Errorf("mono: bad header in %s", path)
+	}
+	w := int(binary.LittleEndian.Uint32(data[4:]))
+	h := int(binary.LittleEndian.Uint32(data[8:]))
+	if 16+w*h*4 != len(data) {
+		return 0, 0, nil, fmt.Errorf("mono: size mismatch in %s", path)
+	}
+	pix := make([]float32, w*h)
+	for i := range pix {
+		pix[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[16+i*4:]))
+	}
+	return w, h, pix, nil
+}
+
+func writeMonoUint32(w io.Writer, width, height int, pix []uint32, magic string) error {
+	if len(pix) != width*height {
+		return fmt.Errorf("mono32: buffer mismatch: got %d want %d", len(pix), width*height)
+	}
+	hdr := make([]byte, 16)
+	copy(hdr[:4], magic)
+	binary.LittleEndian.PutUint32(hdr[4:], uint32(width))
+	binary.LittleEndian.PutUint32(hdr[8:], uint32(height))
+	if _, err := w.Write(hdr); err != nil {
+		return err
+	}
+	for _, v := range pix {
+		if err := binary.Write(w, binary.LittleEndian, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readMonoUint32(path string, magic string) (int, int, []uint32, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	if len(data) < 16 || string(data[:4]) != magic {
+		return 0, 0, nil, fmt.Errorf("mono32: bad header in %s", path)
+	}
+	w := int(binary.LittleEndian.Uint32(data[4:]))
+	h := int(binary.LittleEndian.Uint32(data[8:]))
+	if 16+w*h*4 != len(data) {
+		return 0, 0, nil, fmt.Errorf("mono32: size mismatch in %s", path)
+	}
+	pix := make([]uint32, w*h)
+	for i := range pix {
+		pix[i] = binary.LittleEndian.Uint32(data[16+i*4:])
+	}
+	return w, h, pix, nil
+}
+
+func buildContextMask(w, h int, transforms []frameTransform) []uint32 {
+	mask := make([]uint32, w*h)
+	for i, t := range transforms {
+		if i >= 32 || !t.valid {
+			continue
+		}
+		x0, y0, x1, y1 := frameBoxInReference(w, h, t.sim)
+		x0, y0 = max(0, x0), max(0, y0)
+		x1, y1 = min(w, x1), min(h, y1)
+		for y := y0; y < y1; y++ {
+			for x := x0; x < x1; x++ {
+				mask[y*w+x] |= 1 << uint(i)
+			}
+		}
+	}
+	return mask
+}
+
+func writeWeightContextSidecars(dir string, w, h int, weights []float32, transforms []frameTransform) error {
+	if len(weights) != w*h {
+		return fmt.Errorf("WHT/CTX: weight map %d != %dx%d", len(weights), w, h)
+	}
+	mask := buildContextMask(w, h, transforms)
+	if err := writeFileAtomic(filepath.Join(dir, "stacked_wht.f32raw"), func(out io.Writer) error {
+		return writeMonoFloat32(out, w, h, weights, "SSW1")
+	}); err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(dir, "stacked_ctx.u32raw"), func(out io.Writer) error {
+		return writeMonoUint32(out, w, h, mask, "SSC1")
+	})
+}
+
 func readRawFloat32RGB(path string) (int, int, []float32, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -3865,6 +4176,14 @@ func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, diviso
 // 80 bytes, padded to a 2880-byte block before data, and data is padded to
 // a multiple of 2880 bytes. Each input float is divided by divisor.
 func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor float32, wcses ...*wcsTan) error {
+	var ww *wcsTan
+	if len(wcses) > 0 {
+		ww = wcses[0]
+	}
+	return writeFloat32RGBFITSWithCards(w, width, height, pix, divisor, ww, nil)
+}
+
+func writeFloat32RGBFITSWithCards(w io.Writer, width, height int, pix []float32, divisor float32, wcs *wcsTan, extra []string) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("fits: invalid dimensions %dx%d", width, height)
 	}
@@ -3885,8 +4204,8 @@ func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor 
 		"BSCALE  =                  1.0",
 		"BZERO   =                  0.0",
 	}
-	if len(wcses) > 0 && wcses[0] != nil {
-		ww := wcses[0]
+	if wcs != nil {
+		ww := wcs
 		cards = append(cards,
 			"CTYPE1  = 'RA---TAN'",
 			"CTYPE2  = 'DEC--TAN'",
@@ -3902,6 +4221,7 @@ func writeFloat32RGBFITS(w io.Writer, width, height int, pix []float32, divisor 
 	} else {
 		cards = append(cards, "CTYPE1  = 'LINEAR  '", "CTYPE2  = 'LINEAR  '")
 	}
+	cards = append(cards, extra...)
 	cards = append(cards, "END")
 	var hdr bytes.Buffer
 	for _, c := range cards {
@@ -5424,6 +5744,10 @@ type processingReport struct {
 	SelfFlatExtrapolated  bool
 	SelfFlatCoeffs        [3][]float64
 	MasterExports         []string
+	CalStatus             string
+	CalMasters            []calibrationProvenance
+	DrizzleNoise          *drizzleReport
+	DitherCoverage        *ditherCoverageReport
 	PostProcessApplied    bool
 	BGDegree              int
 	StretchFactor         float64
@@ -5714,6 +6038,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.HFRQuality {
 		add("--hfr-quality")
 	}
+	if o.MatchedFilter {
+		add("--matched-filter")
+	}
 	if o.PSFScaleSNR {
 		add("--psf-scale-snr")
 	}
@@ -5755,6 +6082,9 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.KeepSharpest > 0 {
 		add(fmt.Sprintf("--keep-sharpest %d", o.KeepSharpest))
+	}
+	if o.FrameExpr != "" {
+		add("--frame-expr " + quoteReportArg(o.FrameExpr))
 	}
 	if o.CalibLibrary != "" {
 		add("--calib-library " + quoteReportArg(o.CalibLibrary))
@@ -5801,6 +6131,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.Photometry {
 		add("--photometry")
 	}
+	if o.AperturePhotometry {
+		add("--aperture-photometry")
+	}
 	if !o.DonationEnabled {
 		add("--no-donation")
 	}
@@ -5822,6 +6155,13 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.BGMultiscale {
 		add("--bg-multiscale")
 	}
+	if o.BgAsymmetric {
+		add(fmt.Sprintf("--bg-asymmetric --bg-clip-low %g --bg-clip-high %g --bg-harmonic-scale %d --bg-poly-degree %d",
+			o.BgClipLow, o.BgClipHigh, o.BgHarmonicScale, o.BgPolyDegree))
+		if o.BgRBF {
+			add("--bg-rbf")
+		}
+	}
 	if o.Deconvolve {
 		add(fmt.Sprintf("--deconvolve --deconv-sigma %g --deconv-iters %d", o.DeconvSigma, o.DeconvIters))
 		if o.DeconvolveGrid {
@@ -5833,6 +6173,9 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.DrizzleUpsample > 1 {
 		add(fmt.Sprintf("--drizzle-upsample %d --drizzle-pixfrac %g", o.DrizzleUpsample, o.DrizzlePixfrac))
+	}
+	if o.WHTContext {
+		add("--wht-ctx")
 	}
 	if o.WaveSharpen {
 		add("--wavesharp --wave-gains " + o.WaveGains)
@@ -6018,6 +6361,28 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		if r.SelfFlatPath != "" {
 			ew.printf("Self-flat master: %s\n", r.SelfFlatPath)
 		}
+	}
+	if r.CalStatus != "" || len(r.CalMasters) > 0 {
+		ew.printf("Calibration status: %s\n", r.CalStatus)
+		for _, m := range r.CalMasters {
+			ew.printf("  %-4s %-40s %dx%d temp=%.1f exp=%.3f gain=%.2f compatible=%v\n",
+				strings.ToUpper(m.Kind), filepath.Base(m.Path), m.Width, m.Height,
+				m.Temperature, m.Exposure, m.Gain, m.Compatible)
+		}
+	}
+	if r.DitherCoverage != nil {
+		d := r.DitherCoverage
+		ew.printf("Dither coverage: %s (%d points, min separation %.3f px), null fraction %.1f%%, hole risk=%v\n",
+			d.Pattern, d.Points, d.MinSeparation, 100*d.NullFraction, d.HoleRisk)
+	}
+	if r.DrizzleNoise != nil {
+		d := r.DrizzleNoise
+		ratio := 0.0
+		if d.WeightMedian > 0 {
+			ratio = d.WeightRMS / d.WeightMedian
+		}
+		ew.printf("Drizzle metrology: pixfrac=%.2f scale=%.2f r=%.3f R=%.3f weight RMS/median=%.3f coverage_warning=%v\n",
+			d.Pixfrac, d.Scale, d.Ratio, d.NoiseR, ratio, d.CoverageFlag)
 	}
 	if len(r.MasterExports) > 0 {
 		ew.printf("Calibration master exports:\n")
@@ -6260,6 +6625,7 @@ type runOptions struct {
 	XISFRev2               bool
 	CreateBigTIFF          bool
 	HFRQuality             bool
+	MatchedFilter          bool
 	PSFScaleSNR            bool
 	XNMLDir                string
 	Annotate               bool
@@ -6278,6 +6644,7 @@ type runOptions struct {
 	FrameMetrics           string
 	IncludeList            string
 	KeepSharpest           int
+	FrameExpr              string
 	CalibLibrary           string
 	CometCombine           bool
 	StarlessPSF            bool
@@ -6297,12 +6664,19 @@ type runOptions struct {
 	ImageOutput            string
 	DeconvolveWiener       bool
 	Photometry             bool
+	AperturePhotometry     bool
 	DonationEnabled        bool
 	DonationQR             bool
 	DonationShow           bool
 	RejectionMode          string
 	PostPreset             string
 	BGMultiscale           bool
+	BgAsymmetric           bool
+	BgClipLow              float64
+	BgClipHigh             float64
+	BgHarmonicScale        int
+	BgPolyDegree           int
+	BgRBF                  bool
 	Deconvolve             bool
 	DeconvSigma            float64
 	DeconvIters            int
@@ -6315,6 +6689,7 @@ type runOptions struct {
 	Resume                 bool
 	DrizzleUpsample        int
 	DrizzlePixfrac         float64
+	WHTContext             bool
 	ExternalBGE            string
 	ExternalDenoise        string
 	ExternalDeconv         string
@@ -7118,7 +7493,11 @@ func frameCacheKey(path string) (key string, mtimeNano, size int64, err error) {
 }
 
 func starDetectionSig(scale int) string {
-	return fmt.Sprintf("max=%d,scale=%d", 100, scale)
+	mode := "hpass"
+	if matchedFilterEnabled {
+		mode = "matched"
+	}
+	return fmt.Sprintf("max=%d,scale=%d,detect=%s", 100, scale, mode)
 }
 
 func writeJSON(path string, v any) error {
@@ -7169,7 +7548,7 @@ func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]sta
 			if sc, ok := loadStarCache(cpath, starDetectionSig(scale)); ok {
 				return sc.Stars, sc.MedianBlob, sc.MedianEcc, sc.BgNoise, true
 			}
-			stars := detectStarsWithDetrend(f, 100)
+			stars := detectStarsForOptions(f, 100)
 			mb := medianBlobSize(stars)
 			me := medianStarEcc(stars)
 			bn := estimateFrameBgNoise(f)
@@ -7184,8 +7563,20 @@ func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]sta
 			return stars, mb, me, bn, false
 		}
 	}
-	stars := detectStarsWithDetrend(f, 100)
+	stars := detectStarsForOptions(f, 100)
 	return stars, medianBlobSize(stars), medianStarEcc(stars), estimateFrameBgNoise(f), false
+}
+
+var matchedFilterEnabled bool
+
+func detectStarsForOptions(f *frame, maxStars int) []star {
+	if matchedFilterEnabled {
+		stars := matchedFilterDetect(f, 4.0, maxStars)
+		if len(stars) >= 3 {
+			return stars
+		}
+	}
+	return detectStarsWithDetrend(f, maxStars)
 }
 
 // detectStarsWithDetrend retries star detection on a scratch copy with a
@@ -7362,6 +7753,7 @@ type frameDiag struct {
 	IntrinsicQ   float64
 	Weight       float64
 	PSFScale     float64
+	SSWeight     float64
 	Note         string
 }
 
@@ -7388,6 +7780,83 @@ func resolveRejectionMode(mode string, n int) string {
 }
 
 const smallDitherPx = 5.0
+
+// ditherCoverageReport predicts null-pixel risk for Bayer/drizzle coverage.
+// Shifts are reduced modulo one input pixel; a grid cell is sampled on a
+// square lattice and considered covered when it falls inside a droplet of
+// radius pixfrac/2 around any dither position.
+type ditherCoverageReport struct {
+	Points        int     `json:"points"`
+	Pixfrac       float64 `json:"pixfrac"`
+	Pattern       string  `json:"pattern"`
+	MinSeparation float64 `json:"min_separation_px"`
+	NullFraction  float64 `json:"null_fraction"`
+	HoleRisk      bool    `json:"hole_risk"`
+}
+
+func validateDitherCoverage(shifts []point2D, pixfrac float64) ditherCoverageReport {
+	rep := ditherCoverageReport{Points: len(shifts), Pixfrac: pixfrac}
+	if pixfrac <= 0 || pixfrac > 1 {
+		pixfrac = 1
+	}
+	if len(shifts) < 2 {
+		rep.Pattern = "single"
+		return rep
+	}
+	pts := make([]point2D, len(shifts))
+	for i, s := range shifts {
+		pts[i] = point2D{X: s.X - math.Floor(s.X), Y: s.Y - math.Floor(s.Y)}
+	}
+	rep.MinSeparation = math.Inf(1)
+	for i := range pts {
+		for j := i + 1; j < len(pts); j++ {
+			dx := math.Abs(pts[i].X - pts[j].X)
+			dx = min(dx, 1-dx)
+			dy := math.Abs(pts[i].Y - pts[j].Y)
+			dy = min(dy, 1-dy)
+			rep.MinSeparation = math.Min(rep.MinSeparation, math.Hypot(dx, dy))
+		}
+	}
+	switch len(shifts) {
+	case 2:
+		rep.Pattern = "2-point"
+	case 3:
+		rep.Pattern = "3-point"
+	case 4:
+		rep.Pattern = "4-point"
+	case 6:
+		rep.Pattern = "6-point"
+	case 9:
+		rep.Pattern = "9-point"
+	default:
+		rep.Pattern = fmt.Sprintf("%d-point", len(shifts))
+	}
+	const grid = 32
+	r := pixfrac / 2
+	var nulls int
+	for gy := 0; gy < grid; gy++ {
+		for gx := 0; gx < grid; gx++ {
+			x, y := (float64(gx)+0.5)/grid, (float64(gy)+0.5)/grid
+			covered := false
+			for _, p := range pts {
+				dx := math.Abs(x - p.X)
+				dx = min(dx, 1-dx)
+				dy := math.Abs(y - p.Y)
+				dy = min(dy, 1-dy)
+				if math.Hypot(dx, dy) <= r {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				nulls++
+			}
+		}
+	}
+	rep.NullFraction = float64(nulls) / float64(grid*grid)
+	rep.HoleRisk = rep.NullFraction > 0.02
+	return rep
+}
 
 func ditherDiagnostic(ts []frameTransform, refIdx int) (float64, bool) {
 	shifts := make([]float64, 0, len(ts))
@@ -10080,6 +10549,7 @@ func selfFlatGammaNote(linear bool) string {
 
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
+	matchedFilterEnabled = opts.MatchedFilter
 	var plateSolutionOut *plateSolution
 
 	// Tighter GC while we hold large frame buffers.  Default GOGC=100 lets
@@ -10697,6 +11167,12 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 	}
 
+	expectedRawW, expectedRawH := inW*opts.Scale, inH*opts.Scale
+	for _, master := range []string{opts.DarkFile, opts.FlatFile, opts.BiasFile} {
+		if err := assertCalibrationDimensions(master, expectedRawW, expectedRawH); err != nil {
+			return err
+		}
+	}
 	var darkFrame, flatFrame, biasFrame *frame
 	if opts.DarkFile != "" {
 		darkFrame, err = stackCalibrationFolder(opts.DarkFile, inW, inH, true)
@@ -10781,6 +11257,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		} else {
 			logf("WARNING: %s", why)
 		}
+	}
+	calStatus, calMasters, calFITSCards := buildCalibrationProvenance(opts, expectedRawW, expectedRawH, gridAcc != nil)
+	if calStatus != "" {
+		logf("Calibration status: %s", calStatus)
 	}
 	starLists := make([][]star, len(candidates))
 	var accepted []candidate
@@ -10879,6 +11359,55 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			c.psfScale, _ = readXNMLPSFScale(c.path, opts.XNMLDir)
 		}
 		accepted = append(accepted, c)
+	}
+	exprWeights := make(map[string]float64)
+	if opts.FrameExpr != "" && len(accepted) > 0 {
+		exprSource := opts.FrameExpr
+		if strings.HasPrefix(exprSource, "@") {
+			exprPath := strings.TrimPrefix(exprSource, "@")
+			data, rerr := os.ReadFile(exprPath)
+			if rerr != nil {
+				data, rerr = os.ReadFile(filepath.Join(outputDir, exprPath))
+			}
+			if rerr != nil {
+				return fmt.Errorf("--frame-expr file %s: %w", exprPath, rerr)
+			}
+			exprSource = string(data)
+		}
+		expr, perr := parseFrameExpr(exprSource)
+		if perr != nil {
+			return fmt.Errorf("--frame-expr: %w", perr)
+		}
+		metrics := make([]frameExprMetrics, len(accepted))
+		for i, c := range accepted {
+			metrics[i] = frameExprMetrics{
+				HFR: c.medianHFR, BgSigma: c.bgNoise, MedianBlob: c.medianBlob,
+				Ecc: c.medianEcc, PSFScale: c.psfScale,
+				Stars: float64(len(starLists[i])),
+			}
+		}
+		vars := frameExprVariables(metrics)
+		keep := make([]int, 0, len(accepted))
+		for i, v := range vars {
+			weight := expr.eval(v)
+			if weight > 0.5 {
+				keep = append(keep, i)
+				exprWeights[accepted[i].path] = weight
+			}
+		}
+		if len(keep) < len(accepted) {
+			before := len(accepted)
+			newAccepted := make([]candidate, len(keep))
+			newStarLists := make([][]star, len(keep))
+			for j, idx := range keep {
+				newAccepted[j] = accepted[idx]
+				if idx < len(starLists) {
+					newStarLists[j] = starLists[idx]
+				}
+			}
+			accepted, starLists = newAccepted, newStarLists
+			logf("Frame expression: kept %d/%d frames (SSWEIGHT emitted)", len(accepted), before)
+		}
 	}
 	if opts.KeepSharpest > 0 && len(accepted) > 1 {
 		hfrs := make([]float64, len(accepted))
@@ -11563,6 +12092,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			})
 			if frameWeights != nil && i < len(frameWeights) {
 				td.Weight = float64(frameWeights[i])
+				td.SSWeight = exprWeights[accepted[i].path]
 			}
 			if transforms[i].aff != nil {
 				td.Note = strings.TrimSpace(td.Note + " [affine]")
@@ -11919,7 +12449,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateFITS {
 			logf("Writing registered sum FITS")
 			if err := writeFileAtomic(sumFits, func(w io.Writer) error {
-				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor, fitsWCS(plateSolutionOut))
+				return writeFloat32RGBFITSWithCards(w, outW, outH, sumPix, sumDivisor, fitsWCS(plateSolutionOut), calFITSCards)
 			}); err != nil {
 				return fmt.Errorf("write sum fits: %w", err)
 			}
@@ -11963,7 +12493,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		if opts.CreateFITS {
 			if err := writeFileAtomic(meanFits, func(w io.Writer) error {
-				return writeFloat32RGBFITS(w, outW, outH, meanPix, 1, fitsWCS(plateSolutionOut))
+				return writeFloat32RGBFITSWithCards(w, outW, outH, meanPix, 1, fitsWCS(plateSolutionOut), calFITSCards)
 			}); err != nil {
 				return fmt.Errorf("write mean fits: %w", err)
 			}
@@ -12084,7 +12614,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if opts.CreateFITS {
 			logf("Writing sum FITS")
 			if err := writeFileAtomic(sumFits, func(w io.Writer) error {
-				return writeFloat32RGBFITS(w, outW, outH, sumPix, sumDivisor, fitsWCS(plateSolutionOut))
+				return writeFloat32RGBFITSWithCards(w, outW, outH, sumPix, sumDivisor, fitsWCS(plateSolutionOut), calFITSCards)
 			}); err != nil {
 				return fmt.Errorf("write sum fits: %w", err)
 			}
@@ -12128,7 +12658,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		}
 		if opts.CreateFITS {
 			if err := writeFileAtomic(meanFits, func(w io.Writer) error {
-				return writeFloat32RGBFITS(w, outW, outH, meanPix, 1, fitsWCS(plateSolutionOut))
+				return writeFloat32RGBFITSWithCards(w, outW, outH, meanPix, 1, fitsWCS(plateSolutionOut), calFITSCards)
 			}); err != nil {
 				return fmt.Errorf("write mean fits: %w", err)
 			}
@@ -12493,6 +13023,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		SelfFlatExtrapolated:  selfFlatExtrapolated,
 		SelfFlatCoeffs:        selfFlatCoeffs,
 		MasterExports:         masterExports,
+		CalStatus:             calStatus,
+		CalMasters:            calMasters,
 		OutputFiles:           outputFiles,
 		Workers:               workers,
 		Duration:              time.Since(start),
@@ -12588,7 +13120,41 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			logf("Cache removed: %s (use --keep-cache to preserve)", cacheDir)
 		}
 	}
+	shifts := make([]point2D, 0, len(transforms))
+	for i, t := range transforms {
+		if i == refIdx || !t.valid {
+			continue
+		}
+		shifts = append(shifts, t.sim.apply(point2D{}))
+	}
+	if len(shifts) >= 2 {
+		coverage := validateDitherCoverage(shifts, opts.DrizzlePixfrac)
+		rep.DitherCoverage = &coverage
+		logf("Dither coverage: %s null fraction %.1f%% hole risk=%v", coverage.Pattern,
+			100*coverage.NullFraction, coverage.HoleRisk)
+	}
+	if opts.WHTContext {
+		weights := make([]float32, len(unregValidCount))
+		for i := range weights {
+			weights[i] = float32(unregValidCount[i])
+		}
+		if err := writeWeightContextSidecars(outputDir, inW, inH, weights, transforms); err != nil {
+			logf("WARNING: WHT/CTX sidecars: %v", err)
+		} else {
+			outputFiles = append(outputFiles,
+				filepath.Join(outputDir, "stacked_wht.f32raw"),
+				filepath.Join(outputDir, "stacked_ctx.u32raw"))
+		}
+	}
 	if opts.DrizzleUpsample > 1 {
+		weights := make([]float32, len(unregValidCount))
+		for i := range weights {
+			weights[i] = float32(unregValidCount[i])
+		}
+		report := drizzleCoverageReport(weights, opts.DrizzlePixfrac, 1.0/float64(opts.DrizzleUpsample))
+		rep.DrizzleNoise = &report
+		logf("Drizzle metrology: R=%.3f (r=%.3f), weight RMS/median=%.3f, coverage warning=%v",
+			report.NoiseR, report.Ratio, report.WeightRMS/max(report.WeightMedian, 1e-9), report.CoverageFlag)
 		dw, dh, dpix, derr := readRawFloat32RGB(filepath.Join(workDir, "stacked_mean.f32raw"))
 		if derr != nil {
 			logf("WARNING: drizzle upsample: %v", derr)
@@ -15336,12 +15902,20 @@ type nativeQuadSample struct {
 	Longest float64
 }
 
-func nativeBin(v float64) int64 { return int64(math.Round(v / nativeQuadBin)) }
+func nativeBinWith(v, bin float64) int64 { return int64(math.Round(v / bin)) }
+
+func nativeBin(v float64) int64 { return nativeBinWith(v, nativeQuadBin) }
 
 // nativeQuadKey encodes a four-star pattern in a scale-, rotation-,
 // translation- and parity-invariant form. The longest pair is the backbone;
 // the two remaining stars are expressed in backbone-normalised coordinates.
 func nativeQuadKey(pts []point2D) (string, float64, bool) {
+	return nativeQuadKeyBinned(pts, nativeQuadBin, "")
+}
+
+// nativeQuadKeyBinned encodes the descriptor at an arbitrary bin width. The
+// fine variant carries a prefix so both resolutions can coexist in one index.
+func nativeQuadKeyBinned(pts []point2D, bin float64, prefix string) (string, float64, bool) {
 	if len(pts) != 4 {
 		return "", 0, false
 	}
@@ -15374,11 +15948,12 @@ func nativeQuadKey(pts []point2D) (string, float64, bool) {
 	if q.u < p.u || (q.u == p.u && q.v < p.v) {
 		p, q = q, p
 	}
-	return fmt.Sprintf("%d:%d:%d:%d", nativeBin(p.u), nativeBin(p.v), nativeBin(q.u), nativeBin(q.v)), best, true
+	return fmt.Sprintf("%s%d:%d:%d:%d", prefix, nativeBinWith(p.u, bin), nativeBinWith(p.v, bin),
+		nativeBinWith(q.u, bin), nativeBinWith(q.v, bin)), best, true
 }
 
 func nativeQuads(pts []point2D) []nativeQuadSample {
-	out := make([]nativeQuadSample, 0, len(pts))
+	out := make([]nativeQuadSample, 0, len(pts)*4)
 	type neighbor struct {
 		idx int
 		d2  float64
@@ -15393,13 +15968,24 @@ func nativeQuads(pts []point2D) []nativeQuadSample {
 			near = append(near, neighbor{j, d * d})
 		}
 		sort.Slice(near, func(a, b int) bool { return near[a].d2 < near[b].d2 })
-		if len(near) < 3 {
+		neighbors := min(5, len(near))
+		if neighbors < 3 {
 			continue
 		}
-		quad := []point2D{pts[i], pts[near[0].idx], pts[near[1].idx], pts[near[2].idx]}
-		key, longest, ok := nativeQuadKey(quad)
-		if ok {
-			out = append(out, nativeQuadSample{Key: key, Longest: longest})
+		emitted := 0
+		for a := 0; a < neighbors-2 && emitted < 10; a++ {
+			for b := a + 1; b < neighbors-1 && emitted < 10; b++ {
+				for c := b + 1; c < neighbors && emitted < 10; c++ {
+					quad := []point2D{pts[i], pts[near[a].idx], pts[near[b].idx], pts[near[c].idx]}
+					if key, longest, ok := nativeQuadKey(quad); ok {
+						out = append(out, nativeQuadSample{Key: key, Longest: longest})
+						if fine, _, ok := nativeQuadKeyBinned(quad, 0.02, "b20|"); ok {
+							out = append(out, nativeQuadSample{Key: fine, Longest: longest})
+						}
+						emitted++
+					}
+				}
+			}
 		}
 	}
 	return out
@@ -15719,10 +16305,30 @@ func nativeCandidateStars(idx *nativeBlindIndex, ipix int) []gaiaStar {
 	return propagateGaiaStars(out, plateEpochYear)
 }
 
+type blindRegion struct {
+	RA, Dec, Radius float64
+}
+
+func parseBlindRegion(spec string) (blindRegion, error) {
+	parts := strings.Split(spec, ",")
+	if len(parts) != 3 {
+		return blindRegion{}, fmt.Errorf("--blind-region expects RA,DEC,RADIUS_DEG, got %q", spec)
+	}
+	ra, dec, err := parseRADecArg(parts[0]+","+parts[1], "--blind-region")
+	if err != nil {
+		return blindRegion{}, err
+	}
+	radius, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	if err != nil || radius <= 0 || radius > 180 {
+		return blindRegion{}, fmt.Errorf("--blind-region radius must be in (0,180] degrees, got %q", parts[2])
+	}
+	return blindRegion{ra, dec, radius * math.Pi / 180}, nil
+}
+
 // runBuildAllSkyBlindIndex populates the Gaia cache tile by tile at the chosen
 // nside (or reuses cached tiles in offline mode), then builds the quad index.
 // It is bounded by --blind-max-tiles so a partial sky can be indexed first.
-func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, brightest int, magLimit float64, offline bool) error {
+func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, offset, brightest int, magLimit float64, offline, refresh bool, region *blindRegion) error {
 	if nside < 1 || nside > 8192 {
 		return fmt.Errorf("--gaia-nside must be in [1,8192] for an all-sky index, got %d", nside)
 	}
@@ -15732,27 +16338,44 @@ func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, br
 	if strings.TrimSpace(cacheDir) == "" {
 		cacheDir = gaiaDefaultCacheDir()
 	}
-	total := 12 * nside * nside
-	if maxTiles > 0 && maxTiles < total {
-		total = maxTiles
+	skyTiles := 12 * nside * nside
+	if offset < 0 || offset >= skyTiles {
+		return fmt.Errorf("--blind-tile-offset must be in [0,%d), got %d", skyTiles, offset)
+	}
+	end := skyTiles
+	if maxTiles > 0 && offset+maxTiles < end {
+		end = offset + maxTiles
 	}
 	failed := 0
-	for ipix := 0; ipix < total; ipix++ {
-		if offline {
-			if _, ok := gaiaLoadTileCache(cacheDir, nside, ipix); !ok {
+	selected := 0
+	for ipix := offset; ipix < end; ipix++ {
+		if region != nil {
+			ra, dec := healpixPix2AngNested(nside, ipix)
+			if angularSeparation(region.RA, region.Dec, ra, dec) > region.Radius {
 				continue
 			}
-		} else if _, err := gaiaGetTile(cacheDir, mirror, nside, ipix, magLimit, false, true); err != nil {
-			failed++
-			logf("  blind index: tile %d/%d failed: %v", ipix, total, err)
+		}
+		selected++
+		if _, cached := gaiaLoadTileCache(cacheDir, nside, ipix); cached && (offline || !refresh) {
 			continue
 		}
-		if ipix > 0 && ipix%10 == 0 {
-			logf("  blind index: %d/%d tiles", ipix, total)
+		if offline {
+			continue
+		}
+		if _, err := gaiaGetTile(cacheDir, mirror, nside, ipix, magLimit, false, refresh); err != nil {
+			failed++
+			logf("  blind index: tile %d failed: %v", ipix, err)
+			continue
+		}
+		if (ipix-offset)%10 == 0 {
+			logf("  blind index: tile %d/%d (chunk %d-%d)", ipix, skyTiles, offset, end-1)
 		}
 	}
-	if failed > total/10 {
-		return fmt.Errorf("blind index: %d of %d Gaia tile queries failed", failed, total)
+	if selected == 0 {
+		return errors.New("blind index: region contains no HEALPix tiles at this nside")
+	}
+	if failed > max(1, selected/10) {
+		return fmt.Errorf("blind index: %d of %d Gaia tile queries failed", failed, selected)
 	}
 	return runBuildBlindIndex(path, cacheDir, nside, brightest)
 }
@@ -15782,6 +16405,36 @@ func readNativeIndex(path string) (*nativeBlindIndex, error) {
 		return nil, fmt.Errorf("bad index: %w", err)
 	}
 	return &idx, nil
+}
+
+func printBlindIndexInfo(path string) error {
+	idx, err := readNativeIndex(path)
+	if err != nil {
+		return err
+	}
+	stars := 0
+	for _, list := range idx.Tiles {
+		stars += len(list)
+	}
+	bands := make([]string, 0, len(idx.Bands))
+	for _, b := range idx.Bands {
+		bands = append(bands, b.ID)
+	}
+	info := struct {
+		Path    string   `json:"path"`
+		Version int      `json:"version"`
+		Nside   int      `json:"nside"`
+		Bands   []string `json:"bands"`
+		Tiles   int      `json:"tiles"`
+		Stars   int      `json:"stars"`
+		Quads   int      `json:"quads"`
+	}{path, idx.Version, idx.Nside, bands, len(idx.Tiles), stars, len(idx.Quads)}
+	data, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
 }
 
 func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plateSolution, error) {
@@ -17270,6 +17923,62 @@ func loadGaiaPlateFixture() (wcsTan, []star, []gaiaStar, error) {
 		frame[i] = star{X: x, Y: y, Flux: 1000.0 / (s.MagG + 1.0), Size: 5}
 	}
 	return w, frame, gaia, nil
+}
+
+func testCalibrationProvenance() error {
+	dir, err := os.MkdirTemp("", "skystacker-cal-provenance-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	master := filepath.Join(dir, "master_dark.jpg")
+	img := image.NewGray(image.Rect(0, 0, 64, 48))
+	if f, err := os.Create(master); err != nil {
+		return err
+	} else {
+		err = jpeg.Encode(f, img, &jpeg.Options{Quality: 90})
+		f.Close()
+		if err != nil {
+			return err
+		}
+	}
+	if err := assertCalibrationDimensions(master, 64, 48); err != nil {
+		return fmt.Errorf("compatible master rejected: %v", err)
+	}
+	if err := assertCalibrationDimensions(master, 32, 24); err == nil {
+		return errors.New("mismatched master dimensions should fail")
+	}
+	opts := runOptions{DarkFile: master, SelfFlat: true}
+	status, masters, cards := buildCalibrationProvenance(opts, 64, 48, true)
+	if status != "DS" || len(masters) != 1 || !masters[0].Compatible {
+		return fmt.Errorf("calibration status: %s masters=%+v", status, masters)
+	}
+	found := false
+	for _, c := range cards {
+		if strings.HasPrefix(c, "CALSTAT=") {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("CALSTAT card missing: %v", cards)
+	}
+	rep := &processingReport{Version: version, Timestamp: time.Now(), CalStatus: status, CalMasters: masters}
+	var buf bytes.Buffer
+	if err := rep.writeTo(&buf); err != nil {
+		return err
+	}
+	if !strings.Contains(buf.String(), "Calibration status: DS") || !strings.Contains(buf.String(), "master_dark.jpg") {
+		return fmt.Errorf("report missing calibration provenance: %s", buf.String()[:min(len(buf.String()), 300)])
+	}
+	var fitsBuf bytes.Buffer
+	pix := make([]float32, 64*48*3)
+	if err := writeFloat32RGBFITSWithCards(&fitsBuf, 64, 48, pix, 1, nil, cards); err != nil {
+		return err
+	}
+	if !strings.Contains(fitsBuf.String(), "CALSTAT= 'DS'") {
+		return errors.New("FITS header missing CALSTAT")
+	}
+	return nil
 }
 
 func testCalibrationQA() error {
@@ -18932,6 +19641,45 @@ func testBlindCatalogManifest() error {
 	return nil
 }
 
+func testNativeBlindNoisy() error {
+	dir, err := os.MkdirTemp("", "skystacker-native-noisy-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	w := rotatedWCS(1.0, 0.2, 2.0, -37, true)
+	frameStars, catalog := synthSkyField(w, 91, 90, 20, 1.0)
+	ipix := healpixAng2PixNested(gaiaDefaultNside, w.CRVAL1, w.CRVAL2)
+	tileData, err := json.Marshal(gaiaTile{Version: gaiaCacheVersion, Nside: gaiaDefaultNside, Ipix: ipix, Stars: catalog})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("healpix_n%d_p%d.json", gaiaDefaultNside, ipix)), tileData, 0o644); err != nil {
+		return err
+	}
+	idx, err := buildNativeIndexFromCache(dir, gaiaDefaultNside, nativeBrightest)
+	if err != nil {
+		return err
+	}
+	indexPath := filepath.Join(dir, "index.json")
+	data, err := json.Marshal(idx)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(indexPath, data, 0o644); err != nil {
+		return err
+	}
+	sol, err := nativeBlindSolve(frameStars, indexPath, 2.0)
+	if err != nil {
+		return fmt.Errorf("noisy field not solved: %v", err)
+	}
+	if math.Abs(sol.WCS.CRVAL1-w.CRVAL1) > 0.02 || math.Abs(sol.WCS.CRVAL2-w.CRVAL2) > 0.02 {
+		return fmt.Errorf("noisy solve centre: got (%.4f,%.4f), want (%.4f,%.4f)",
+			sol.WCS.CRVAL1, sol.WCS.CRVAL2, w.CRVAL1, w.CRVAL2)
+	}
+	return nil
+}
+
 func testNativeBlindIndex() error {
 	dir, err := os.MkdirTemp("", "skystacker-native-index-")
 	if err != nil {
@@ -18993,11 +19741,30 @@ func testNativeBlindIndex() error {
 		return errors.New("missing native index should fail")
 	}
 	allSkyPath := filepath.Join(dir, "allsky_index.json")
-	if err := runBuildAllSkyBlindIndex(allSkyPath, dir, "", gaiaDefaultNside, 1, nativeBrightest, 14, true); err != nil {
+	if err := runBuildAllSkyBlindIndex(allSkyPath, dir, "", gaiaDefaultNside, 1, 0, nativeBrightest, 14, true, false, nil); err != nil {
 		return fmt.Errorf("offline all-sky build: %v", err)
 	}
 	if data, err := os.ReadFile(allSkyPath); err != nil || !strings.Contains(string(data), `"bands"`) {
 		return fmt.Errorf("all-sky index missing bands: %v", err)
+	}
+	region, err := parseBlindRegion(fmt.Sprintf("%.3f,%.3f,5", w.CRVAL1*180/math.Pi, w.CRVAL2*180/math.Pi))
+	if err != nil {
+		return err
+	}
+	regionPath := filepath.Join(dir, "region_index.json")
+	if err := runBuildAllSkyBlindIndex(regionPath, dir, "", gaiaDefaultNside, 0, 0,
+		nativeBrightest, 14, true, false, &region); err != nil {
+		return fmt.Errorf("regional index: %v", err)
+	}
+	if err := printBlindIndexInfo(regionPath); err != nil {
+		return fmt.Errorf("index info: %v", err)
+	}
+	if _, err := parseBlindRegion("1,2"); err == nil {
+		return errors.New("invalid blind region accepted")
+	}
+	opts, err = parseArgs([]string{"--blind-region", "10,20,5", "--blind-index-info", regionPath})
+	if err != nil || opts.BlindRegion != "10,20,5" || opts.BlindIndexInfo != regionPath {
+		return fmt.Errorf("regional index flags: %+v err=%v", opts, err)
 	}
 	return nil
 }
@@ -20781,6 +21548,8 @@ func runSelfTests() int {
 		{"provenance DM graph", testProvenanceDM},
 		{"goDiagnostics module", testDiagnosticsCollect},
 		{"frame metrics and culling", testFrameMetricsCulling},
+		{"frame expression engine", testFrameExpressionEngine},
+		{"matched-filter source detection", testMatchedFilterDetection},
 		{"XNML PSF Scale SNR ingestion", testXNMLPSFScaleSNR},
 		{"keep sharpest frames", testKeepSharpestSelection},
 		{"calibration library matching", testCalibrationLibrary},
@@ -20790,6 +21559,7 @@ func runSelfTests() int {
 		{"à trous wavelets", testWaveletDenoise},
 		{"Wiener deconvolution", testWienerDeconvolution},
 		{"ensemble photometry", testEnsemblePhotometry},
+		{"aperture photometry upgrade", testAperturePhotometry},
 		{"donation footer", testDonationFooter},
 		{"dither diagnostic", testDitherDiagnostic},
 		{"sky map and survey cutout", testSkyProducts},
@@ -20812,6 +21582,7 @@ func runSelfTests() int {
 		{"cone-search cross-match client", testConeSearchClient},
 		{"blind solve benchmark harness", testBlindBenchmark},
 		{"native Gaia quad blind solver", testNativeBlindIndex},
+		{"native solver noisy field", testNativeBlindNoisy},
 		{"blind catalog manifest and download", testBlindCatalogManifest},
 		{"astrometry web API adapter", testAstrometryWebSolver},
 		{"blind solver fallback chain", testBlindSolverFallback},
@@ -20936,6 +21707,11 @@ func runSelfTests() int {
 		{"gridded richardson lucy", testRichardsonLucyGrid},
 		{"narrowband mapping", testNarrowband},
 		{"drizzle upsample", testDrizzleUpsample},
+		{"drizzle noise and coverage report", testDrizzleNoiseReport},
+		{"WHT/CTX sidecars", testWHTCTXSidecars},
+		{"dither coverage validator", testDitherCoverageValidator},
+		{"acquisition keyword parity", testAcquisitionKeywordParity},
+		{"asymmetric background inpainting", testAsymmetricBackground},
 		{"wavesharp", testWaveSharpen},
 		{"global normalize offset", testGlobalNormalizeOffset},
 		{"global normalize identity", testGlobalNormalizeIdentity},
@@ -20974,6 +21750,7 @@ func runSelfTests() int {
 		{"reference FITS seed", testReferenceFITSSeed},
 		{"detrend star detection", testDetrendStarDetection},
 		{"calibration dark QA", testCalibrationQA},
+		{"calibration status provenance", testCalibrationProvenance},
 		{"plate solve blind", testPlateSolveBlind},
 		{"wcs fit rotated both parities", testWCSFitRotatedBothParities},
 		{"match stars to gaia stress", testMatchStarsToGaiaStress},
@@ -21948,6 +22725,51 @@ func testDonationFooter() error {
 	return nil
 }
 
+func testAperturePhotometry() error {
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := (y*w + x) * 3
+			v := float32(0.1 + 0.002*float64(x))
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = v, v, v
+		}
+	}
+	addStar := func(cx, cy, amp float64) {
+		for dy := -6; dy <= 6; dy++ {
+			for dx := -6; dx <= 6; dx++ {
+				x, y := int(cx)+dx, int(cy)+dy
+				if x < 0 || y < 0 || x >= w || y >= h {
+					continue
+				}
+				v := float32(amp * math.Exp(-float64(dx*dx+dy*dy)/8))
+				i := (y*w + x) * 3
+				f.Pix[i] += v
+				f.Pix[i+1] += v
+				f.Pix[i+2] += v
+			}
+		}
+	}
+	addStar(30, 30, 0.5)
+	addStar(36, 30, 0.3)
+	stars := []star{{X: 30, Y: 30, HFR: 2.4, Flux: 0.5}, {X: 36, Y: 30, HFR: 2.4, Flux: 0.3}}
+	ap := aperturePhotometry(f, stars, stars[0])
+	if ap.Flux <= 0 || ap.FluxErr <= 0 || ap.KronRadius <= 0 || ap.FluxRadius <= 0 {
+		return fmt.Errorf("aperture photometry: %+v", ap)
+	}
+	if math.Abs(ap.Sky-0.1) > 0.06 {
+		return fmt.Errorf("annulus sky %.3f, want ~0.10", ap.Sky)
+	}
+	if ap.Masked == 0 {
+		return errors.New("neighbouring star was not masked out of the annulus")
+	}
+	opts, err := parseArgs([]string{"--aperture-photometry"})
+	if err != nil || !opts.AperturePhotometry {
+		return fmt.Errorf("aperture flag: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
 func testEnsemblePhotometry() error {
 	recs := []photometryRecord{
 		{InstMag: 10, Mag: 12, Matched: true, Flux: 100},
@@ -22274,6 +23096,53 @@ func testXNMLPSFScaleSNR() error {
 	}
 	if _, err := parseArgs([]string{"--psf-scale-snr", "--no-register"}); err == nil {
 		return errors.New("--psf-scale-snr with --no-register should fail")
+	}
+	return nil
+}
+
+func testFrameExpressionEngine() error {
+	expr, err := parseFrameExpr("hfr_px < hfr_px_MED && snr > snr_MIN")
+	if err != nil {
+		return err
+	}
+	vars := map[string]float64{"hfr_px": 1.2, "hfr_px_MED": 2.0, "snr": 40, "snr_MIN": 10}
+	if expr.eval(vars) != 1 {
+		return fmt.Errorf("expression should keep frame: vars=%v", vars)
+	}
+	vars["snr"] = 5
+	if expr.eval(vars) != 0 {
+		return fmt.Errorf("expression should reject frame: vars=%v", vars)
+	}
+	weight, err := parseFrameExpr("snr / snr_MED")
+	if err != nil || weight.eval(map[string]float64{"snr": 20, "snr_MED": 10}) != 2 {
+		return fmt.Errorf("weight expression: %v err=%v", weight, err)
+	}
+	if _, err := parseFrameExpr("hfr_px <"); err == nil {
+		return errors.New("invalid expression should fail")
+	}
+	min, max, med, sigma := frameExprStats([]float64{1, 2, 3, 4, 5})
+	if min != 1 || max != 5 || med != 3 || sigma <= 0 {
+		return fmt.Errorf("stats: %g %g %g %g", min, max, med, sigma)
+	}
+	dir, err := os.MkdirTemp("", "skystacker-frame-expr-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	csvPath := filepath.Join(dir, "metrics.csv")
+	if err := writeFrameMetricsCSV(csvPath, []frameDiag{{Path: "a.jpg", SSWeight: 1.5}}); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(csvPath)
+	if err != nil || !strings.Contains(string(data), "ssweight") || !strings.Contains(string(data), "1.5000") {
+		return fmt.Errorf("SSWEIGHT CSV: %v %s", err, data)
+	}
+	opts, err := parseArgs([]string{"--frame-expr", "hfr_px < hfr_px_MED"})
+	if err != nil || opts.FrameExpr == "" {
+		return fmt.Errorf("frame-expr flag: %+v err=%v", opts, err)
+	}
+	if _, err := parseArgs([]string{"--frame-expr", "hfr_px <"}); err == nil {
+		return errors.New("invalid --frame-expr should fail")
 	}
 	return nil
 }
@@ -22662,6 +23531,62 @@ func testStarHFR() error {
 	if math.Abs(s.HFR-want) > 1.2 {
 		return fmt.Errorf("HFR %.3f, want about %.3f (sigma %.1f)", s.HFR, want, sigma)
 	}
+	return nil
+}
+
+func testMatchedFilterDetection() error {
+	const w, h = 128, 128
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	rng := rand.New(rand.NewSource(7))
+	for i := range f.Pix {
+		f.Pix[i] = 0.1 + float32(rng.NormFloat64()*0.01)
+	}
+	truth := []point2D{{30, 40}, {70, 60}, {95, 100}}
+	for _, s := range truth {
+		for dy := -5; dy <= 5; dy++ {
+			for dx := -5; dx <= 5; dx++ {
+				x, y := int(s.X)+dx, int(s.Y)+dy
+				if x < 0 || y < 0 || x >= w || y >= h {
+					continue
+				}
+				v := float32(0.025 * math.Exp(-float64(dx*dx+dy*dy)/5.12))
+				i := (y*w + x) * 3
+				f.Pix[i] += v
+				f.Pix[i+1] += v
+				f.Pix[i+2] += v
+			}
+		}
+	}
+	plain := detectStarsSigma(f, 100, 4.0)
+	matched := matchedFilterDetect(f, 4.0, 100)
+	if len(matched) <= len(plain) {
+		return fmt.Errorf("matched filter found %d stars, plain threshold found %d", len(matched), len(plain))
+	}
+	for _, s := range truth {
+		best := 1e9
+		for _, d := range matched {
+			if d.Flux <= 0 {
+				continue
+			}
+			if dist := math.Hypot(d.X-s.X, d.Y-s.Y); dist < best {
+				best = dist
+			}
+		}
+		if best > 3 {
+			return fmt.Errorf("faint star at (%g,%g) not recovered (best %.1f px, %d detections)", s.X, s.Y, best, len(matched))
+		}
+	}
+	negatives := 0
+	for _, d := range matched {
+		if d.Flux < 0 {
+			negatives++
+		}
+	}
+	opts, err := parseArgs([]string{"--matched-filter"})
+	if err != nil || !opts.MatchedFilter {
+		return fmt.Errorf("matched-filter flag: %+v err=%v", opts, err)
+	}
+	_ = negatives
 	return nil
 }
 
@@ -25653,6 +26578,198 @@ func testWaveSharpen() error {
 	return nil
 }
 
+func testAsymmetricBackground() error {
+	a := [][]float64{{2, 1}, {1, 3}}
+	x, err := solveLinearSystem(a, []float64{5, 7})
+	if err != nil || math.Abs(x[0]-1.6) > 1e-9 || math.Abs(x[1]-1.8) > 1e-9 {
+		return fmt.Errorf("linear solver: %v err=%v", x, err)
+	}
+	const w, h = 64, 64
+	f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	gradient := func(x, y int) float64 { return 0.1 + 0.004*float64(x) + 0.002*float64(y) }
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := (y*w + x) * 3
+			v := float32(gradient(x, y))
+			if dx, dy := x-30, y-30; dx*dx+dy*dy < 36 {
+				v += float32(0.5 * math.Exp(-float64(dx*dx+dy*dy)/8))
+			}
+			f.Pix[i], f.Pix[i+1], f.Pix[i+2] = v, v, v
+		}
+	}
+	plane := asymmetricBackgroundPlane(f, 2, 2, 3, 1.5, false)
+	if len(plane) != w*h {
+		return errors.New("asymmetric background plane missing")
+	}
+	for _, p := range []struct{ x, y int }{{4, 4}, {60, 60}, {30, 30}} {
+		want := gradient(p.x, p.y)
+		got := float64(plane[p.y*w+p.x])
+		if math.Abs(got-want) > 0.02 {
+			return fmt.Errorf("plane at (%d,%d)=%.3f, want %.3f", p.x, p.y, got, want)
+		}
+	}
+	out := removeBackgroundWithOptions(f, 2, false, runOptions{
+		BgAsymmetric: true, BgHarmonicScale: 2, BgPolyDegree: 2,
+	})
+	if out.Pix[(30*w+30)*3] < 0.3 {
+		return fmt.Errorf("star removed by background: %g", out.Pix[(30*w+30)*3])
+	}
+	if out.Pix[(4*w+4)*3] > 0.03 {
+		return fmt.Errorf("gradient not removed: %g", out.Pix[(4*w+4)*3])
+	}
+	rbf := asymmetricBackgroundPlane(f, 2, 2, 3, 1.5, true)
+	if len(rbf) != w*h || math.IsNaN(float64(rbf[0])) {
+		return errors.New("RBF background invalid")
+	}
+	opts, err := parseArgs([]string{"--bg-asymmetric", "--bg-harmonic-scale", "6", "--bg-poly-degree", "4", "--bg-rbf"})
+	if err != nil || !opts.BgAsymmetric || opts.BgHarmonicScale != 6 || opts.BgPolyDegree != 4 || !opts.BgRBF {
+		return fmt.Errorf("asymmetric background flags: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testAcquisitionKeywordParity() error {
+	dir, err := os.MkdirTemp("", "skystacker-acq-kw-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	writeHeader := func(path string, cards []string) error {
+		var buf bytes.Buffer
+		for _, c := range cards {
+			buf.WriteString(fmt.Sprintf("%-80s", c))
+		}
+		for buf.Len() < 2880 {
+			buf.WriteByte(' ')
+		}
+		return os.WriteFile(path, buf.Bytes(), 0o644)
+	}
+	path := filepath.Join(dir, "light.fit")
+	good := []string{
+		"SIMPLE  =                    T", "BITPIX  =                  -32", "NAXIS   =                    2",
+		"NAXIS1  =                   64", "NAXIS2  =                   64",
+		"ROWORDER= 'TOP-DOWN'", "BAYERPAT= 'RGGB'",
+		"XBAYROFF=                    0", "YBAYROFF=                    1",
+		"EGAIN   =                  1.5", "PIERSIDE= 'East'", "END",
+	}
+	if err := writeHeader(path, good); err != nil {
+		return err
+	}
+	rep, err := checkAcquisitionKeywords(path)
+	if err != nil {
+		return err
+	}
+	if !rep.OK || rep.RowOrder != "TOP-DOWN" || rep.BayerPattern != "RGGB" ||
+		rep.XBayroff != 0 || rep.YBayroff != 1 || rep.EGain != 1.5 || rep.PierSide != "East" {
+		return fmt.Errorf("keyword report: %+v", rep)
+	}
+	bad := append([]string{}, good[:len(good)-1]...)
+	bad = append(bad, "ROWORDER= 'UPSIDE-DOWN'", "PIERSIDE= 'North'", "END")
+	if err := writeHeader(path, bad); err != nil {
+		return err
+	}
+	rep, err = checkAcquisitionKeywords(path)
+	if err != nil || rep.OK || len(rep.Warnings) < 2 {
+		return fmt.Errorf("bad keywords accepted: %+v err=%v", rep, err)
+	}
+	opts, err := parseArgs([]string{"--check-acquisition-keywords", path})
+	if err != nil || opts.AcquisitionCheck != path {
+		return fmt.Errorf("acquisition flag: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testDitherCoverageValidator() error {
+	grid9 := make([]point2D, 0, 9)
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 3; x++ {
+			grid9 = append(grid9, point2D{X: float64(x) / 3, Y: float64(y) / 3})
+		}
+	}
+	rep := validateDitherCoverage(grid9, 0.7)
+	if rep.Points != 9 || rep.Pattern != "9-point" || rep.HoleRisk {
+		return fmt.Errorf("9-point dither: %+v", rep)
+	}
+	single := validateDitherCoverage([]point2D{{0, 0}, {0.5, 0.5}}, 0.05)
+	if single.Pattern != "2-point" || !single.HoleRisk || single.NullFraction < 0.5 {
+		return fmt.Errorf("sparse dither should flag holes: %+v", single)
+	}
+	if validateDitherCoverage([]point2D{{0, 0}}, 0.5).Pattern != "single" {
+		return errors.New("single-point pattern not classified")
+	}
+	return nil
+}
+
+func testWHTCTXSidecars() error {
+	dir, err := os.MkdirTemp("", "skystacker-wht-ctx-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const w, h = 16, 12
+	weights := make([]float32, w*h)
+	for i := range weights {
+		weights[i] = float32(i%5 + 1)
+	}
+	transforms := []frameTransform{
+		{sim: identitySimilarity, valid: true},
+		{sim: identitySimilarity, valid: true},
+		{sim: identitySimilarity, valid: false},
+	}
+	if err := writeWeightContextSidecars(dir, w, h, weights, transforms); err != nil {
+		return err
+	}
+	rw, rh, gotW, err := readMonoFloat32(filepath.Join(dir, "stacked_wht.f32raw"), "SSW1")
+	if err != nil || rw != w || rh != h || len(gotW) != len(weights) {
+		return fmt.Errorf("WHT round-trip: %dx%d len=%d err=%v", rw, rh, len(gotW), err)
+	}
+	for i := range weights {
+		if gotW[i] != weights[i] {
+			return fmt.Errorf("WHT mismatch at %d: %g vs %g", i, gotW[i], weights[i])
+		}
+	}
+	cw, ch, mask, err := readMonoUint32(filepath.Join(dir, "stacked_ctx.u32raw"), "SSC1")
+	if err != nil || cw != w || ch != h {
+		return fmt.Errorf("CTX round-trip: %dx%d err=%v", cw, ch, err)
+	}
+	if mask[0] != 0b11 {
+		return fmt.Errorf("CTX bitmask: got %b, want 11", mask[0])
+	}
+	opts, err := parseArgs([]string{"--wht-ctx"})
+	if err != nil || !opts.WHTContext {
+		return fmt.Errorf("wht-ctx flag: %+v err=%v", opts, err)
+	}
+	return nil
+}
+
+func testDrizzleNoiseReport() error {
+	r := drizzleNoiseRatio(0.6, 0.5)
+	if math.Abs(r-1.662) > 0.01 {
+		return fmt.Errorf("drizzle R(0.6,0.5)=%.4f, want 1.662", r)
+	}
+	if drizzleNoiseRatio(0, 0.5) != 1 || drizzleNoiseRatio(1, 1) <= 0 {
+		return errors.New("degenerate drizzle R values")
+	}
+	uniform := make([]float32, 400)
+	for i := range uniform {
+		uniform[i] = 5
+	}
+	rep := drizzleCoverageReport(uniform, 0.6, 0.5)
+	if rep.CoverageFlag || rep.WeightRMS > 1e-9 {
+		return fmt.Errorf("uniform weights flagged: %+v", rep)
+	}
+	for i := range uniform {
+		if i%2 == 0 {
+			uniform[i] = 1
+		}
+	}
+	rep = drizzleCoverageReport(uniform, 0.6, 0.5)
+	if !rep.CoverageFlag || rep.WeightRMS <= 0 {
+		return fmt.Errorf("dither grid coverage not flagged: %+v", rep)
+	}
+	return nil
+}
+
 func testDrizzleUpsample() error {
 	src := &frame{Width: 2, Height: 2, Pix: []float32{
 		0.1, 0.1, 0.1, 0.2, 0.2, 0.2,
@@ -26938,6 +28055,54 @@ type bgSample struct {
 // pixels). With pixfrac=1 and integer scale the result conserves total
 // flux up to overlap normalisation; it is a diagnostic upsampler, not a
 // multi-frame dither reconstruction.
+// drizzleReport carries the report-only DrizzlePac metrology from item 64.
+type drizzleReport struct {
+	Pixfrac      float64 `json:"pixfrac"`
+	Scale        float64 `json:"scale"`
+	Ratio        float64 `json:"r_pixfrac_over_scale"`
+	NoiseR       float64 `json:"correlated_noise_ratio_R"`
+	WeightMedian float64 `json:"weight_median"`
+	WeightRMS    float64 `json:"weight_rms"`
+	CoverageFlag bool    `json:"weight_rms_over_20pct_median"`
+}
+
+// drizzleNoiseRatio is the filled-uniform-dither formula from Fruchter &
+// Hook (2002), eq. 9-10: R = r/(1-1/(3r)) for r>=1 and R = 1/(1-r/3)
+// otherwise. With pixfrac=0.6 and scale=0.5 it returns 1.662.
+func drizzleNoiseRatio(pixfrac, scale float64) float64 {
+	if scale <= 0 || pixfrac <= 0 {
+		return 1
+	}
+	r := pixfrac / scale
+	if r >= 1 {
+		return r / (1 - 1.0/(3*r))
+	}
+	return 1.0 / (1 - r/3.0)
+}
+
+func drizzleCoverageReport(weights []float32, pixfrac, scale float64) drizzleReport {
+	rep := drizzleReport{Pixfrac: pixfrac, Scale: scale, Ratio: pixfrac / scale,
+		NoiseR: drizzleNoiseRatio(pixfrac, scale)}
+	vals := make([]float64, 0, len(weights))
+	for _, v := range weights {
+		if v > 0 && !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) {
+			vals = append(vals, float64(v))
+		}
+	}
+	if len(vals) == 0 {
+		return rep
+	}
+	rep.WeightMedian = medianOf(vals)
+	var sum float64
+	for _, v := range vals {
+		d := v - rep.WeightMedian
+		sum += d * d
+	}
+	rep.WeightRMS = math.Sqrt(sum / float64(len(vals)))
+	rep.CoverageFlag = rep.WeightMedian > 0 && rep.WeightRMS > 0.2*rep.WeightMedian
+	return rep
+}
+
 func drizzleUpsample(src *frame, scale int, pixfrac float64) *frame {
 	if src == nil || scale < 1 {
 		return src
@@ -29308,6 +30473,299 @@ func writePostPreview(dir, name string, f *frame) error {
 	})
 }
 
+// solveLinearSystem solves a small dense system by Gaussian elimination with
+// partial pivoting. It is used by the asymmetric polynomial and RBF fits.
+func solveLinearSystem(a [][]float64, b []float64) ([]float64, error) {
+	n := len(b)
+	if n == 0 || len(a) != n {
+		return nil, errors.New("linear system: dimension mismatch")
+	}
+	m := make([][]float64, n)
+	for i := range m {
+		m[i] = append([]float64{}, a[i]...)
+		m[i] = append(m[i], b[i])
+	}
+	for col := 0; col < n; col++ {
+		pivot := col
+		for r := col + 1; r < n; r++ {
+			if math.Abs(m[r][col]) > math.Abs(m[pivot][col]) {
+				pivot = r
+			}
+		}
+		if math.Abs(m[pivot][col]) < 1e-12 {
+			return nil, fmt.Errorf("linear system: singular column %d", col)
+		}
+		m[col], m[pivot] = m[pivot], m[col]
+		p := m[col][col]
+		for c := col; c <= n; c++ {
+			m[col][c] /= p
+		}
+		for r := 0; r < n; r++ {
+			if r == col {
+				continue
+			}
+			f := m[r][col]
+			if f == 0 {
+				continue
+			}
+			for c := col; c <= n; c++ {
+				m[r][c] -= f * m[col][c]
+			}
+		}
+	}
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = m[i][n]
+	}
+	return out, nil
+}
+
+type bgPoint struct {
+	x, y, v float64
+}
+
+func bgPolyBasis(x, y float64, degree int) []float64 {
+	var basis []float64
+	for total := 0; total <= degree; total++ {
+		for i := 0; i <= total; i++ {
+			j := total - i
+			basis = append(basis, math.Pow(x, float64(i))*math.Pow(y, float64(j)))
+		}
+	}
+	return basis
+}
+
+func fitBackground(points []bgPoint, degree int, rbf bool, width, height float64) func(float64, float64) float64 {
+	if len(points) < 4 {
+		return func(float64, float64) float64 { return 0 }
+	}
+	centers := points
+	if rbf && len(centers) > 64 {
+		step := len(centers) / 64
+		centers = centers[:0:0]
+		for i := 0; i < len(points); i += step {
+			centers = append(centers, points[i])
+		}
+	}
+	if rbf {
+		eps := 0.35 * math.Max(width, height) / float64(len(centers))
+		if eps < 1e-6 {
+			eps = 1
+		}
+		a := make([][]float64, len(centers))
+		for i := range a {
+			a[i] = make([]float64, len(centers))
+			for j := range a[i] {
+				d := math.Hypot(centers[i].x-centers[j].x, centers[i].y-centers[j].y)
+				phi := math.Exp(-d * d / (2 * eps * eps))
+				if i == j {
+					phi += 1e-6
+				}
+				a[i][j] = phi
+			}
+		}
+		weights, err := solveLinearSystem(a, func() []float64 {
+			v := make([]float64, len(centers))
+			for i := range centers {
+				v[i] = centers[i].v
+			}
+			return v
+		}())
+		if err != nil {
+			return func(float64, float64) float64 { return centers[0].v }
+		}
+		return func(x, y float64) float64 {
+			var sum float64
+			for i, c := range centers {
+				d := math.Hypot(x-c.x, y-c.y)
+				sum += weights[i] * math.Exp(-d*d/(2*eps*eps))
+			}
+			return sum
+		}
+	}
+	terms := len(bgPolyBasis(0, 0, degree))
+	a := make([][]float64, terms)
+	b := make([]float64, terms)
+	for i := range a {
+		a[i] = make([]float64, terms)
+	}
+	for _, p := range points {
+		nx, ny := 2*p.x/width-1, 2*p.y/height-1
+		basis := bgPolyBasis(nx, ny, degree)
+		for i := range basis {
+			b[i] += basis[i] * p.v
+			for j := range basis {
+				a[i][j] += basis[i] * basis[j]
+			}
+		}
+	}
+	coeffs, err := solveLinearSystem(a, b)
+	if err != nil {
+		return func(float64, float64) float64 { return points[0].v }
+	}
+	return func(x, y float64) float64 {
+		basis := bgPolyBasis(2*x/width-1, 2*y/height-1, degree)
+		var sum float64
+		for i, c := range basis {
+			sum += coeffs[i] * c
+		}
+		return sum
+	}
+}
+
+// asymmetricBackgroundPlane implements roadmap item 56: sigma=1.4826*MAD,
+// asymmetric low/high clipping, a polynomial (degree 1-6) or RBF coarse fit,
+// and multiscale harmonic inpainting of the clipped regions.
+func asymmetricBackgroundPlane(f *frame, scale, degree int, clipLow, clipHigh float64, rbf bool) []float32 {
+	if f == nil || f.Width < 8 || f.Height < 8 {
+		return nil
+	}
+	if scale < 1 || scale > 10 {
+		scale = 5
+	}
+	if degree < 1 || degree > 6 {
+		degree = 3
+	}
+	if clipLow <= 0 || clipHigh <= 0 {
+		clipLow, clipHigh = 3.0, 1.5
+	}
+	gw, gh := (f.Width+scale-1)/scale, (f.Height+scale-1)/scale
+	small := make([]float64, gw*gh)
+	valid := make([]bool, gw*gh)
+	for gy := 0; gy < gh; gy++ {
+		for gx := 0; gx < gw; gx++ {
+			var vals []float64
+			for y := gy * scale; y < min((gy+1)*scale, f.Height); y++ {
+				for x := gx * scale; x < min((gx+1)*scale, f.Width); x++ {
+					i := (y*f.Width + x) * 3
+					vals = append(vals, 0.299*float64(f.Pix[i])+0.587*float64(f.Pix[i+1])+0.114*float64(f.Pix[i+2]))
+				}
+			}
+			if len(vals) > 0 {
+				small[gy*gw+gx] = medianOf(vals)
+				valid[gy*gw+gx] = true
+			}
+		}
+	}
+	vals := make([]float64, 0, len(small))
+	for i, v := range small {
+		if valid[i] {
+			vals = append(vals, v)
+		}
+	}
+	if len(vals) < 4 {
+		return nil
+	}
+	center, mad := medianOf(vals), 0.0
+	devs := make([]float64, len(vals))
+	for i, v := range vals {
+		devs[i] = math.Abs(v - center)
+	}
+	mad = medianOf(devs) * 1.4826
+	if mad < 1e-9 {
+		mad = 1e-6
+	}
+	model := func(float64, float64) float64 { return center }
+	for pass := 0; pass < 3; pass++ {
+		points := make([]bgPoint, 0, len(small))
+		for gy := 0; gy < gh; gy++ {
+			for gx := 0; gx < gw; gx++ {
+				i := gy*gw + gx
+				if !valid[i] {
+					continue
+				}
+				x, y := float64(gx*scale), float64(gy*scale)
+				d := small[i] - model(x, y)
+				if d > clipHigh*mad || d < -clipLow*mad {
+					continue
+				}
+				points = append(points, bgPoint{x, y, small[i]})
+			}
+		}
+		if len(points) >= 4 {
+			model = fitBackground(points, degree, rbf, float64(f.Width), float64(f.Height))
+		}
+	}
+	residual := make([]float32, gw*gh)
+	holes := make([]bool, gw*gh)
+	for gy := 0; gy < gh; gy++ {
+		for gx := 0; gx < gw; gx++ {
+			i := gy*gw + gx
+			if !valid[i] {
+				holes[i] = true
+				continue
+			}
+			x, y := float64(gx*scale), float64(gy*scale)
+			d := small[i] - model(x, y)
+			if d > clipHigh*mad || d < -clipLow*mad {
+				holes[i] = true
+				residual[i] = 0
+				continue
+			}
+			residual[i] = float32(small[i] - model(x, y))
+		}
+	}
+	dilated := append([]bool{}, holes...)
+	for gy := 1; gy < gh-1; gy++ {
+		for gx := 1; gx < gw-1; gx++ {
+			i := gy*gw + gx
+			if holes[i-1] || holes[i+1] || holes[i-gw] || holes[i+gw] {
+				dilated[i] = true
+				residual[i] = 0
+			}
+		}
+	}
+	holes = dilated
+	for pass := 0; pass < 30; pass++ {
+		next := append([]float32{}, residual...)
+		for gy := 1; gy < gh-1; gy++ {
+			for gx := 1; gx < gw-1; gx++ {
+				i := gy*gw + gx
+				if !holes[i] {
+					continue
+				}
+				next[i] = (residual[i-1] + residual[i+1] + residual[i-gw] + residual[i+gw]) / 4
+			}
+		}
+		residual = next
+	}
+	out := make([]float32, f.Width*f.Height)
+	for y := 0; y < f.Height; y++ {
+		for x := 0; x < f.Width; x++ {
+			gx, gy := float64(x)/float64(scale), float64(y)/float64(scale)
+			x0, y0 := int(gx), int(gy)
+			x1, y1 := min(x0+1, gw-1), min(y0+1, gh-1)
+			fx, fy := gx-float64(x0), gy-float64(y0)
+			i00, i10 := y0*gw+x0, y0*gw+x1
+			i01, i11 := y1*gw+x0, y1*gw+x1
+			v00 := model(float64(x0*scale), float64(y0*scale)) + float64(residual[i00])
+			v10 := model(float64(x1*scale), float64(y0*scale)) + float64(residual[i10])
+			v01 := model(float64(x0*scale), float64(y1*scale)) + float64(residual[i01])
+			v11 := model(float64(x1*scale), float64(y1*scale)) + float64(residual[i11])
+			out[y*f.Width+x] = float32((1-fx)*(1-fy)*v00 + fx*(1-fy)*v10 + (1-fx)*fy*v01 + fx*fy*v11)
+		}
+	}
+	return out
+}
+
+func removeBackgroundWithOptions(f *frame, degree int, useMask bool, opts runOptions) *frame {
+	if !opts.BgAsymmetric {
+		return removeBackground(f, degree, useMask)
+	}
+	plane := asymmetricBackgroundPlane(f, opts.BgHarmonicScale, opts.BgPolyDegree,
+		opts.BgClipLow, opts.BgClipHigh, opts.BgRBF)
+	if plane == nil {
+		return removeBackground(f, degree, useMask)
+	}
+	out := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix))}
+	for p := 0; p < f.Width*f.Height; p++ {
+		for c := 0; c < 3; c++ {
+			out.Pix[p*3+c] = max(0, f.Pix[p*3+c]-plane[p])
+		}
+	}
+	return out
+}
+
 // multiscaleBackground removes a coarse, object-protected background
 // field before the polynomial fit. Background samples are the 20th
 // percentile of luminance in each block (bright stars/nebula are ignored),
@@ -29470,7 +30928,7 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	}
 	// Step 1: background removal (ALWAYS)
 	logf("  post: background removal (degree %d)", opts.BGDegree)
-	cur = removeBackground(cur, opts.BGDegree, opts.MaskBG)
+	cur = removeBackgroundWithOptions(cur, opts.BGDegree, opts.MaskBG, opts)
 	step1Frame = cur
 	p := filepath.Join(outputDir, "post_step1_background_removed.jpg")
 	if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
@@ -30827,6 +32285,99 @@ type calibrationLibraryEntry struct {
 	Gain        float64 `json:"gain"`
 }
 
+// readFITSCardMap returns the string values of the primary FITS header.
+// It is used by --check-acquisition-keywords to compare N.I.N.A. vocabulary
+// against RAW/FITS ingestion (roadmap item 71).
+func readFITSCardMap(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cards := make(map[string]string)
+	limit := len(data)
+	if limit > 2880 {
+		limit = 2880
+	}
+	for off := 0; off+80 <= limit; off += 80 {
+		card := strings.TrimRight(string(data[off:off+80]), " ")
+		if card == "END" {
+			break
+		}
+		eq := strings.IndexByte(card, '=')
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(card[:eq])
+		val := strings.TrimSpace(card[eq+1:])
+		if i := strings.Index(val, " /"); i >= 0 {
+			val = strings.TrimSpace(val[:i])
+		}
+		cards[key] = strings.Trim(val, "' ")
+	}
+	return cards, nil
+}
+
+type acquisitionKeywordReport struct {
+	Path         string   `json:"path"`
+	RowOrder     string   `json:"roworder,omitempty"`
+	BayerPattern string   `json:"bayerpat,omitempty"`
+	XBayroff     float64  `json:"xbayroff,omitempty"`
+	YBayroff     float64  `json:"ybayroff,omitempty"`
+	EGain        float64  `json:"egain,omitempty"`
+	PierSide     string   `json:"pierside,omitempty"`
+	Warnings     []string `json:"warnings,omitempty"`
+	OK           bool     `json:"ok"`
+}
+
+func checkAcquisitionKeywords(path string) (acquisitionKeywordReport, error) {
+	rep := acquisitionKeywordReport{Path: path, OK: true}
+	cards, err := readFITSCardMap(path)
+	if err != nil {
+		return rep, err
+	}
+	rep.RowOrder = cards["ROWORDER"]
+	rep.BayerPattern = cards["BAYERPAT"]
+	rep.PierSide = cards["PIERSIDE"]
+	parse := func(key string) float64 {
+		v, _ := strconv.ParseFloat(cards[key], 64)
+		return v
+	}
+	rep.XBayroff, rep.YBayroff, rep.EGain = parse("XBAYROFF"), parse("YBAYROFF"), parse("EGAIN")
+	warn := func(format string, args ...any) {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf(format, args...))
+		rep.OK = false
+	}
+	switch strings.ToUpper(rep.RowOrder) {
+	case "TOP-DOWN", "BOTTOM-UP":
+	default:
+		warn("ROWORDER=%q (expected TOP-DOWN or BOTTOM-UP)", rep.RowOrder)
+	}
+	if rep.BayerPattern != "" {
+		switch strings.ToUpper(rep.BayerPattern) {
+		case "RGGB", "BGGR", "GRBG", "GBRG":
+		default:
+			warn("BAYERPAT=%q (expected RGGB/BGGR/GRBG/GBRG)", rep.BayerPattern)
+		}
+		for _, v := range []struct {
+			name string
+			val  float64
+		}{{"XBAYROFF", rep.XBayroff}, {"YBAYROFF", rep.YBayroff}} {
+			if v.val != 0 && v.val != 1 {
+				warn("%s=%g (expected 0 or 1)", v.name, v.val)
+			}
+		}
+	}
+	if rep.EGain <= 0 {
+		warn("EGAIN=%g (expected positive gain)", rep.EGain)
+	}
+	switch strings.ToLower(rep.PierSide) {
+	case "east", "west":
+	default:
+		warn("PIERSIDE=%q (expected East or West)", rep.PierSide)
+	}
+	return rep, nil
+}
+
 func fitsHeaderFloat(path string, keys ...string) (float64, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) < 2880 || string(data[:6]) != "SIMPLE" {
@@ -30854,6 +32405,115 @@ func fitsHeaderFloat(path string, keys ...string) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// calibrationProvenance records which masters were used and their metadata.
+// Dimensions are checked before stacking; width/height are never overridden.
+type calibrationProvenance struct {
+	Kind        string  `json:"kind"`
+	Path        string  `json:"path"`
+	Temperature float64 `json:"temperature_c"`
+	Exposure    float64 `json:"exposure_s"`
+	Gain        float64 `json:"gain"`
+	Width       int     `json:"width"`
+	Height      int     `json:"height"`
+	Compatible  bool    `json:"compatible"`
+}
+
+func calibrationMasterPaths(path string) []string {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return []string{path}
+	}
+	files, err := discoverFiles(path, true, nil)
+	if err != nil {
+		return nil
+	}
+	return files
+}
+
+// assertCalibrationDimensions rejects masters whose native dimensions differ
+// from the lights instead of silently resizing them during stacking.
+func assertCalibrationDimensions(path string, expectedW, expectedH int) error {
+	for _, p := range calibrationMasterPaths(path) {
+		cfg, err := decodeImageConfig(p)
+		if err != nil {
+			return fmt.Errorf("calibration master %s: %w", p, err)
+		}
+		if cfg.Width != expectedW || cfg.Height != expectedH {
+			return fmt.Errorf("calibration master %s is %dx%d but lights are %dx%d; refusing to resize masters",
+				p, cfg.Width, cfg.Height, expectedW, expectedH)
+		}
+	}
+	return nil
+}
+
+func calibrationProvenanceFor(kind, path string, expectedW, expectedH int, entries []calibrationLibraryEntry) calibrationProvenance {
+	p := calibrationProvenance{Kind: kind, Path: path, Width: expectedW, Height: expectedH, Compatible: true}
+	if paths := calibrationMasterPaths(path); len(paths) > 0 {
+		first := paths[0]
+		if cfg, err := decodeImageConfig(first); err == nil {
+			p.Width, p.Height = cfg.Width, cfg.Height
+			p.Compatible = cfg.Width == expectedW && cfg.Height == expectedH
+		}
+		if v, ok := fitsHeaderFloat(first, "TEMPERAT", "TEMP"); ok {
+			p.Temperature = v
+		}
+		if v, ok := fitsHeaderFloat(first, "EXPTIME", "EXPOSURE"); ok {
+			p.Exposure = v
+		}
+		if v, ok := fitsHeaderFloat(first, "GAIN", "EGAIN"); ok {
+			p.Gain = v
+		}
+	}
+	for _, e := range entries {
+		if e.Kind == kind && e.Path == path {
+			p.Temperature, p.Exposure, p.Gain = e.Temperature, e.Exposure, e.Gain
+			break
+		}
+	}
+	return p
+}
+
+func buildCalibrationProvenance(opts runOptions, expectedW, expectedH int, selfFlatActive bool) (string, []calibrationProvenance, []string) {
+	var masters []calibrationProvenance
+	var entries []calibrationLibraryEntry
+	if opts.CalibLibrary != "" {
+		entries, _ = loadCalibrationLibrary(opts.CalibLibrary)
+	}
+	for _, item := range []struct{ kind, path string }{
+		{"dark", opts.DarkFile}, {"flat", opts.FlatFile}, {"bias", opts.BiasFile},
+	} {
+		if item.path != "" {
+			masters = append(masters, calibrationProvenanceFor(item.kind, item.path, expectedW, expectedH, entries))
+		}
+	}
+	var status strings.Builder
+	for _, m := range masters {
+		switch m.Kind {
+		case "dark":
+			status.WriteString("D")
+		case "flat":
+			status.WriteString("F")
+		case "bias":
+			status.WriteString("B")
+		}
+	}
+	if selfFlatActive {
+		status.WriteString("S")
+	}
+	cards := []string{fmt.Sprintf("CALSTAT= '%s'", status.String())}
+	for _, m := range masters {
+		if m.Kind == "dark" {
+			cards = append(cards,
+				fmt.Sprintf("D_TEMP= %20.4f", m.Temperature),
+				fmt.Sprintf("D_EXP = %20.4f", m.Exposure),
+				fmt.Sprintf("D_GAIN= %20.4f", m.Gain))
+		}
+	}
+	return status.String(), masters, cards
 }
 
 func loadCalibrationLibrary(dir string) ([]calibrationLibraryEntry, error) {
@@ -30971,13 +32631,324 @@ func keepSharpestIndices(hfrs []float64, pct int) []int {
 	return out
 }
 
+// Frame-selection expressions (roadmap item 51). The grammar is a small
+// recursive-descent subset of Go: numbers, metric identifiers, + - * /,
+// comparisons and && / ||. A value > 0.5 keeps the frame; the numeric result
+// becomes its SSWEIGHT-like weight.
+type frameExprNode struct {
+	op          string
+	value       float64
+	name        string
+	left, right *frameExprNode
+}
+
+type frameExpr struct {
+	source string
+	root   *frameExprNode
+}
+
+type frameExprParser struct {
+	s   string
+	pos int
+}
+
+func (p *frameExprParser) skip() {
+	for p.pos < len(p.s) && (p.s[p.pos] == ' ' || p.s[p.pos] == '\t') {
+		p.pos++
+	}
+}
+
+func (p *frameExprParser) consume(op string) bool {
+	p.skip()
+	if strings.HasPrefix(p.s[p.pos:], op) {
+		p.pos += len(op)
+		return true
+	}
+	return false
+}
+
+func (p *frameExprParser) parseOr() (*frameExprNode, error) {
+	left, err := p.parseAnd()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		p.skip()
+		if !p.consume("||") {
+			return left, nil
+		}
+		right, err := p.parseAnd()
+		if err != nil {
+			return nil, err
+		}
+		left = &frameExprNode{op: "||", left: left, right: right}
+	}
+}
+
+func (p *frameExprParser) parseAnd() (*frameExprNode, error) {
+	left, err := p.parseCmp()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		p.skip()
+		if !p.consume("&&") {
+			return left, nil
+		}
+		right, err := p.parseCmp()
+		if err != nil {
+			return nil, err
+		}
+		left = &frameExprNode{op: "&&", left: left, right: right}
+	}
+}
+
+func (p *frameExprParser) parseCmp() (*frameExprNode, error) {
+	left, err := p.parseAdd()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		p.skip()
+		op := ""
+		for _, candidate := range []string{"<=", ">=", "==", "!=", "<", ">"} {
+			if strings.HasPrefix(p.s[p.pos:], candidate) {
+				op = candidate
+				p.pos += len(candidate)
+				break
+			}
+		}
+		if op == "" {
+			return left, nil
+		}
+		right, err := p.parseAdd()
+		if err != nil {
+			return nil, err
+		}
+		left = &frameExprNode{op: op, left: left, right: right}
+	}
+}
+
+func (p *frameExprParser) parseAdd() (*frameExprNode, error) {
+	left, err := p.parseMul()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		p.skip()
+		if p.pos >= len(p.s) || (p.s[p.pos] != '+' && p.s[p.pos] != '-') {
+			return left, nil
+		}
+		op := string(p.s[p.pos])
+		p.pos++
+		right, err := p.parseMul()
+		if err != nil {
+			return nil, err
+		}
+		left = &frameExprNode{op: op, left: left, right: right}
+	}
+}
+
+func (p *frameExprParser) parseMul() (*frameExprNode, error) {
+	left, err := p.parseAtom()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		p.skip()
+		if p.pos >= len(p.s) || (p.s[p.pos] != '*' && p.s[p.pos] != '/') {
+			return left, nil
+		}
+		op := string(p.s[p.pos])
+		p.pos++
+		right, err := p.parseAtom()
+		if err != nil {
+			return nil, err
+		}
+		left = &frameExprNode{op: op, left: left, right: right}
+	}
+}
+
+func (p *frameExprParser) parseAtom() (*frameExprNode, error) {
+	p.skip()
+	if p.pos >= len(p.s) {
+		return nil, errors.New("unexpected end of frame expression")
+	}
+	if p.consume("(") {
+		node, err := p.parseOr()
+		if err != nil {
+			return nil, err
+		}
+		if !p.consume(")") {
+			return nil, errors.New("missing ')' in frame expression")
+		}
+		return node, nil
+	}
+	start := p.pos
+	for p.pos < len(p.s) {
+		c := p.s[p.pos]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-' && p.pos > start {
+			p.pos++
+			continue
+		}
+		break
+	}
+	token := p.s[start:p.pos]
+	if token == "" {
+		return nil, fmt.Errorf("unexpected character %q in frame expression", p.s[p.pos])
+	}
+	if value, err := strconv.ParseFloat(token, 64); err == nil {
+		return &frameExprNode{value: value}, nil
+	}
+	return &frameExprNode{name: token}, nil
+}
+
+func parseFrameExpr(expr string) (*frameExpr, error) {
+	if strings.TrimSpace(expr) == "" {
+		return nil, errors.New("empty frame expression")
+	}
+	p := &frameExprParser{s: expr}
+	root, err := p.parseOr()
+	if err != nil {
+		return nil, err
+	}
+	p.skip()
+	if p.pos != len(p.s) {
+		return nil, fmt.Errorf("unexpected trailing input in frame expression: %q", p.s[p.pos:])
+	}
+	return &frameExpr{source: expr, root: root}, nil
+}
+
+func (e *frameExpr) eval(vars map[string]float64) float64 {
+	var walk func(*frameExprNode) float64
+	walk = func(n *frameExprNode) float64 {
+		if n == nil {
+			return 0
+		}
+		switch n.op {
+		case "&&":
+			a, b := walk(n.left), walk(n.right)
+			if a > 0.5 && b > 0.5 {
+				return 1
+			}
+			return 0
+		case "||":
+			a, b := walk(n.left), walk(n.right)
+			if a > 0.5 || b > 0.5 {
+				return 1
+			}
+			return 0
+		case "<":
+			if walk(n.left) < walk(n.right) {
+				return 1
+			}
+			return 0
+		case ">":
+			if walk(n.left) > walk(n.right) {
+				return 1
+			}
+			return 0
+		case "<=":
+			if walk(n.left) <= walk(n.right) {
+				return 1
+			}
+			return 0
+		case ">=":
+			if walk(n.left) >= walk(n.right) {
+				return 1
+			}
+			return 0
+		case "==":
+			if walk(n.left) == walk(n.right) {
+				return 1
+			}
+			return 0
+		case "!=":
+			if walk(n.left) != walk(n.right) {
+				return 1
+			}
+			return 0
+		case "+":
+			return walk(n.left) + walk(n.right)
+		case "-":
+			return walk(n.left) - walk(n.right)
+		case "*":
+			return walk(n.left) * walk(n.right)
+		case "/":
+			d := walk(n.right)
+			if d == 0 {
+				return 0
+			}
+			return walk(n.left) / d
+		}
+		if n.name != "" {
+			return vars[n.name]
+		}
+		return n.value
+	}
+	return walk(e.root)
+}
+
+func frameExprStats(values []float64) (min, max, median, sigma float64) {
+	if len(values) == 0 {
+		return 0, 0, 0, 0
+	}
+	sorted := append([]float64{}, values...)
+	sort.Float64s(sorted)
+	min, max, median = sorted[0], sorted[len(sorted)-1], sorted[len(sorted)/2]
+	devs := make([]float64, len(sorted))
+	for i, v := range sorted {
+		devs[i] = math.Abs(v - median)
+	}
+	sort.Float64s(devs)
+	return min, max, median, devs[len(devs)/2] * 1.4826
+}
+
+type frameExprMetrics struct {
+	HFR, BgSigma, MedianBlob, Ecc, PSFScale, Stars float64
+}
+
+func frameExprVariables(metrics []frameExprMetrics) []map[string]float64 {
+	names := []string{"hfr_px", "bg_sigma", "median_blob", "eccentricity", "psf_scale", "stars"}
+	columns := make(map[string][]float64)
+	for _, name := range names {
+		columns[name] = make([]float64, len(metrics))
+	}
+	for i, m := range metrics {
+		columns["hfr_px"][i] = m.HFR
+		columns["bg_sigma"][i] = m.BgSigma
+		columns["median_blob"][i] = m.MedianBlob
+		columns["eccentricity"][i] = m.Ecc
+		columns["psf_scale"][i] = m.PSFScale
+		columns["stars"][i] = m.Stars
+	}
+	stats := make(map[string][4]float64)
+	for name, vals := range columns {
+		stats[name] = [4]float64{}
+		min, max, med, sig := frameExprStats(vals)
+		stats[name] = [4]float64{min, max, med, sig}
+	}
+	out := make([]map[string]float64, len(metrics))
+	for i := range metrics {
+		vars := make(map[string]float64)
+		for name, vals := range columns {
+			vars[name] = vals[i]
+			st := stats[name]
+			vars[name+"_MIN"], vars[name+"_MAX"] = st[0], st[1]
+			vars[name+"_MED"], vars[name+"_SIGMA"] = st[2], st[3]
+		}
+		out[i] = vars
+	}
+	return out
+}
+
 func writeFrameMetricsCSV(path string, diags []frameDiag) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"frame", "stars", "inliers", "hfr_px", "fwhm_px", "eccentricity", "snr", "bg_sigma", "intrinsic_quality", "weight", "psf_scale", "note"}); err != nil {
+	if err := w.Write([]string{"frame", "stars", "inliers", "hfr_px", "fwhm_px", "eccentricity", "snr", "bg_sigma", "intrinsic_quality", "weight", "psf_scale", "ssweight", "note"}); err != nil {
 		f.Close()
 		return err
 	}
@@ -30993,6 +32964,7 @@ func writeFrameMetricsCSV(path string, diags []frameDiag) error {
 			strconv.FormatFloat(d.IntrinsicQ, 'f', 2, 64),
 			strconv.FormatFloat(d.Weight, 'f', 4, 64),
 			strconv.FormatFloat(d.PSFScale, 'f', 4, 64),
+			strconv.FormatFloat(d.SSWeight, 'f', 4, 64),
 			d.Note,
 		}
 		if err := w.Write(rec); err != nil {
@@ -31009,16 +32981,142 @@ func writeFrameMetricsCSV(path string, diags []frameDiag) error {
 }
 
 type photometryRecord struct {
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	RA       float64 `json:"ra_deg"`
-	Dec      float64 `json:"dec_deg"`
-	Flux     float64 `json:"flux"`
-	InstMag  float64 `json:"inst_mag"`
-	Mag      float64 `json:"mag"`
-	Residual float64 `json:"residual"`
-	Matched  bool    `json:"matched"`
-	Catalog  string  `json:"catalog,omitempty"`
+	X          float64 `json:"x"`
+	Y          float64 `json:"y"`
+	RA         float64 `json:"ra_deg"`
+	Dec        float64 `json:"dec_deg"`
+	Flux       float64 `json:"flux"`
+	InstMag    float64 `json:"inst_mag"`
+	Mag        float64 `json:"mag"`
+	Residual   float64 `json:"residual"`
+	Matched    bool    `json:"matched"`
+	Catalog    string  `json:"catalog,omitempty"`
+	Sky        float64 `json:"sky,omitempty"`
+	FluxErr    float64 `json:"flux_err,omitempty"`
+	KronRadius float64 `json:"kron_radius,omitempty"`
+	FluxRadius float64 `json:"flux_radius,omitempty"`
+	Aperture   float64 `json:"aperture,omitempty"`
+	Masked     int     `json:"masked,omitempty"`
+}
+
+type apertureResult struct {
+	Flux       float64
+	Sky        float64
+	FluxErr    float64
+	KronRadius float64
+	FluxRadius float64
+	Masked     int
+}
+
+// aperturePhotometry measures a source with a local annulus background,
+// sigma-clipped against neighbouring detections (segmentation masking), then
+// derives a Kron radius (2.5 x the flux-weighted mean radius) and the radius
+// enclosing half the aperture flux (FLUX_RADIUS).
+func aperturePhotometry(f *frame, stars []star, s star) apertureResult {
+	res := apertureResult{}
+	if f == nil || s.HFR <= 0 {
+		return res
+	}
+	w, h := f.Width, f.Height
+	gray := grayscale(f)
+	r := math.Max(1.8*s.HFR, 2.0)
+	rIn, rOut := 2*r, 3*r
+	masked := func(x, y int) bool {
+		for _, other := range stars {
+			if math.Abs(other.X-s.X) < 0.01 && math.Abs(other.Y-s.Y) < 0.01 {
+				continue
+			}
+			if other.HFR <= 0 {
+				continue
+			}
+			if math.Hypot(float64(x)-other.X, float64(y)-other.Y) < 1.5*other.HFR {
+				return true
+			}
+		}
+		return false
+	}
+	annulus := make([]float64, 0, 128)
+	for y := max(0, int(s.Y-rOut)); y <= min(h-1, int(s.Y+rOut)); y++ {
+		for x := max(0, int(s.X-rOut)); x <= min(w-1, int(s.X+rOut)); x++ {
+			d := math.Hypot(float64(x)-s.X, float64(y)-s.Y)
+			if d < rIn || d > rOut || masked(x, y) {
+				continue
+			}
+			annulus = append(annulus, float64(gray[y*w+x]))
+		}
+	}
+	if len(annulus) < 8 {
+		return res
+	}
+	sky := medianOf(annulus)
+	devs := make([]float64, len(annulus))
+	for i, v := range annulus {
+		devs[i] = math.Abs(v - sky)
+	}
+	sigma := medianOf(devs) * 1.4826
+	clean := make([]float64, 0, len(annulus))
+	for _, v := range annulus {
+		if math.Abs(v-sky) < 3*sigma {
+			clean = append(clean, v)
+		}
+	}
+	if len(clean) >= 8 {
+		sky = medianOf(clean)
+	}
+	res.Sky = sky
+	type sample struct{ d, signal float64 }
+	samples := make([]sample, 0, 256)
+	for y := max(0, int(s.Y-rOut)); y <= min(h-1, int(s.Y+rOut)); y++ {
+		for x := max(0, int(s.X-rOut)); x <= min(w-1, int(s.X+rOut)); x++ {
+			d := math.Hypot(float64(x)-s.X, float64(y)-s.Y)
+			if d > rOut || masked(x, y) {
+				if masked(x, y) {
+					res.Masked++
+				}
+				continue
+			}
+			v := float64(gray[y*w+x]) - sky
+			if v > 0 {
+				samples = append(samples, sample{d, v})
+			}
+		}
+	}
+	var sum, weightedR float64
+	for _, p := range samples {
+		if p.d > r {
+			continue
+		}
+		sum += p.signal
+		weightedR += p.d * p.signal
+	}
+	if sum <= 0 {
+		return res
+	}
+	kronMean := weightedR / sum
+	kron := math.Min(math.Max(2.5*kronMean, r), rOut)
+	res.KronRadius = kron
+	var flux, errSq float64
+	fluxSamples := make([]sample, 0, len(samples))
+	for _, p := range samples {
+		if p.d > kron {
+			continue
+		}
+		flux += p.signal
+		errSq += p.signal + sky
+		fluxSamples = append(fluxSamples, p)
+	}
+	res.Flux = flux
+	res.FluxErr = math.Sqrt(errSq)
+	sort.Slice(fluxSamples, func(i, j int) bool { return fluxSamples[i].d < fluxSamples[j].d })
+	var cumulative float64
+	for _, p := range fluxSamples {
+		cumulative += p.signal
+		if cumulative >= 0.5*flux {
+			res.FluxRadius = p.d
+			break
+		}
+	}
+	return res
 }
 
 func photometryZeroPoint(recs []photometryRecord) float64 {
@@ -31061,7 +33159,8 @@ func runEnsemblePhotometry(outputDir string, sol *plateSolution, opts runOptions
 	if err != nil {
 		return err
 	}
-	stars := detectStars(&frame{Width: w, Height: ih, Pix: pix}, 500)
+	photoFrame := &frame{Width: w, Height: ih, Pix: pix}
+	stars := detectStars(photoFrame, 500)
 	ipix := healpixAng2PixNested(opts.GaiaNside, sol.WCS.CRVAL1, sol.WCS.CRVAL2)
 	tile, ok := gaiaLoadTileCache(gaiaDefaultCacheDir(), opts.GaiaNside, ipix)
 	if !ok {
@@ -31085,6 +33184,14 @@ func runEnsemblePhotometry(outputDir string, sol *plateSolution, opts runOptions
 	recs := make([]photometryRecord, 0, len(stars))
 	for _, s := range stars {
 		r := photometryRecord{X: s.X, Y: s.Y, Flux: s.Flux}
+		if opts.AperturePhotometry {
+			ap := aperturePhotometry(photoFrame, stars, s)
+			if ap.Flux > 0 {
+				r.Flux, r.Sky, r.FluxErr = ap.Flux, ap.Sky, ap.FluxErr
+				r.KronRadius, r.FluxRadius = ap.KronRadius, ap.FluxRadius
+				r.Aperture, r.Masked = 1.8*s.HFR, ap.Masked
+			}
+		}
 		r.RA, r.Dec = wcsTanInverseSIP(&wcs, s.X, s.Y)
 		for r.RA < 0 {
 			r.RA += 2 * math.Pi
@@ -31143,7 +33250,8 @@ func runEnsemblePhotometry(outputDir string, sol *plateSolution, opts runOptions
 		return err
 	}
 	cw := csv.NewWriter(f)
-	if err := cw.Write([]string{"x", "y", "ra_deg", "dec_deg", "flux", "inst_mag", "mag", "residual", "matched", "catalog"}); err != nil {
+	if err := cw.Write([]string{"x", "y", "ra_deg", "dec_deg", "flux", "inst_mag", "mag", "residual", "matched", "catalog",
+		"sky", "flux_err", "kron_radius", "flux_radius", "aperture", "masked"}); err != nil {
 		f.Close()
 		return err
 	}
@@ -31154,6 +33262,9 @@ func runEnsemblePhotometry(outputDir string, sol *plateSolution, opts runOptions
 			fmt.Sprintf("%.3f", r.Flux), fmt.Sprintf("%.4f", r.InstMag),
 			fmt.Sprintf("%.4f", r.Mag), fmt.Sprintf("%.4f", r.Residual),
 			strconv.FormatBool(r.Matched), r.Catalog,
+			fmt.Sprintf("%.5f", r.Sky), fmt.Sprintf("%.3f", r.FluxErr),
+			fmt.Sprintf("%.2f", r.KronRadius), fmt.Sprintf("%.2f", r.FluxRadius),
+			fmt.Sprintf("%.2f", r.Aperture), strconv.Itoa(r.Masked),
 		}); err != nil {
 			f.Close()
 			return err
@@ -31382,13 +33493,30 @@ func main() {
 		}
 		return
 	}
+	if opts.BlindIndexInfo != "" {
+		if err := printBlindIndexInfo(opts.BlindIndexInfo); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if opts.BuildBlindIndex != "" {
 		var err error
-		if opts.BlindAllSky {
+		if opts.BlindAllSky || opts.BlindRegion != "" {
+			var region *blindRegion
+			if opts.BlindRegion != "" {
+				parsed, rerr := parseBlindRegion(opts.BlindRegion)
+				if rerr != nil {
+					fmt.Fprintln(os.Stderr, "skystacker:", rerr)
+					os.Exit(1)
+				}
+				region = &parsed
+			}
 			err = runBuildAllSkyBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaMirror,
-				opts.GaiaNside, opts.BlindMaxTiles, opts.BlindBrightest, opts.BlindMagLimit, opts.GaiaOffline)
+				opts.GaiaNside, opts.BlindMaxTiles, opts.BlindTileOffset, opts.BlindBrightest,
+				opts.BlindMagLimit, opts.GaiaOffline, opts.BlindRefresh, region)
 		} else {
-			err = runBuildBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaNside, nativeBrightest)
+			err = runBuildBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaNside, opts.BlindBrightest)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "skystacker:", err)
@@ -31406,6 +33534,23 @@ func main() {
 	if opts.PlateTest != "" {
 		if err := testPlateCLI(opts); err != nil {
 			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if opts.AcquisitionCheck != "" {
+		report, err := checkAcquisitionKeywords(opts.AcquisitionCheck)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(data))
+		if !report.OK {
 			os.Exit(1)
 		}
 		return
@@ -31515,6 +33660,7 @@ func main() {
 		XISFRev2:               opts.XISFRev2,
 		CreateBigTIFF:          opts.CreateBigTIFF,
 		HFRQuality:             opts.HFRQuality,
+		MatchedFilter:          opts.MatchedFilter,
 		PSFScaleSNR:            opts.PSFScaleSNR,
 		XNMLDir:                opts.XNMLDir,
 		Annotate:               opts.Annotate,
@@ -31533,6 +33679,7 @@ func main() {
 		FrameMetrics:           opts.FrameMetrics,
 		IncludeList:            opts.IncludeList,
 		KeepSharpest:           opts.KeepSharpest,
+		FrameExpr:              opts.FrameExpr,
 		CalibLibrary:           opts.CalibLibrary,
 		CometCombine:           opts.CometCombine,
 		StarlessPSF:            opts.StarlessPSF,
@@ -31552,11 +33699,18 @@ func main() {
 		ImageOutput:            opts.ImageOutput,
 		DeconvolveWiener:       opts.DeconvolveWiener,
 		Photometry:             opts.Photometry,
+		AperturePhotometry:     opts.AperturePhotometry,
 		DonationEnabled:        opts.DonationEnabled,
 		DonationQR:             opts.DonationQR,
 		RejectionMode:          opts.RejectionMode,
 		PostPreset:             opts.PostPreset,
 		BGMultiscale:           opts.BGMultiscale,
+		BgAsymmetric:           opts.BgAsymmetric,
+		BgClipLow:              opts.BgClipLow,
+		BgClipHigh:             opts.BgClipHigh,
+		BgHarmonicScale:        opts.BgHarmonicScale,
+		BgPolyDegree:           opts.BgPolyDegree,
+		BgRBF:                  opts.BgRBF,
 		Deconvolve:             opts.Deconvolve,
 		DeconvSigma:            opts.DeconvSigma,
 		DeconvIters:            opts.DeconvIters,
@@ -31569,6 +33723,7 @@ func main() {
 		Resume:                 opts.Resume,
 		DrizzleUpsample:        opts.DrizzleUpsample,
 		DrizzlePixfrac:         opts.DrizzlePixfrac,
+		WHTContext:             opts.WHTContext,
 		ExternalBGE:            opts.ExternalBGE,
 		ExternalDenoise:        opts.ExternalDenoise,
 		ExternalDeconv:         opts.ExternalDeconv,

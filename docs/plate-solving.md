@@ -224,10 +224,14 @@ skystacker --process-image photo.jpg --image-op plate-solve \
 skystacker --download-blind-catalog mag07   # outside a checkout, verifies SHA-256
 ```
 
-`mag07` is a ~1.3 MB compressed all-sky index for wide fields; `mag10` is
-declared as buildable locally with
-`--build-blind-index FILE --blind-allsky --gaia-nside 4 --blind-mag-limit 10 --blind-brightest 300`.
-See [catalogs/README.md](../catalogs/README.md) for the format and publishing
+Published tiers: `mag07` (G ≤ 7, ~1.3 MB, 17,426 stars), `mag10`
+(G ≤ 10, 300 stars/tile, ~3.6 MB, 57,600 stars) and `mag10deep`
+(G ≤ 10, 2,000 stars/tile, ~25 MB, 333,567 stars, 309,078 multi-quad descriptors). All are all-sky at
+`nside=4` and built from 192 Gaia tiles. Deeper indexes can be built locally
+with `--build-blind-index FILE --blind-allsky --gaia-nside 4
+--blind-mag-limit 10 --blind-brightest 2000 --blind-max-tiles 24
+--blind-tile-offset N --blind-refresh`. See
+[catalogs/README.md](../catalogs/README.md) for the format and publishing
 workflow.
 
 **Scope of the prototype:** `--blind-allsky` can now sweep tiles across the sky
@@ -379,6 +383,7 @@ Integration rules:
 | `--build-blind-index FILE` | — | Build the native index from cached Gaia tiles and exit. |
 | `--blind-allsky` | off | With `--build-blind-index`: query Gaia tiles across the sky first. |
 | `--blind-max-tiles N` | `0` (all) | Bound the all-sky tile sweep (useful for a first pass). |
+| `--blind-tile-offset N` / `--blind-refresh` | `0` / off | Chunked/resumable builds; refresh forces fresh TAP queries. |
 | `--blind-catalog ID` | — | Use a published catalog from `catalogs/manifest.json`. |
 | `--list-blind-catalogs` | off | List available/buildable catalogs and exit. |
 | `--download-blind-catalog ID` | — | Download a catalog into the cache with SHA-256 verification. |

@@ -14,22 +14,37 @@
       "stars": 17426,
       "quads": 19603,
       "status": "available",
-      "description": "Bright-star all-sky index for wide-field blind solving (roughly 1.3 MB compressed)."
+      "description": "Bright-star all-sky index for wide-field blind solving (~1.3 MB compressed)."
     },
     {
       "id": "mag10",
-      "title": "Gaia DR3 G<=10 all-sky quad index (build locally)",
+      "title": "Gaia DR3 G<=10 all-sky quad index (300 stars/tile)",
       "mag_limit": 10.0,
       "nside": 4,
       "brightest": 300,
       "file": "blind_mag10_nside4_v2.json.gz",
       "url": "",
-      "sha256": "",
-      "bytes": 0,
-      "stars": 0,
-      "quads": 0,
-      "status": "buildable",
-      "description": "Deeper all-sky index. Build with --build-blind-index <file> --blind-allsky --gaia-nside 4 --blind-mag-limit 10 --blind-brightest 300; publish by adding sha256/bytes to this manifest."
+      "sha256": "13427332fabf8f225cf6c84b59298bdbd643d096305691087f3cbc68372ad91f",
+      "bytes": 3581805,
+      "stars": 57600,
+      "quads": 20181,
+      "status": "available",
+      "description": "Deeper all-sky index, 57,600 catalog stars (~3.6 MB compressed). Built from all 192 nside=4 Gaia tiles."
+    },
+    {
+      "id": "mag10deep",
+      "title": "Gaia DR3 G<=10 deep all-sky quad index (2000 stars/tile)",
+      "mag_limit": 10.0,
+      "nside": 4,
+      "brightest": 2000,
+      "file": "blind_mag10deep_nside4_v2.json.gz",
+      "url": "",
+      "sha256": "2ad029c7b428dad54baa325a7e191dc9daf2f26aa30b1e0a39b35ac9bf5d7831",
+      "bytes": 24989297,
+      "stars": 333567,
+      "quads": 309078,
+      "status": "available",
+      "description": "Full-density G<=10 index with all 333,567 Gaia stars and 309,078 multi-quad/coarse+fine descriptors (~25 MB compressed)."
     }
   ]
 }

@@ -105,7 +105,9 @@ skystacker --post-only --photometry \
 
 `--photometry` performs aperture photometry, sets a Gaia ensemble zero point
 with MAD rejection, and writes `photometry.csv` and `photometry.json` with a
-light curve and residual table.
+light curve and residual table. With `--aperture-photometry` each source also
+gets a sigma-clipped local annulus sky, `flux_err`, `kron_radius`,
+`flux_radius`, `aperture` and `masked` (neighbours excluded from the annulus).
 
 ## Proper-motion and epoch handling
 

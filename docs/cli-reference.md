@@ -34,6 +34,7 @@ build-specific text. See the linked pages for the semantics of each subsystem.
 | `--tile-size N` | auto | Reduction tile side in pixels. |
 | `--rejection MODE` | — | `auto/mean/median/sigma` stack-size heuristic. |
 | `--keep-sharpest N` | `0` | Keep sharpest N% by median HFR. |
+| `--frame-expr EXPR` | — | Keep frames whose expression value > 0.5; emit `SSWEIGHT` (`@file` supported). |
 | `--hfr-quality` | off | Use star HFR instead of blob size as the FWHM proxy. |
 | `--psf-scale-snr` | off | Multiply PSF weights by XNML relative scale. |
 | `--xnml-dir DIR` | light folder | Fallback folder for `.xnml` sidecars. |
@@ -86,10 +87,14 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. |
 | `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | Survey selection and timeout. |
 | `--photometry` | off | Ensemble Gaia aperture photometry. |
+| `--aperture-photometry` | off | Local annulus sky, Kron/FLUX_RADIUS and neighbour masking in `--photometry`. |
+| `--matched-filter` | off | Matched-filter star detection (`T = αC⁻¹S`) instead of the high-pass threshold. |
 | `--blind-benchmark DIR` / `--benchmark-solvers LIST` | — | Head-to-head solve corpus CSV (solvers include `native`). |
 | `--blind-index FILE` | `<gaia-cache-dir>/blind_index.json` | Gaia quad index for `--plate-solver native`. |
 | `--build-blind-index FILE` | — | Build that index from cached Gaia tiles and exit. |
 | `--blind-allsky` / `--blind-max-tiles N` | off / `0` | Sweep Gaia sky tiles before building; bound the sweep to N tiles. |
+| `--blind-tile-offset N` / `--blind-refresh` | `0` / off | Chunked/resumable catalog builds. |
+| `--blind-region RA,DEC,RADIUS` / `--blind-index-info FILE` | — | Cone-limited regional index / print index metadata. |
 | `--blind-catalog ID` | — | Use a published magnitude-limited catalog by id. |
 | `--list-blind-catalogs` | off | Print the catalog registry and exit. |
 | `--download-blind-catalog ID` | — | Download and verify a catalog into the local cache. |
@@ -111,7 +116,7 @@ See [post-processing.md](post-processing.md).
 
 | Flag group | Examples |
 |---|---|
-| Background | `--bg-degree N`, `--bg-multiscale` |
+| Background | `--bg-degree N`, `--bg-multiscale`, `--bg-asymmetric` (with `--bg-clip-low/-high`, `--bg-harmonic-scale`, `--bg-poly-degree`, `--bg-rbf`) |
 | Stretch | `--stretch F`, `--no-auto-stretch`, `--stf-shadows F`, `--stf-target F`, `--stf-linked` |
 | Denoise | `--no-denoise`, `--denoise-strength F`, `--denoise-radius N`, `--denoise-chroma F`, `--wavelets`, `--wavelet-scales N`, `--wavelet-sigma F`, `--wavelet-adaptive` |
 | Sharpen | `--no-sharpen`, `--sharpen-amount F`, `--sharpen-radius F`, `--wavesharp`, `--wave-gains LIST` |
@@ -120,7 +125,7 @@ See [post-processing.md](post-processing.md).
 | Spikes | `--spikes`, `--no-spikes`, `--spikes-*` family |
 | Order | `--post-preset default\|detail-last`, `--no-color-calib` |
 | Narrowband | `--narrowband HOO\|SHO`, `--nb-a/--nb-b/--nb-c` |
-| Drizzle | `--drizzle-upsample N`, `--drizzle-pixfrac F` |
+| Drizzle | `--drizzle-upsample N`, `--drizzle-pixfrac F`, `--wht-ctx` (WHT/CTX sidecars) |
 | Cosmetic | `--cosmic-reject`, `--streak-detect`, `--starless-psf` |
 | External AI | `--external-bge/--external-denoise/--external-deconv/--external-starless CMD`, `--external-timeout N`, `--external-allow-nonlinear` |
 | Comet | `--comet-center`, `--comet-rate`, `--comet-radec`, `--comet-sky-rate-arcsec`, `--comet-target`, `--comet-combine`, `--comet-ephem-strict-exif` |
@@ -143,6 +148,7 @@ See [post-processing.md](post-processing.md).
 | `--stack-only` / `--post-only` / `--no-postprocess` | off | Pipeline stage selection. |
 | `--no-native-cr2` | off | Use dcraw/ImageMagick for CR2. |
 | `--test-debayer IMAGE` | — | FITS debayer diagnostic. |
+| `--check-acquisition-keywords FILE` | — | Validate N.I.N.A. RAW/FITS acquisition keywords; JSON output, exit 1 on invalid values. |
 | `--diagnose` / `--diagnose-json` / `--diagnose-quick` / `--diagnose-integrated` | off | Host diagnostics. |
 | `--diagnose-timeout N` / `--diagnose-top N` / `--diagnose-updates` | `5` / `10` / off | Diagnostic collectors. |
 | `--donation` / `--no-donation` / `--no-donation-qr` | — | Donation footer control. |

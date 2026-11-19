@@ -48,7 +48,7 @@ Header from `writeFrameMetricsCSV`:
 
 ```text
 frame,stars,inliers,hfr_px,fwhm_px,eccentricity,snr,bg_sigma,
-intrinsic_quality,weight,psf_scale,note
+intrinsic_quality,weight,psf_scale,ssweight,note
 ```
 
 ### `photometry.csv` / `photometry.json`
@@ -68,7 +68,9 @@ image,solver,success,seconds,rms_arcsec,matches,method,detail
 
 Enabled with `--provenance`; an IVOA ProvenanceDM-style graph of binary
 version, plate-solve tolerances, tile/rejection/stretch parameters and
-catalogue/cache versions.
+catalogue/cache versions. `report.json` also carries `DrizzleNoise` (Fruchter &
+Hook R, weight median/RMS, coverage flag) and `DitherCoverage` (pattern class,
+min separation, null fraction, hole risk).
 
 ### Other sidecars
 
@@ -78,6 +80,7 @@ catalogue/cache versions.
 | `stacked_sky_map.svg` | `--sky-map` (layered `<g>` groups: background, gaia-stars, extended-objects, sso-vectors, labels, footer) |
 | `survey_reference.fits/.jpg` | `--survey-cutout` |
 | `diagnostics.txt/.json` | `--diagnose`, `--diagnose-integrated` |
+| `stacked_wht.f32raw`, `stacked_ctx.u32raw` | `--wht-ctx` (per-pixel weights and 32-bit contributor mask, versioned headers) |
 | `master_*.f32raw/.jpg` | `--export-masters` |
 
 ### Native blind index

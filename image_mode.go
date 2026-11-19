@@ -247,6 +247,9 @@ func imageWCS(o *cliOptions, f *frame, path, dir, base string) (*plateSolution, 
 }
 
 func runImageCommand(o *cliOptions) error {
+	oldMatched := matchedFilterEnabled
+	matchedFilterEnabled = o.MatchedFilter
+	defer func() { matchedFilterEnabled = oldMatched }()
 	paths, err := imagePaths(o.ProcessImage)
 	if err != nil {
 		return err
@@ -353,7 +356,10 @@ func runImageCommand(o *cliOptions) error {
 		if o.BGMultiscale {
 			result = multiscaleBackground(result, 256)
 		} else {
-			result = removeBackground(result, o.BGDegree, o.MaskBG)
+			result = removeBackgroundWithOptions(result, o.BGDegree, o.MaskBG, runOptions{
+				BgAsymmetric: o.BgAsymmetric, BgClipLow: o.BgClipLow, BgClipHigh: o.BgClipHigh,
+				BgHarmonicScale: o.BgHarmonicScale, BgPolyDegree: o.BgPolyDegree, BgRBF: o.BgRBF,
+			})
 		}
 	case "stretch":
 		result = autoStretch(result, o.STFShadowsClip, o.STFTargetBG, o.STFLinked)

@@ -362,7 +362,7 @@ The reference image is star-matched automatically; the light frames are warped i
 ./skystacker \
   --local-normalize \
   --plate-solve \
-  --plate-center 10.6847,41.2687 \
+  --plate-center 10.6847,41.2747 \
   --tiff \
   --png \
   ./M31-session/lights
@@ -720,7 +720,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 264 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 274 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

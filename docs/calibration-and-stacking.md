@@ -17,6 +17,11 @@ folder mixing sizes fails fast with an actionable error. `--calib-root` detects
 5. `--self-flat` (grid estimator, default when no flats exist) or a real flat.
 6. `--normalize` / `--local-normalize` background equalisation.
 
+Master dimensions are checked against the lights before stacking: a master
+with different native width/height is rejected instead of being resized.
+`CALSTAT` (D/F/B/S) and dark `D_TEMP`/`D_EXP`/`D_GAIN` provenance are written to
+`report.txt`, `report.json` and the stacked FITS headers.
+
 `--export-masters` writes `master_bias.f32raw`, `master_dark.f32raw` and
 `master_flat.f32raw` with JPEG previews. Synthetic bias/dark/flat generation is
 explicitly refused; `--synthetic-calibration-report` explains what can and

@@ -7,10 +7,11 @@ solver is needed at solve time.
 
 ## Available catalogs
 
-| Id | Gaia limit | HEALPix nside | Compressed size | Status |
-|---|---|---|---|---|
-| `mag07` | G ≤ 7 | 4 | ~1.3 MB | available in this repo |
-| `mag10` | G ≤ 10 | 4 | larger | buildable locally (see below) |
+| Id | Gaia limit | Stars/tile | HEALPix nside | Catalog stars | Compressed size | Status |
+|---|---|---|---|---|---|---|
+| `mag07` | G ≤ 7 | 100 | 4 | 17,426 | ~1.3 MB | available |
+| `mag10` | G ≤ 10 | 300 | 4 | 57,600 | ~3.6 MB | available |
+| `mag10deep` | G ≤ 10 | 2,000 | 4 | 333,567 | ~25 MB (309,078 quads) | available |
 
 `manifest.json` is the authoritative registry: it records the file name,
 checksum, byte count, star/quad counts and status of every catalog.
@@ -48,7 +49,20 @@ The builder queries Gaia TAP tile by tile, caches the tiles, generates
 parity-tolerant four-star descriptors in three scale bands
 (`wide`/`medium`/`narrow`) and writes a gzip-compressed JSON index. Use
 `--blind-max-tiles N` for a partial first pass, or `--gaia-offline` to rebuild
-from already cached tiles without network access.
+from already cached tiles without network access. For large catalogs, build in
+resumable chunks (each chunk overwrites the index from the whole cache):
+
+```bash
+for offset in 0 24 48 72 96 120 144 168; do
+  skystacker --build-blind-index /tmp/mag10.json.gz --blind-allsky \
+    --gaia-nside 4 --blind-mag-limit 10 --blind-brightest 2000 \
+    --blind-max-tiles 24 --blind-tile-offset $offset --blind-refresh
+done
+```
+
+`--blind-tile-offset` selects the first tile, `--blind-refresh` forces fresh
+TAP queries for that chunk (the Gaia cache key does not include the magnitude
+limit, so omit it only when reusing tiles built with the same limit).
 
 To publish a new catalog: add its `.gz` file here, compute `sha256sum` and
 byte size, and add an entry to `manifest.json` with `status: "available"`.
