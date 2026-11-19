@@ -2,7 +2,7 @@
 
 **CURRENT STATUS (canonical, 2026-11-17):**
 
-- Source version **v0.6.1**; **248 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
+- Source version **v0.6.1**; **253 registered self-tests** (`skystacker --selftest`). Historical counts in the implementation record below (169 → 208) are snapshots, not the current state.
 - **Grid self-flat is the default** model (`--self-flat-model=grid`); the v1 `registered` model and the Phase-1 least-squares path remain available for A/B.
 - **Darks are not fabricated.** Master darks come only from real dark exposures.
 - **`--synthetic-dark`, `--synthetic-flat`, `--synthetic-bias` are refused (exit 1)** with the exact strings in §13. Silent synthesis is forbidden.
@@ -29,7 +29,8 @@ This is the single canonical calibration document. It **absorbs the three former
 13. Detector-physics research survey (not implemented)
 14. Master-frame practice from curated sources
 15. Consolidated open gaps
-16. Sources absorbed
+16. XNML / PSF Scale SNR ingestion
+17. Sources absorbed
 
 ---
 
@@ -343,7 +344,7 @@ Priority: Phases 1–4 replace the unsafe default; 5–6 establish scientific qu
 
 ### 11.1 Chronology and self-test counts
 
-Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **248 (CURRENT)**. Do not treat every `func test*` as a registered case.
+Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Phase 1) → **177** (v0.6.0 status note) → **178** (reference-crop addendum) → **179** (Phase 2) → **181** (Phase 3) → **203** (GEMINI survey snapshot) → **208** (deep-dive correction, 2026-11-17) → **253 (CURRENT)**. Do not treat every `func test*` as a registered case.
 
 - **2026-11-14** — deep-research pass supersedes the seed; three-category split, tagging convention, refusal guardrails.
 - **2026-11-15** — v1 master export + registered self-flat; Phase 1 grid default; `--reference-crop` added (each light star-matched to an external reference and warped in memory; see `COMPARISON.md` for Fitswork comparison); v0.6.0 status note: `--export-masters`, `--bpm`, v1 `--self-flat`, Phase-1 grid, and default recoverable path (metadata pedestal + grid self-flat when no user masters exist); darks not fabricated; `--synthetic-*` refused. Not implemented then: Phase 2 mask relaxation/5×5 rejection, Phase 3 IRLS, gamma-aware division, real-flat validation.
@@ -354,7 +355,7 @@ Registered self-test counts are snapshots: **169** (v1 baseline) → **173** (Ph
 
 Command (v1): `./skystacker assets/Orion-135mm --self-flat --export-masters --stack-only --method mean --no-cache --output /tmp/orion_selfflat`.
 
-**v1 registered model** — registered frames 66; self-flat center/edge **1.2512**; residual RMS **0.19360**; mean preview center/border uncorrected **1.134** → self-flat **1.000**. Recovered ratio matches measured vignetting (1.240–1.253); corrected mean flat at the 1% level. `--method sigma --limit 20` reproduced **1.2497** and **1.000** (exercises `reduceTile`, not the `mean` re-accumulation). E2E outputs: `/tmp/orion_selfflat/` (mean), `/tmp/orion_selfflat_sigma/` (sigma); never write into `assets/Orion-135mm/0_skystacker_results/`. v1 master preview reached ~1.9 near M42 with raw `max 9.20992` — scene, not flat.
+**v1 registered model** — registered frames 66; self-flat center/edge **1.2512**; residual RMS **0.19360**; mean preview center/border uncorrected **1.134** → self-flat **1.000**. Recovered ratio matches measured vignetting (1.240–1.253); corrected mean flat at the 1% level. `--method sigma --limit 20` reproduced **1.2537** and **1.000** (exercises `reduceTile`, not the `mean` re-accumulation). E2E outputs: `/tmp/orion_selfflat/` (mean), `/tmp/orion_selfflat_sigma/` (sigma); never write into `assets/Orion-135mm/0_skystacker_results/`. v1 master preview reached ~1.9 near M42 with raw `max 9.20992` — scene, not flat.
 
 **Grid model, all three phases** (`--limit 20 --method mean --stack-only --self-flat-model=grid --export-masters`; `/tmp/orion_grid`, `/tmp/orion_p2_grid`, `/tmp/orion_p3_grid` — not repo output):
 
@@ -399,7 +400,7 @@ Reproducible protocol commands (repo root):
 
 ### 11.5 Reproducibility checklist
 
-`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (248 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
+`gofmt -l main.go` → empty; `go vet ./...` → clean; `./skystacker --selftest` → all registered tests pass (253 current). E2E outputs under `/tmp/` only; never write into `assets/Orion-135mm/0_skystacker_results/`.
 
 ---
 
@@ -480,7 +481,17 @@ details are not duplicated here.
 
 ---
 
-## Sources absorbed
+## 16. XNML / PSF Scale SNR ingestion (roadmap item 52, 2026-11-18)
+
+**Source facts (PixInsight PCL `LocalNormalizationData`, XNML 1.0).** LocalNormalization writes small XML sidecars (`<basename>.xnml`) that describe per-subframe normalization relative to a common reference; they are consumed by ImageIntegration and DrizzleIntegration without modifying the input pixels. The root element is `<xnml version="1.0">` and may carry `valid="false"` to mark unusable data. Relevant child elements are `ReferenceImage`, `TargetImage`, `ReferenceGeometry` (`width`/`height`/`numberOfChannels`), `LocalNormalization` (`scale`/`version` plus compressed matrices), `GlobalNormalization` (per-channel `Scale`, `ReferenceLocation`, `TargetLocation` comma-separated vectors), `RelativeScaleFactors` (per-channel relative scale vector), and `CreationTime`. PixInsight's forum documentation states that PSF Scale SNR weights require these `.xnml` files: the relative scale estimates they store are combined with hybrid PSF/aperture photometry and multiscale noise estimates, and **PSF Scale SNR evaluates to zero when the sidecars are absent**. This explains the roadmap's "zero when missing" acceptance string exactly; it is not a SkyStacker-specific convention. The XNML vector stores relative (multiplicative) scales, not additive offsets, so taking its first component gives a single monotone factor suitable for a mono/one-channel light frame.
+
+**Implementation.** `readXNMLPSFScale(framePath, fallbackDir)` checks `<basename>.xnml` beside the light first and then in `--xnml-dir` (the fallback folder used when LocalNormalization wrote sidecars to a separate output directory). It parses the XNML 1.0 subset with `encoding/xml` (already used for XISF), prefers `<RelativeScaleFactors>`, falls back to `<GlobalNormalization><Scale>`, honours `valid="false"`, and returns `(0, false)` for missing, malformed, unsupported-version or non-positive scales. `--psf-scale-snr` is opt-in and requires star detection (`--no-register` is rejected at flag validation, because per-frame photometric weights are only produced in the registered code path); it leaves default weights untouched. When enabled, each PSF quality weight (and the unregistered photometric weight) is multiplied by the XNML scale via `applyPSFScaleSNRWeight`, so a frame with no sidecar receives zero weight and a warning is logged with the count of such frames. The per-frame scale is surfaced as `PSFScale` on `frameDiag` (therefore in `report.json`), as the `psf_scale` column of the `--frame-metrics` CSV and as a `PSFScale` column in the `report.txt` frame table. `testXNMLPSFScaleSNR` registers synthetic XNML covering the local and fallback locations, global-only scale, `valid="false"`, malformed XML, weight arithmetic, CSV column and flag parsing. Self-test count: 253.
+
+**Scope limits.** This is scale ingestion only: SkyStacker does not decode the compressed local normalization matrices and does not reproduce PixInsight's full PSF Scale SNR photometric estimator. It multiplies the existing PSF-based quality weight by the externally computed relative scale, which is the part of the estimator that depends on an `.xnml` sidecar. Multi-channel XNML vectors use their first component; a per-channel weight path would require CFA/channel-aware stacking and is out of scope here.
+
+---
+
+## 17. Sources absorbed
 
 - `research/04-calibration-and-self-flat.md` (the former append-only v1 record, §1–§22; rewritten here)
 - `research/SYNTHETIC_CALIBRATION_RESEARCH.md` (2026-11-14 deep-research pass + preserved seed document)
@@ -499,3 +510,5 @@ kappa-sigma for masters) are recorded in
 "DeepSkyStacker kernel reference"; they are not repeated here.
 
 A cycle-7 curated corpus of Siril/ASTAP/SPCC calibration details is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §10.
+
+A full goCrawler export with ASTAP/PixInsight/CMOS calibration numbers is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §11.

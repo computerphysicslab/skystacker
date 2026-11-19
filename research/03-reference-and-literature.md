@@ -618,7 +618,7 @@ CRPIX at the geometric centre, warns that nonlinear stretching harms bright-star
 identification, and recommends catalogue density matched to FOV (D50 about
 5000 stars/deg2 versus D05 about 500). Reported latencies (10 s versus 2-3 s
 on a Pi Zero 2, under 1 s versus about 200 ms on a Pi 5, and the Cypress
-olive-solve variant at under 1 ms) are informal field reports.
+olive-solve variant at under 1 ms) are informal field reports. A 2026-11-19 corpus of invariant-matching architecture sources (TETRA paper, olive-solve, tetra3rs, ASTAP pattern-recognition and database-age threads, OPMb/OPM papers and the FITS SIP convention) is indexed with its findings in [02](02-astrometry-and-identification.md) §15; its latency figures remain field reports, not standardised benchmarks.
 
 ### 6.3 Source extraction, PSF modelling and artefact cleaning
 
@@ -790,3 +790,5 @@ The following source files were read in full and merged/deduplicated into this d
 Supporting context (read for accurate cross-links/status only, not absorbed as new reference content): `research/README.md`, `main.go` (version `0.6.1`, SIP order-2, `--resample-sip`).
 
 *All full algorithms, calibration phases, toolchain history, sidecar implementation, CR2 details and crawler runs remain in their canonical files listed in §0.1.*
+
+A full goCrawler export with the DrizzlePac/Shupe/Pence bibliography and SIP-to-PV algorithm is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §11.

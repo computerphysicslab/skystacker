@@ -72,6 +72,7 @@ import (
 	"io/fs"
 	"math"
 	"math/rand"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -216,6 +217,13 @@ type cliOptions struct {
 	PlateSolve             bool
 	PlateTest              string
 	PlateCenter            string
+	PlateSolver            string
+	AstrometryCmd          string
+	AstrometryAPIKey       string
+	AstrometryURL          string
+	AstrometryTimeout      int
+	SolverFocalLength      float64
+	SolverPixelSize        float64
 	WritePNG               bool
 	WriteBMP               bool
 	CreateFITS             bool
@@ -223,6 +231,8 @@ type cliOptions struct {
 	XISFRev2               bool
 	CreateBigTIFF          bool
 	HFRQuality             bool
+	PSFScaleSNR            bool
+	XNMLDir                string
 	Annotate               bool
 	AnnotationCatalogs     string
 	Starless               bool
@@ -469,6 +479,13 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.PlateSolve, "plate-solve", false, "run TAN WCS plate solve after stacking or in --post-only (writes plate_solution.json)")
 	fs.StringVar(&o.PlateTest, "test-plate", "", "one-shot plate solve on RA,DEC in decimal degrees: prints WCS, then exits")
 	fs.StringVar(&o.PlateCenter, "plate-center", "", "RA,DEC seed for plate solve in decimal degrees (falls back to the reference frame's FITS RA/DEC)")
+	fs.StringVar(&o.PlateSolver, "plate-solver", "auto", "solver chain: auto (seeded Gaia, then astrometry.net), gaia, astrometry-local, astrometry-web")
+	fs.StringVar(&o.AstrometryCmd, "astrometry-cmd", "solve-field", "local astrometry.net solve-field command (quoted argv supported)")
+	fs.StringVar(&o.AstrometryAPIKey, "astrometry-api-key", "", "nova.astrometry.net API key (default: AN_API_KEY or ASTROMETRY_API_KEY env)")
+	fs.StringVar(&o.AstrometryURL, "astrometry-url", astrometryDefaultAPIURL, "nova.astrometry.net API base URL")
+	fs.IntVar(&o.AstrometryTimeout, "astrometry-timeout", 180, "blind-solve timeout in seconds (local CLI and web service)")
+	fs.Float64Var(&o.SolverFocalLength, "solver-focal-length", 0, "focal length in mm for the plate-scale hint and sanity check")
+	fs.Float64Var(&o.SolverPixelSize, "solver-pixel-size", 0, "pixel pitch in um for the plate-scale hint and sanity check")
 	fs.BoolVar(&o.WritePNG, "png", false, "write stacked_mean.png alongside the JPEGs")
 	fs.BoolVar(&o.WriteBMP, "bmp", false, "write stacked_mean.bmp alongside the JPEGs")
 	fs.IntVar(&o.Limit, "limit", 0, "process at most N discovered frames (0 = unlimited)")
@@ -512,6 +529,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.XISFRev2, "xisf-rev2", false, "with --xisf: add Rev 2 checksum and strict sample-mapping validation")
 	fs.BoolVar(&o.CreateBigTIFF, "bigtiff", false, "write BigTIFF float32 stacks (64-bit offsets, files >4 GiB)")
 	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
+	fs.BoolVar(&o.PSFScaleSNR, "psf-scale-snr", false, "weight frames by PSF Scale SNR: multiply PSF quality weights by the relative scale from <basename>.xnml sidecars (zero when missing)")
+	fs.StringVar(&o.XNMLDir, "xnml-dir", "", "fallback folder for .xnml sidecars when they are not next to the light frames")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
 	fs.StringVar(&o.AnnotationCatalogs, "annotation-catalogs", "", "comma-separated JSON catalogs (ra/dec degrees, optional name/type/mag/major/minor/pa) for multi-catalog cross-match")
 	fs.StringVar(&o.RejectionMode, "rejection", "", "rejection heuristic: auto, mean, median or sigma (auto maps Min/Max/Percentile/Sigma/Winsorized/Linear-Fit bands onto shipped reducers)")
@@ -545,7 +564,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.SurveyHIPS, "survey-hips", "CDS/P/DSS2/color", "HiPS survey ID for --survey-cutout")
 	fs.IntVar(&o.SurveyTimeout, "survey-timeout", 30, "HTTP timeout in seconds for --survey-cutout")
 	fs.StringVar(&o.ProcessImage, "process-image", "", "comma-separated image paths to process without stacking")
-	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout")
+	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout, plate-solve")
 	fs.StringVar(&o.ImageOutput, "image-output", "image_processing", "output directory for --process-image results")
 	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
 	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
@@ -595,7 +614,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--plate-center" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -612,6 +631,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, err
 	}
 	o.Register = !noRegister
+	if o.PSFScaleSNR && !o.Register {
+		return nil, fmt.Errorf("--psf-scale-snr requires star detection; it cannot be combined with --no-register")
+	}
 	o.DonationEnabled = !noDonation
 	o.DonationQR = !noDonationQR
 	o.NoAffine = noAffine
@@ -806,6 +828,17 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if _, _, err := parseRADecArg(o.PlateCenter, "--plate-center"); err != nil {
 			return nil, err
 		}
+	}
+	switch o.PlateSolver {
+	case "", "auto", "gaia", "astrometry-local", "astrometry-web":
+	default:
+		return nil, fmt.Errorf("--plate-solver must be auto, gaia, astrometry-local or astrometry-web, got %q", o.PlateSolver)
+	}
+	if o.AstrometryTimeout <= 0 {
+		return nil, fmt.Errorf("--astrometry-timeout must be > 0, got %d", o.AstrometryTimeout)
+	}
+	if (o.SolverFocalLength > 0) != (o.SolverPixelSize > 0) {
+		return nil, errors.New("--solver-focal-length and --solver-pixel-size must be supplied together")
 	}
 	if o.Limit < 0 {
 		return nil, fmt.Errorf("--limit must be >= 0, got %d", o.Limit)
@@ -1150,12 +1183,19 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --test-plate R,D   one-shot plate solve on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --plate-center R,D seed the plate solver with RA,DEC in decimal degrees")
 	fmt.Fprintln(w, "                     (falls back to the reference frame's FITS RA/DEC)")
+	fmt.Fprintln(w, "  --plate-solver MODE auto (seeded Gaia, then astrometry.net), gaia, astrometry-local, astrometry-web")
+	fmt.Fprintln(w, "  --astrometry-cmd CMD local solve-field command (default: solve-field; needs installed index files)")
+	fmt.Fprintln(w, "  --astrometry-api-key KEY / AN_API_KEY  nova.astrometry.net key for blind web solves")
+	fmt.Fprintln(w, "  --astrometry-url URL / --astrometry-timeout N  web API base URL and solve timeout in seconds")
+	fmt.Fprintln(w, "  --solver-focal-length MM / --solver-pixel-size UM  optional plate-scale hint and sanity check")
 	fmt.Fprintln(w, "  --no-native-cr2    use dcraw/ImageMagick instead of the built-in pure-Go CR2 decoder")
 	fmt.Fprintln(w, "  --fits             write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fmt.Fprintln(w, "  --xisf             write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fmt.Fprintln(w, "  --xisf-rev2        with --xisf: SHA3-256 block checksum + strict sample validation")
 	fmt.Fprintln(w, "  --bigtiff          write stacked_sum/mean.bigtif with 64-bit offsets")
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
+	fmt.Fprintln(w, "  --psf-scale-snr    PSF quality weights x XNML relative scale; frames without .xnml get zero weight")
+	fmt.Fprintln(w, "  --xnml-dir PATH    fallback folder for .xnml sidecars (default: same folder as each light)")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
 	fmt.Fprintln(w, "  --annotation-catalogs LIST  extra JSON catalogs for cross-match (RA/Dec in degrees)")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
@@ -5152,8 +5192,20 @@ func formatCommandLine(args []string) string {
 		return ""
 	}
 	parts := make([]string, len(args))
+	redactNext := false
 	for i, a := range args {
-		parts[i] = quoteReportArg(a)
+		switch {
+		case redactNext:
+			parts[i] = "<redacted>"
+			redactNext = false
+		case a == "--astrometry-api-key":
+			parts[i] = a
+			redactNext = true
+		case strings.HasPrefix(a, "--astrometry-api-key="):
+			parts[i] = "--astrometry-api-key=<redacted>"
+		default:
+			parts[i] = quoteReportArg(a)
+		}
 	}
 	return strings.Join(parts, " ")
 }
@@ -5301,6 +5353,12 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.HFRQuality {
 		add("--hfr-quality")
+	}
+	if o.PSFScaleSNR {
+		add("--psf-scale-snr")
+	}
+	if o.XNMLDir != "" {
+		add("--xnml-dir " + quoteReportArg(o.XNMLDir))
 	}
 	if o.Annotate {
 		add("--annotate")
@@ -5465,6 +5523,21 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.PlateCenter != "" {
 		add("--plate-center " + quoteReportArg(o.PlateCenter))
+	}
+	if o.PlateSolver != "" && o.PlateSolver != "auto" {
+		add("--plate-solver " + o.PlateSolver)
+	}
+	if o.AstrometryCmd != "" && o.AstrometryCmd != "solve-field" {
+		add("--astrometry-cmd " + quoteReportArg(o.AstrometryCmd))
+	}
+	if o.AstrometryURL != "" && o.AstrometryURL != astrometryDefaultAPIURL {
+		add("--astrometry-url " + quoteReportArg(o.AstrometryURL))
+	}
+	if o.AstrometryTimeout > 0 && o.AstrometryTimeout != 180 {
+		add(fmt.Sprintf("--astrometry-timeout %d", o.AstrometryTimeout))
+	}
+	if o.SolverFocalLength > 0 {
+		add(fmt.Sprintf("--solver-focal-length %g --solver-pixel-size %g", o.SolverFocalLength, o.SolverPixelSize))
 	}
 	if o.GaiaOffline {
 		add("--gaia-offline")
@@ -5646,8 +5719,8 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		sort.Slice(sorted, func(i, j int) bool {
 			return sorted[i].Quality > sorted[j].Quality
 		})
-		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %7s %7s %22s %7s %7s %-9s %s\n",
-			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "IntrQ", "Weight", "Box(x,y,w,h)", "Box%", "Foot%", "BgSigma", "Note")
+		ew.printf("  %-3s %-22s %5s %4s %6s %8s %8s %16s %7s %7s %7s %8s %22s %7s %7s %-9s %s\n",
+			"#", "File", "Stars", "Inl", "Ratio", "Scale", "Rot", "Offset", "Quality", "IntrQ", "Weight", "PSFScale", "Box(x,y,w,h)", "Box%", "Foot%", "BgSigma", "Note")
 		for i, d := range sorted {
 			ratioStr := "-"
 			if d.Stars > 0 {
@@ -5657,11 +5730,11 @@ func (r *processingReport) writeTo(w io.Writer) error {
 			if d.Stars == 0 {
 				boxStr = "-"
 			}
-			ew.printf("  %-3d %-22s %5d %4d %6s %8.4f %8.2f %16s %7.1f %7.1f %7.2f %22s %6.1f%% %6.1f%% %9.5f %s\n",
+			ew.printf("  %-3d %-22s %5d %4d %6s %8.4f %8.2f %16s %7.1f %7.1f %7.2f %8.4f %22s %6.1f%% %6.1f%% %9.5f %s\n",
 				i+1, filepath.Base(d.Path), d.Stars, d.Inliers, ratioStr,
 				d.Scale, d.RotationDeg,
 				fmt.Sprintf("(%.1f,%.1f)", d.OffsetX, d.OffsetY),
-				d.Quality, d.IntrinsicQ, d.Weight, boxStr, d.BoxPct, d.FootprintPct, d.BgSigma, d.Note)
+				d.Quality, d.IntrinsicQ, d.Weight, d.PSFScale, boxStr, d.BoxPct, d.FootprintPct, d.BgSigma, d.Note)
 		}
 		ew.printf("\n")
 	}
@@ -5814,6 +5887,8 @@ type runOptions struct {
 	XISFRev2               bool
 	CreateBigTIFF          bool
 	HFRQuality             bool
+	PSFScaleSNR            bool
+	XNMLDir                string
 	Annotate               bool
 	AnnotationCatalogs     string
 	Starless               bool
@@ -5895,8 +5970,17 @@ type runOptions struct {
 	// PlateCenter is "RA,DEC" in decimal degrees; empty means "fall back
 	// to the reference frame's FITS header RA/DEC, else blind".
 	PlateCenter string
-	WritePNG    bool
-	WriteBMP    bool
+	// PlateSolver selects the solve chain: auto (seeded Gaia, then
+	// astrometry.net), gaia, astrometry-local or astrometry-web.
+	PlateSolver       string
+	AstrometryCmd     string
+	AstrometryAPIKey  string
+	AstrometryURL     string
+	AstrometryTimeout int
+	SolverFocalLength float64
+	SolverPixelSize   float64
+	WritePNG          bool
+	WriteBMP          bool
 	// Args is the original command line, including the program name.
 	// Empty when the pipeline is called from a test.
 	Args []string
@@ -6897,6 +6981,7 @@ type frameDiag struct {
 	SNR          float64
 	IntrinsicQ   float64
 	Weight       float64
+	PSFScale     float64
 	Note         string
 }
 
@@ -9537,6 +9622,75 @@ func referenceFITSSeed(path string) (float64, float64, bool) {
 	return ra, dec, true
 }
 
+// xnmlDocument is the subset of PixInsight's XNML 1.0 format (written by
+// LocalNormalization) used for PSF Scale SNR weighting. The relative scale
+// factors are normalized to the reference image used by LocalNormalization.
+type xnmlDocument struct {
+	XMLName              xml.Name `xml:"xnml"`
+	Version              string   `xml:"version,attr"`
+	Valid                string   `xml:"valid,attr"`
+	RelativeScaleFactors string   `xml:"RelativeScaleFactors"`
+	GlobalScale          string   `xml:"GlobalNormalization>Scale"`
+}
+
+// firstXNMLScale returns the first finite, strictly positive component of a
+// comma-separated XNML vector, or 0 if the vector is absent or malformed.
+func firstXNMLScale(vector string) float64 {
+	for _, part := range strings.Split(vector, ",") {
+		v, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+		if err == nil && v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
+			return v
+		}
+	}
+	return 0
+}
+
+// readXNMLPSFScale reads the per-subframe normalization scale from
+// <basename>.xnml. The light's own folder is checked first, then fallbackDir.
+// A missing, invalid or explicitly invalid-marked sidecar yields (0, false),
+// matching PixInsight where PSF Scale SNR is zero without normalization data.
+func readXNMLPSFScale(framePath, fallbackDir string) (float64, bool) {
+	base := strings.TrimSuffix(filepath.Base(framePath), filepath.Ext(framePath)) + ".xnml"
+	paths := []string{filepath.Join(filepath.Dir(framePath), base)}
+	if fallbackDir != "" {
+		paths = append(paths, filepath.Join(fallbackDir, base))
+	}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var doc xnmlDocument
+		if err := xml.Unmarshal(data, &doc); err != nil {
+			logf("WARNING: ignoring malformed XNML sidecar %s: %v", p, err)
+			continue
+		}
+		if doc.Version != "" && doc.Version != "1.0" {
+			logf("WARNING: ignoring XNML sidecar %s: unsupported version %q", p, doc.Version)
+			continue
+		}
+		if strings.EqualFold(doc.Valid, "false") {
+			return 0, false
+		}
+		scale := firstXNMLScale(doc.RelativeScaleFactors)
+		if scale == 0 {
+			scale = firstXNMLScale(doc.GlobalScale)
+		}
+		return scale, scale > 0
+	}
+	return 0, false
+}
+
+// applyPSFScaleSNRWeight folds the XNML relative scale into a PSF quality
+// weight. A zero (missing) scale yields a zero weight, as in PixInsight when
+// PSF Scale SNR is selected without associated .xnml files.
+func applyPSFScaleSNRWeight(base float32, scale float64) float32 {
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+		return 0
+	}
+	return float32(float64(base) * scale)
+}
+
 func selfFlatGammaNote(linear bool) string {
 	if linear {
 		return "Gamma-aware (EOTF) correction is enabled (--self-flat-linear-srgb, experimental); division is performed in linear light."
@@ -9632,7 +9786,26 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 						seedRA, seedDec = r, d
 					}
 				}
-				sol, perr := solvePlate(stars, iw, ih, seedRA, seedDec, "", gaiaDefaultMirror)
+				imagePath := ""
+				if (seedRA == 0 && seedDec == 0) || opts.PlateSolver == "astrometry-local" || opts.PlateSolver == "astrometry-web" {
+					if tmp, terr := os.CreateTemp("", "skystacker-blind-*.jpg"); terr == nil {
+						if jerr := writeMasterPreviewJPEG(tmp, stackFrame); jerr == nil {
+							imagePath = tmp.Name()
+						} else {
+							logf("WARNING: temporary solve image: %v", jerr)
+						}
+						tmp.Close()
+						if imagePath == "" {
+							os.Remove(tmp.Name())
+						}
+					} else {
+						logf("WARNING: temporary solve image: %v", terr)
+					}
+				}
+				if imagePath != "" {
+					defer os.Remove(imagePath)
+				}
+				sol, perr := solvePlateWithFallback(stars, iw, ih, seedRA, seedDec, imagePath, opts)
 				if perr != nil {
 					logf("Post-only plate solve: FAILED (%v)", perr)
 				} else {
@@ -9764,6 +9937,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		medianBlob    float64
 		medianEcc     float64
 		medianHFR     float64
+		psfScale      float64
 		blackLevel    float64
 		hasBlackLevel bool
 	}
@@ -10320,6 +10494,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		if !opts.NoExif {
 			c.exif = readJPEGExif(c.path)
 		}
+		if opts.PSFScaleSNR {
+			c.psfScale, _ = readXNMLPSFScale(c.path, opts.XNMLDir)
+		}
 		accepted = append(accepted, c)
 	}
 	if opts.KeepSharpest > 0 && len(accepted) > 1 {
@@ -10401,7 +10578,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			if opts.PlateSolve {
 				plateGaiaOffline = opts.GaiaOffline
 				seedRA, seedDec := 0.0, 0.0
-				seedSrc := "blind (solvePlate will scan around RA/Dec 0,0; almost certainly fails on a real field)"
+				seedSrc := "none (blind solve via astrometry.net)"
 				if opts.PlateCenter != "" {
 					if r, d, perr := parseRADecArg(opts.PlateCenter, "--plate-center"); perr == nil {
 						seedRA, seedDec = r, d
@@ -10412,7 +10589,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					seedSrc = "header (reference frame FITS RA/DEC)"
 				}
 				logf("Plate solve seed: %s", seedSrc)
-				sol, perr := solvePlate(refStars, refW, refH, seedRA, seedDec, "", gaiaDefaultMirror)
+				sol, perr := solvePlateWithFallback(refStars, refW, refH, seedRA, seedDec, refSeedPath, opts)
 				if perr != nil {
 					logf("Plate solve: FAILED (%v)", perr)
 				} else {
@@ -10587,6 +10764,21 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 					combined = 100
 				}
 				frameWeights[i] = float32(combined / 100.0)
+			}
+		}
+		if opts.PSFScaleSNR {
+			missing := 0
+			for i := range accepted {
+				if accepted[i].psfScale <= 0 {
+					missing++
+				}
+				unregWeights[i] = applyPSFScaleSNRWeight(unregWeights[i], accepted[i].psfScale)
+				if frameWeights != nil {
+					frameWeights[i] = applyPSFScaleSNRWeight(frameWeights[i], accepted[i].psfScale)
+				}
+			}
+			if missing > 0 {
+				logf("WARNING: %d frame(s) have no valid .xnml scale; --psf-scale-snr assigns them zero weight", missing)
 			}
 		}
 	}
@@ -10949,7 +11141,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		// registration block can see them.
 		frameDiags = make([]frameDiag, len(accepted))
 		for i := 0; i < len(accepted); i++ {
-			td := frameDiag{Path: accepted[i].path}
+			td := frameDiag{Path: accepted[i].path, PSFScale: accepted[i].psfScale}
 			if !cropMode && i == refIdx {
 				td.Note = "[ref]"
 			}
@@ -13589,6 +13781,57 @@ func solveLinear3(M [3][3]float64, b [3]float64) []float64 {
 // instead of querying the network. Set by the pipeline from --gaia-offline.
 var plateGaiaOffline bool
 
+// plateSolutionFromGaia matches detected frame stars to a Gaia star set and
+// fits the TAN WCS plus order-2 SIP solution. It is shared by the seeded Gaia
+// solver and by the astrometry.net adapters: those obtain a centre from the
+// external solver, fetch the Gaia tile at that centre and reuse this exact
+// fit so every solve path produces the same plate_solution.json schema.
+func plateSolutionFromGaia(frameStars []star, gaia []gaiaStar, method string) (*plateSolution, error) {
+	// Match frame stars to Gaia and fit.
+	matches, ok := matchStarsToGaia(frameStars, gaia, 5.0)
+	if !ok {
+		return nil, fmt.Errorf("plate solve: no consistent transform (%d matched pairs)", len(matches))
+	}
+
+	matchedFrame := make([]star, len(matches))
+	matchedGaia := make([]gaiaStar, len(matches))
+	for i, m := range matches {
+		matchedFrame[i] = frameStars[m.FrameIdx]
+		matchedGaia[i] = gaia[m.GaiaIdx]
+	}
+
+	wcs, err := fitWCSFromMatches(matchedFrame, matchedGaia)
+	if err != nil {
+		return nil, fmt.Errorf("plate solve: WCS fit: %w", err)
+	}
+	sip, err := fitSIPFromMatches(matchedFrame, matchedGaia, wcs, 2)
+	if err != nil {
+		logf("  plate: SIP fit skipped: %v", err)
+		sip = nil
+	}
+
+	arcsecPerRad := 180.0 / math.Pi * 3600.0
+	det := wcs.CD[0][0]*wcs.CD[1][1] - wcs.CD[0][1]*wcs.CD[1][0]
+	scaleRad := math.Sqrt(math.Abs(det))
+	var sumSq float64
+	for i := range matchedFrame {
+		x, y := wcsTanForward(&wcs, matchedGaia[i].RA, matchedGaia[i].Dec)
+		dx := x - matchedFrame[i].X
+		dy := y - matchedFrame[i].Y
+		sumSq += dx*dx + dy*dy
+	}
+	rmsPix := math.Sqrt(sumSq / float64(len(matchedFrame)))
+
+	return &plateSolution{
+		WCS:       wcs,
+		SIP:       sip,
+		RMSArcsec: rmsPix * scaleRad * arcsecPerRad,
+		NMatches:  len(matches),
+		NStars:    len(frameStars),
+		Method:    method,
+	}, nil
+}
+
 func solvePlate(frameStars []star, imgW, imgH int, headerRA, headerDec float64, gaiaCacheDir, gaiaMirror string) (*plateSolution, error) {
 	if len(frameStars) < 3 {
 		return nil, fmt.Errorf("solvePlate: need >= 3 frame stars, got %d", len(frameStars))
@@ -13675,58 +13918,545 @@ func solvePlate(frameStars []star, imgW, imgH int, headerRA, headerDec float64, 
 		return nil, fmt.Errorf("plate solve: only %d Gaia stars across %d tiles", len(gaia), len(tiles))
 	}
 
-	// Match frame stars to Gaia and fit.
-	matches, ok := matchStarsToGaia(frameStars, gaia, 5.0)
-	if !ok {
-		return nil, fmt.Errorf("plate solve: no consistent transform (%d matched pairs)", len(matches))
-	}
-
-	// Build aligned frame-star and Gaia-star slices for the fit.
-	matchedFrame := make([]star, len(matches))
-	matchedGaia := make([]gaiaStar, len(matches))
-	for i, m := range matches {
-		matchedFrame[i] = frameStars[m.FrameIdx]
-		matchedGaia[i] = gaia[m.GaiaIdx]
-	}
-
-	wcs, err := fitWCSFromMatches(matchedFrame, matchedGaia)
-	if err != nil {
-		return nil, fmt.Errorf("plate solve: WCS fit: %w", err)
-	}
-	sip, err := fitSIPFromMatches(matchedFrame, matchedGaia, wcs, 2)
-	if err != nil {
-		// SIP failure is non-fatal: a TAN WCS with zero SIP is still a
-		// valid solution. Only log it.
-		logf("  plate: SIP fit skipped: %v", err)
-		sip = nil
-	}
-
-	// RMS reprojection error in arcsec.
-	arcsecPerRad := 180.0 / math.Pi * 3600.0
-	det := wcs.CD[0][0]*wcs.CD[1][1] - wcs.CD[0][1]*wcs.CD[1][0]
-	scaleRad := math.Sqrt(math.Abs(det))
-	var sumSq float64
-	for i := range matchedFrame {
-		x, y := wcsTanForward(&wcs, matchedGaia[i].RA, matchedGaia[i].Dec)
-		dx := x - matchedFrame[i].X
-		dy := y - matchedFrame[i].Y
-		sumSq += dx*dx + dy*dy
-	}
-	rmsPix := math.Sqrt(sumSq / float64(len(matchedFrame)))
-	rmsArcsec := rmsPix * scaleRad * arcsecPerRad
-
 	method := "header"
 	if blind {
 		method = "blind"
 	}
-	return &plateSolution{
-		WCS:       wcs,
-		SIP:       sip,
-		RMSArcsec: rmsArcsec,
-		NMatches:  len(matches),
-		NStars:    len(frameStars),
-		Method:    method,
-	}, nil
+	return plateSolutionFromGaia(frameStars, gaia, method)
+}
+
+// parseAstrometryWCS reads the FITS WCS header file produced by
+// astrometry.net (both solve-field and nova). CD is converted from degrees
+// to radians and CRPIX from FITS 1-based to SkyStacker's 0-based convention.
+// A_ORDER/B_ORDER > 2 is accepted by using only the quadratic SIP terms.
+func parseAstrometryWCS(data []byte) (*wcsTan, []float64, error) {
+	cards := make(map[string]string)
+	limit := len(data)
+	if limit > 2880 {
+		limit = 2880
+	}
+	for off := 0; off+80 <= limit; off += 80 {
+		card := strings.TrimRight(string(data[off:off+80]), " ")
+		if card == "" {
+			continue
+		}
+		if strings.HasPrefix(card, "END") {
+			break
+		}
+		eq := strings.IndexByte(card, '=')
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(card[:eq])
+		val := strings.TrimSpace(card[eq+1:])
+		if i := strings.Index(val, " /"); i >= 0 {
+			val = strings.TrimSpace(val[:i])
+		}
+		cards[key] = strings.Trim(val, "' ")
+	}
+	floatCard := func(key string) (float64, bool) {
+		v, ok := cards[key]
+		if !ok {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return f, err == nil
+	}
+	vals := make(map[string]float64)
+	for _, key := range []string{"CRVAL1", "CRVAL2", "CRPIX1", "CRPIX2"} {
+		v, ok := floatCard(key)
+		if !ok {
+			return nil, nil, fmt.Errorf("astrometry WCS: missing %s", key)
+		}
+		vals[key] = v
+	}
+	var cd [2][2]float64
+	cdKeys := [][]string{{"CD1_1", "CD1_2"}, {"CD2_1", "CD2_2"}}
+	haveCD := true
+	for i := 0; i < 2; i++ {
+		for j := 0; j < 2; j++ {
+			v, ok := floatCard(cdKeys[i][j])
+			if !ok {
+				haveCD = false
+			}
+			cd[i][j] = v
+		}
+	}
+	if !haveCD {
+		cdelt1, ok1 := floatCard("CDELT1")
+		cdelt2, ok2 := floatCard("CDELT2")
+		if !ok1 || !ok2 {
+			return nil, nil, errors.New("astrometry WCS: missing CD or CDELT matrix")
+		}
+		pc := [2][2]float64{{1, 0}, {0, 1}}
+		pcKeys := [][]string{{"PC1_1", "PC1_2"}, {"PC2_1", "PC2_2"}}
+		for i := 0; i < 2; i++ {
+			for j := 0; j < 2; j++ {
+				if v, ok := floatCard(pcKeys[i][j]); ok {
+					pc[i][j] = v
+				}
+			}
+		}
+		for i := 0; i < 2; i++ {
+			delt := cdelt1
+			if i == 1 {
+				delt = cdelt2
+			}
+			for j := 0; j < 2; j++ {
+				cd[i][j] = delt * pc[i][j]
+			}
+		}
+	}
+	deg := math.Pi / 180.0
+	w := &wcsTan{
+		CRVAL1: vals["CRVAL1"] * deg,
+		CRVAL2: vals["CRVAL2"] * deg,
+		CRPIX1: vals["CRPIX1"] - 1,
+		CRPIX2: vals["CRPIX2"] - 1,
+		CD: [2][2]float64{
+			{cd[0][0] * deg, cd[0][1] * deg},
+			{cd[1][0] * deg, cd[1][1] * deg},
+		},
+	}
+	sipKeys := []string{"A_2_0", "A_1_1", "A_0_2", "B_2_0", "B_1_1", "B_0_2"}
+	var sip []float64
+	complete := true
+	for _, key := range sipKeys {
+		if _, ok := floatCard(key); !ok {
+			complete = false
+			break
+		}
+	}
+	if complete {
+		sip = make([]float64, len(sipKeys))
+		for i, key := range sipKeys {
+			sip[i], _ = floatCard(key)
+		}
+		if order, ok := floatCard("A_ORDER"); ok && order > 2 {
+			logf("  plate: astrometry SIP order %g > 2; using quadratic terms only", order)
+		}
+	}
+	return w, sip, nil
+}
+
+// astrometryScaleArgs turns an optional arcsec/px estimate into solve-field
+// scale bounds. astrometry.net can solve without it; the hint only narrows
+// the index search and is derived from optics, never from user coordinates.
+func astrometryScaleArgs(hint float64) []string {
+	if hint <= 0 {
+		return nil
+	}
+	return []string{
+		"--scale-units", "arcsecperpix",
+		"--scale-low", strconv.FormatFloat(hint*0.8, 'g', -1, 64),
+		"--scale-high", strconv.FormatFloat(hint*1.2, 'g', -1, 64),
+	}
+}
+
+// solveAstrometryLocal runs a local astrometry.net solve-field on the image.
+// It requires the astrometry.net CLI and index files installed on the host;
+// when they are missing the error explains how to use the web backend.
+func solveAstrometryLocal(imagePath, command string, scaleHint float64, timeout time.Duration) (*plateSolution, error) {
+	if command == "" {
+		command = "solve-field"
+	}
+	fields, err := splitCommandArgv(command)
+	if err != nil || len(fields) == 0 {
+		return nil, fmt.Errorf("astrometry local: invalid --astrometry-cmd %q: %v", command, err)
+	}
+	if _, err := exec.LookPath(fields[0]); err != nil {
+		return nil, fmt.Errorf("astrometry local: %q not found: %w (install astrometry.net with index files, or use --plate-solver astrometry-web)", fields[0], err)
+	}
+	dir, err := os.MkdirTemp("", "skystacker-astrometry-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	wcsPath := filepath.Join(dir, "solved.wcs")
+	argv := append([]string{}, fields...)
+	argv = append(argv, imagePath, "--no-plots", "--overwrite", "--skip-solved", "-D", dir, "--wcs", wcsPath)
+	argv = append(argv, astrometryScaleArgs(scaleHint)...)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Run(); err != nil {
+		tail := out.String()
+		if len(tail) > 2000 {
+			tail = tail[len(tail)-2000:]
+		}
+		return nil, fmt.Errorf("astrometry local: solve-field failed: %w; output: %s", err, tail)
+	}
+	data, err := os.ReadFile(wcsPath)
+	if err != nil {
+		return nil, fmt.Errorf("astrometry local: no WCS output: %w", err)
+	}
+	w, sip, err := parseAstrometryWCS(data)
+	if err != nil {
+		return nil, fmt.Errorf("astrometry local: %w", err)
+	}
+	return &plateSolution{WCS: *w, SIP: sip, Method: "astrometry-local"}, nil
+}
+
+// astrometryPollInterval is a variable so selftests can avoid real waits.
+var astrometryPollInterval = 3 * time.Second
+
+const astrometryDefaultAPIURL = "https://nova.astrometry.net/api/"
+
+func astrometryAPIURL(base string) string {
+	if base == "" {
+		return astrometryDefaultAPIURL
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	return base
+}
+
+func astrometryHTTPRequest(client *http.Client, method, urlStr string, body io.Reader, contentType, referer string, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "skystacker/"+version+" (+"+repoURL+")")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return data, nil
+}
+
+func astrometryWebLogin(client *http.Client, base, apiKey string, timeout time.Duration) (string, error) {
+	if apiKey == "" {
+		return "", errors.New("astrometry web: no API key; set --astrometry-api-key or AN_API_KEY")
+	}
+	request, err := json.Marshal(map[string]string{"apikey": apiKey})
+	if err != nil {
+		return "", err
+	}
+	form := url.Values{"request-json": {string(request)}}
+	data, err := astrometryHTTPRequest(client, http.MethodPost, base+"login",
+		strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", "", timeout)
+	if err != nil {
+		return "", fmt.Errorf("astrometry web: login: %w", err)
+	}
+	var reply struct {
+		Status       string `json:"status"`
+		Session      string `json:"session"`
+		ErrorMessage string `json:"errormessage"`
+	}
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return "", fmt.Errorf("astrometry web: login response: %w", err)
+	}
+	if reply.Status != "success" || reply.Session == "" {
+		return "", fmt.Errorf("astrometry web: login failed: %s", reply.ErrorMessage)
+	}
+	return reply.Session, nil
+}
+
+func astrometryWebUpload(client *http.Client, base, session, imagePath string, scaleHint float64, timeout time.Duration) (int, error) {
+	f, err := os.Open(imagePath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	settings := map[string]any{
+		"session":              session,
+		"allow_commercial_use": "d",
+		"allow_modifications":  "d",
+		"publicly_visible":     "n",
+	}
+	if scaleHint > 0 {
+		settings["scale_units"] = "arcsecperpix"
+		settings["scale_type"] = "ev"
+		settings["scale_est"] = scaleHint
+		settings["scale_err"] = 20.0
+	}
+	request, err := json.Marshal(settings)
+	if err != nil {
+		return 0, err
+	}
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	field, err := writer.CreateFormField("request-json")
+	if err != nil {
+		return 0, err
+	}
+	if _, err := field.Write(request); err != nil {
+		return 0, err
+	}
+	fileField, err := writer.CreateFormFile("file", filepath.Base(imagePath))
+	if err != nil {
+		return 0, err
+	}
+	if _, err := io.Copy(fileField, f); err != nil {
+		return 0, err
+	}
+	if err := writer.Close(); err != nil {
+		return 0, err
+	}
+	data, err := astrometryHTTPRequest(client, http.MethodPost, base+"upload", &buf,
+		writer.FormDataContentType(), "", timeout)
+	if err != nil {
+		return 0, fmt.Errorf("astrometry web: upload: %w", err)
+	}
+	var reply struct {
+		Status       string `json:"status"`
+		SubID        int    `json:"subid"`
+		ErrorMessage string `json:"errormessage"`
+	}
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return 0, fmt.Errorf("astrometry web: upload response: %w", err)
+	}
+	if reply.Status != "success" || reply.SubID <= 0 {
+		return 0, fmt.Errorf("astrometry web: upload failed: %s", reply.ErrorMessage)
+	}
+	return reply.SubID, nil
+}
+
+// solveAstrometryWeb submits the image to nova.astrometry.net, waits for the
+// job and downloads the resulting WCS. baseURL is injectable for selftests.
+func solveAstrometryWeb(imagePath, baseURL, apiKey string, scaleHint float64, timeout time.Duration) (*plateSolution, error) {
+	base := astrometryAPIURL(baseURL)
+	client := &http.Client{}
+	session, err := astrometryWebLogin(client, base, apiKey, timeout)
+	if err != nil {
+		return nil, err
+	}
+	subID, err := astrometryWebUpload(client, base, session, imagePath, scaleHint, timeout)
+	if err != nil {
+		return nil, err
+	}
+	logf("  plate: astrometry.net submission %d", subID)
+	deadline := time.Now().Add(timeout)
+	requestTimeout := timeout
+	if requestTimeout > 60*time.Second {
+		requestTimeout = 60 * time.Second
+	}
+	var jobID int
+	for time.Now().Before(deadline) {
+		data, err := astrometryHTTPRequest(client, http.MethodGet,
+			fmt.Sprintf("%ssubmissions/%d", base, subID), nil, "", base, requestTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("astrometry web: submission status: %w", err)
+		}
+		var sub struct {
+			Jobs []*int `json:"jobs"`
+		}
+		if err := json.Unmarshal(data, &sub); err != nil {
+			return nil, fmt.Errorf("astrometry web: submission response: %w", err)
+		}
+		for _, j := range sub.Jobs {
+			if j != nil && *j > 0 {
+				jobID = *j
+				break
+			}
+		}
+		if jobID > 0 {
+			break
+		}
+		time.Sleep(astrometryPollInterval)
+	}
+	if jobID == 0 {
+		return nil, fmt.Errorf("astrometry web: submission %d produced no job within %s", subID, timeout)
+	}
+	for time.Now().Before(deadline) {
+		data, err := astrometryHTTPRequest(client, http.MethodGet,
+			fmt.Sprintf("%sjobs/%d", base, jobID), nil, "", base, requestTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("astrometry web: job status: %w", err)
+		}
+		var job struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(data, &job); err != nil {
+			return nil, fmt.Errorf("astrometry web: job response: %w", err)
+		}
+		if job.Status == "success" {
+			break
+		}
+		if job.Status == "failure" {
+			return nil, fmt.Errorf("astrometry web: job %d failed", jobID)
+		}
+		time.Sleep(astrometryPollInterval)
+	}
+	if !time.Now().Before(deadline) {
+		return nil, fmt.Errorf("astrometry web: job %d did not finish within %s", jobID, timeout)
+	}
+	root := strings.TrimSuffix(strings.TrimSuffix(base, "/"), "api")
+	root = strings.TrimSuffix(root, "/")
+	data, err := astrometryHTTPRequest(client, http.MethodGet,
+		fmt.Sprintf("%s/wcs_file/%d", root, jobID), nil, "", base, requestTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("astrometry web: WCS download: %w", err)
+	}
+	w, sip, err := parseAstrometryWCS(data)
+	if err != nil {
+		return nil, fmt.Errorf("astrometry web: %w", err)
+	}
+	return &plateSolution{WCS: *w, SIP: sip, Method: "astrometry-web"}, nil
+}
+
+// expectedPlateScale converts focal length (mm) and pixel pitch (um) into
+// arcsec/pixel. This is the roadmap focal-length sanity check formula.
+func expectedPlateScale(focalMM, pixelUM float64) float64 {
+	if focalMM <= 0 || pixelUM <= 0 {
+		return 0
+	}
+	return pixelUM / focalMM * 206.26
+}
+
+func plateScaleArcsecPerPixel(w *wcsTan) float64 {
+	if w == nil {
+		return 0
+	}
+	det := w.CD[0][0]*w.CD[1][1] - w.CD[0][1]*w.CD[1][0]
+	return math.Sqrt(math.Abs(det)) * (180.0 / math.Pi * 3600.0)
+}
+
+func checkPlateScaleSanity(sol *plateSolution, focalMM, pixelUM float64) {
+	want := expectedPlateScale(focalMM, pixelUM)
+	if sol == nil || want <= 0 {
+		return
+	}
+	got := plateScaleArcsecPerPixel(&sol.WCS)
+	if got <= 0 {
+		return
+	}
+	if ratio := got / want; ratio < 0.7 || ratio > 1.4 {
+		logf("WARNING: solved scale %.3f arcsec/px differs from optics estimate %.3f arcsec/px (%.0f mm, %.1f um); verify --solver-focal-length/--solver-pixel-size",
+			got, want, focalMM, pixelUM)
+	}
+}
+
+// refineAstrometrySolution re-fits the external WCS against Gaia stars at
+// the solved centre. It turns an astrometry.net centre into the same
+// TAN+SIP solution (with RMS and match count) as the internal solver. A
+// failed refinement keeps the original external solution.
+func refineAstrometrySolution(sol *plateSolution, stars []star) *plateSolution {
+	if sol == nil || len(stars) < 3 {
+		return sol
+	}
+	ipix := healpixAng2PixNested(gaiaDefaultNside, sol.WCS.CRVAL1, sol.WCS.CRVAL2)
+	tile, err := gaiaGetTile(gaiaDefaultCacheDir(), gaiaDefaultMirror, gaiaDefaultNside, ipix,
+		gaiaDefaultMagLimit, plateGaiaOffline, false)
+	if err != nil {
+		logf("  plate: Gaia refinement skipped: %v", err)
+		return sol
+	}
+	refined, err := plateSolutionFromGaia(stars, tile.Stars, sol.Method)
+	if err != nil {
+		logf("  plate: Gaia refinement skipped: %v", err)
+		return sol
+	}
+	return refined
+}
+
+// solvePlateWithFallback is the single entry point used by the stacking
+// pipeline, --post-only and standalone image mode. It tries the seeded Gaia
+// solver when a pointing is known, then falls back to a genuine blind solve
+// through astrometry.net (local solve-field first, web API second).
+func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float64, imagePath string, o runOptions) (*plateSolution, error) {
+	if len(stars) < 3 {
+		return nil, fmt.Errorf("plate solve: need >= 3 detected stars, got %d", len(stars))
+	}
+	mode := o.PlateSolver
+	if mode == "" {
+		mode = "auto"
+	}
+	switch mode {
+	case "auto", "gaia", "astrometry-local", "astrometry-web":
+	default:
+		return nil, fmt.Errorf("--plate-solver must be auto, gaia, astrometry-local or astrometry-web, got %q", mode)
+	}
+	timeout := time.Duration(o.AstrometryTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 180 * time.Second
+	}
+	seeded := seedRA != 0 || seedDec != 0
+	hint := expectedPlateScale(o.SolverFocalLength, o.SolverPixelSize)
+	var gaiaErr error
+	if seeded && (mode == "auto" || mode == "gaia") {
+		var sol *plateSolution
+		sol, gaiaErr = solvePlate(stars, imgW, imgH, seedRA, seedDec, "", gaiaDefaultMirror)
+		if gaiaErr == nil {
+			checkPlateScaleSanity(sol, o.SolverFocalLength, o.SolverPixelSize)
+			return sol, nil
+		}
+		logf("  plate: seeded Gaia solve failed (%v)", gaiaErr)
+	}
+	if mode == "gaia" {
+		if !seeded {
+			return nil, errors.New("plate solve: no pointing seed; pass --plate-center or use --plate-solver auto with astrometry.net")
+		}
+		return nil, fmt.Errorf("plate solve: seeded Gaia solve failed: %w", gaiaErr)
+	}
+	apiKey := o.AstrometryAPIKey
+	if apiKey == "" {
+		apiKey = os.Getenv("AN_API_KEY")
+	}
+	if apiKey == "" {
+		apiKey = os.Getenv("ASTROMETRY_API_KEY")
+	}
+	var sol *plateSolution
+	var err error
+	if mode == "astrometry-local" || mode == "auto" {
+		sol, err = solveAstrometryLocal(imagePath, o.AstrometryCmd, hint, timeout)
+		if err == nil {
+			logf("  plate: blind solve via local astrometry.net")
+		} else if mode == "astrometry-local" {
+			return nil, err
+		} else {
+			logf("  plate: local astrometry.net unavailable (%v)", err)
+		}
+	}
+	if sol == nil && (mode == "astrometry-web" || mode == "auto") {
+		sol, err = solveAstrometryWeb(imagePath, o.AstrometryURL, apiKey, hint, timeout)
+		if err == nil {
+			logf("  plate: blind solve via astrometry.net web service")
+		} else if mode == "astrometry-web" {
+			return nil, err
+		} else {
+			logf("  plate: astrometry.net web solve unavailable (%v)", err)
+		}
+	}
+	if sol == nil {
+		return nil, fmt.Errorf("plate solve: blind fallback unavailable: install astrometry.net (--astrometry-cmd) or set AN_API_KEY / --astrometry-api-key (--plate-solver astrometry-web)")
+	}
+	checkPlateScaleSanity(sol, o.SolverFocalLength, o.SolverPixelSize)
+	return refineAstrometrySolution(sol, stars), nil
+}
+
+// solverOptionsFromCLI carries the solver-related flags into the shared
+// fallback chain for standalone image mode, which works with cliOptions.
+func solverOptionsFromCLI(o *cliOptions) runOptions {
+	return runOptions{
+		PlateSolver:       o.PlateSolver,
+		AstrometryCmd:     o.AstrometryCmd,
+		AstrometryAPIKey:  o.AstrometryAPIKey,
+		AstrometryURL:     o.AstrometryURL,
+		AstrometryTimeout: o.AstrometryTimeout,
+		SolverFocalLength: o.SolverFocalLength,
+		SolverPixelSize:   o.SolverPixelSize,
+		GaiaOffline:       o.GaiaOffline,
+	}
 }
 
 // gaiaDefaultCacheDir returns the OS user cache directory for Gaia
@@ -16280,6 +17010,193 @@ func testResampleSIP() error {
 	return nil
 }
 
+func testAstrometryWCSParse() error {
+	w, sip, err := parseAstrometryWCS(astrometryTestWCS())
+	if err != nil {
+		return err
+	}
+	if math.Abs(w.CRVAL1-83.8221*math.Pi/180) > 1e-9 || math.Abs(w.CRVAL2-22.0145*math.Pi/180) > 1e-9 {
+		return fmt.Errorf("WCS CRVAL: %+v", w)
+	}
+	if math.Abs(w.CRPIX1-511) > 1e-6 || math.Abs(w.CRPIX2-341) > 1e-6 {
+		return fmt.Errorf("WCS CRPIX not converted to 0-based: %+v", w)
+	}
+	if math.Abs(w.CD[0][0]-(-1e-4*math.Pi/180)) > 1e-12 {
+		return fmt.Errorf("WCS CD: %+v", w.CD)
+	}
+	if len(sip) != 6 || math.Abs(sip[5]-6e-5) > 1e-12 {
+		return fmt.Errorf("WCS SIP: %v", sip)
+	}
+	cards := []string{
+		"CRVAL1  =                   10.0000",
+		"CRVAL2  =                  -20.0000",
+		"CRPIX1  =                    1.0000",
+		"CRPIX2  =                    1.0000",
+		"CDELT1  =                1.000000E-4",
+		"CDELT2  =                2.000000E-4",
+		"PC1_1   =               -1.000000E+0",
+		"PC2_2   =                1.000000E+0",
+		"END",
+	}
+	var buf bytes.Buffer
+	for _, card := range cards {
+		fmt.Fprintf(&buf, "%-80s", card)
+	}
+	for buf.Len()%2880 != 0 {
+		buf.WriteByte(' ')
+	}
+	w2, sip2, err := parseAstrometryWCS(buf.Bytes())
+	if err != nil {
+		return err
+	}
+	if sip2 != nil {
+		return fmt.Errorf("unexpected SIP from CDELT-only header: %v", sip2)
+	}
+	if math.Abs(w2.CD[0][0]-(-1e-4*math.Pi/180)) > 1e-12 || math.Abs(w2.CD[1][1]-(2e-4*math.Pi/180)) > 1e-12 {
+		return fmt.Errorf("CDELT/PC WCS CD: %+v", w2.CD)
+	}
+	if _, _, err := parseAstrometryWCS([]byte("not a fits header")); err == nil {
+		return errors.New("malformed WCS header accepted")
+	}
+	return nil
+}
+
+func testAstrometryLocalSolver() error {
+	dir, err := os.MkdirTemp("", "skystacker-astrometry-local-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	image := filepath.Join(dir, "light.jpg")
+	if err := os.WriteFile(image, []byte("dummy jpeg"), 0o644); err != nil {
+		return err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	command := fmt.Sprintf("%q %s", filepath.ToSlash(self), internalAstrometryFlag)
+	sol, err := solveAstrometryLocal(image, command, 0, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if sol.Method != "astrometry-local" {
+		return fmt.Errorf("local solver method: %s", sol.Method)
+	}
+	if math.Abs(sol.WCS.CRVAL1-83.8221*math.Pi/180) > 1e-9 || len(sol.SIP) != 6 {
+		return fmt.Errorf("local solver WCS: %+v SIP=%v", sol.WCS, sol.SIP)
+	}
+	args := astrometryScaleArgs(2.0)
+	if len(args) != 6 || args[0] != "--scale-units" || args[2] != "--scale-low" {
+		return fmt.Errorf("scale hint args: %v", args)
+	}
+	if got := astrometryScaleArgs(0); len(got) != 0 {
+		return fmt.Errorf("zero scale hint should add no args: %v", got)
+	}
+	return nil
+}
+
+func testAstrometryWebSolver() error {
+	dir, err := os.MkdirTemp("", "skystacker-astrometry-web-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	image := filepath.Join(dir, "light.jpg")
+	if err := os.WriteFile(image, []byte("dummy jpeg"), 0o644); err != nil {
+		return err
+	}
+	var uploaded, gotReferer bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/login":
+			var reply struct {
+				ApiKey string `json:"apikey"`
+			}
+			if err := json.Unmarshal([]byte(r.FormValue("request-json")), &reply); err != nil || reply.ApiKey != "test-key" {
+				http.Error(w, "bad key", http.StatusForbidden)
+				return
+			}
+			io.WriteString(w, `{"status":"success","session":"sess-1"}`)
+		case "/api/upload":
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if _, _, err := r.FormFile("file"); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if !strings.Contains(r.FormValue("request-json"), `"session":"sess-1"`) {
+				http.Error(w, "missing session", http.StatusBadRequest)
+				return
+			}
+			uploaded = true
+			io.WriteString(w, `{"status":"success","subid":41}`)
+		case "/api/submissions/41":
+			io.WriteString(w, `{"jobs":[77]}`)
+		case "/api/jobs/77":
+			io.WriteString(w, `{"status":"success"}`)
+		case "/wcs_file/77":
+			gotReferer = r.Header.Get("Referer") != ""
+			w.Write(astrometryTestWCS())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	oldPoll := astrometryPollInterval
+	astrometryPollInterval = time.Millisecond
+	defer func() { astrometryPollInterval = oldPoll }()
+	sol, err := solveAstrometryWeb(image, srv.URL+"/api/", "test-key", 1.5, 20*time.Second)
+	if err != nil {
+		return err
+	}
+	if !uploaded || !gotReferer {
+		return fmt.Errorf("web solve: uploaded=%v referer=%v", uploaded, gotReferer)
+	}
+	if sol.Method != "astrometry-web" || math.Abs(sol.WCS.CRVAL1-83.8221*math.Pi/180) > 1e-9 {
+		return fmt.Errorf("web solver solution: %+v", sol)
+	}
+	return nil
+}
+
+func testBlindSolverFallback() error {
+	opts, err := parseArgs([]string{
+		"--plate-solve", "--plate-solver", "astrometry-web",
+		"--astrometry-api-key", "secret", "--astrometry-timeout", "30",
+		"--solver-focal-length", "1000", "--solver-pixel-size", "1.0",
+	})
+	if err != nil {
+		return err
+	}
+	if opts.PlateSolver != "astrometry-web" || opts.AstrometryTimeout != 30 || opts.SolverFocalLength != 1000 {
+		return fmt.Errorf("blind solver flags: %+v", opts)
+	}
+	cmd := formatCommandLine([]string{"skystacker", "--astrometry-api-key", "secret", "lights"})
+	if strings.Contains(cmd, "secret") || !strings.Contains(cmd, "<redacted>") {
+		return fmt.Errorf("API key leaked into report command line: %s", cmd)
+	}
+	if got := expectedPlateScale(1000, 1.0); math.Abs(got-0.20626) > 1e-9 {
+		return fmt.Errorf("focal-length scale: got %g, want 0.20626", got)
+	}
+	if _, err := parseArgs([]string{"--solver-focal-length", "1000"}); err == nil {
+		return errors.New("focal length without pixel size should fail")
+	}
+	if _, err := parseArgs([]string{"--plate-solver", "bogus"}); err == nil {
+		return errors.New("invalid plate solver should fail")
+	}
+	stars := []star{{X: 1, Y: 2, Flux: 10}, {X: 20, Y: 21, Flux: 12}, {X: 40, Y: 42, Flux: 11}}
+	if _, err := solvePlateWithFallback(stars, 100, 100, 0, 0, "", runOptions{PlateSolver: "gaia"}); err == nil || !strings.Contains(err.Error(), "no pointing seed") {
+		return fmt.Errorf("gaia-only with no seed: %v", err)
+	}
+	ro := runOptions{PlateSolver: "auto", AstrometryCmd: "definitely-not-a-solver", AstrometryURL: "http://127.0.0.1:1/api/"}
+	if _, err := solvePlateWithFallback(stars, 100, 100, 0, 0, "", ro); err == nil {
+		return errors.New("blind fallback with no backend should fail")
+	}
+	return nil
+}
+
 func testExternalAISidecar() error {
 	self, err := os.Executable()
 	if err != nil {
@@ -17786,6 +18703,7 @@ func runSelfTests() int {
 		{"provenance DM graph", testProvenanceDM},
 		{"goDiagnostics module", testDiagnosticsCollect},
 		{"frame metrics and culling", testFrameMetricsCulling},
+		{"XNML PSF Scale SNR ingestion", testXNMLPSFScaleSNR},
 		{"keep sharpest frames", testKeepSharpestSelection},
 		{"calibration library matching", testCalibrationLibrary},
 		{"comet + stars recombination", testCometCombine},
@@ -17804,6 +18722,10 @@ func runSelfTests() int {
 		{"GHS parameter mapping", testGHSParameterMapping},
 		{"WCS/SIP reference fixture", testWCSSIPFixture},
 		{"Gaia DR4 TAP adaptation", testGaiaDR4Adaptation},
+		{"astrometry WCS parsing", testAstrometryWCSParse},
+		{"astrometry local solve-field adapter", testAstrometryLocalSolver},
+		{"astrometry web API adapter", testAstrometryWebSolver},
+		{"blind solver fallback chain", testBlindSolverFallback},
 		{"rejection buffer pool", testRejectionBufferPool},
 		{"additional input formats", testAdditionalInputFormats},
 		{"sidecar 16-bit mono FITS", testSidecarFITS16Mono},
@@ -19168,6 +20090,101 @@ func testKeepSharpestSelection() error {
 	}
 	if _, err := parseArgs([]string{"--keep-sharpest", "101"}); err == nil {
 		return errors.New("invalid --keep-sharpest accepted")
+	}
+	return nil
+}
+
+func testXNMLPSFScaleSNR() error {
+	dir, err := os.MkdirTemp("", "skystacker-xnml-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	frameDir := filepath.Join(dir, "lights")
+	fallback := filepath.Join(dir, "xnml")
+	for _, d := range []string{frameDir, fallback} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
+	}
+	frame := filepath.Join(frameDir, "L_001.fit")
+	if err := os.WriteFile(frame, []byte("x"), 0o644); err != nil {
+		return err
+	}
+	xnml := `<?xml version="1.0" encoding="UTF-8"?>
+<xnml version="1.0" xmlns="http://www.pixinsight.com/xnml">
+  <CreationTime>2026-11-18T12:00:00Z</CreationTime>
+  <ReferenceImage>/data/ref.fit</ReferenceImage>
+  <TargetImage>/data/lights/L_001.fit</TargetImage>
+  <ReferenceGeometry width="200" height="200" numberOfChannels="1"/>
+  <GlobalNormalization><Scale>1.1</Scale></GlobalNormalization>
+  <RelativeScaleFactors>1.25</RelativeScaleFactors>
+</xnml>`
+	local := filepath.Join(frameDir, "L_001.xnml")
+	if err := os.WriteFile(local, []byte(xnml), 0o644); err != nil {
+		return err
+	}
+	if scale, ok := readXNMLPSFScale(frame, ""); !ok || math.Abs(scale-1.25) > 1e-9 {
+		return fmt.Errorf("local XNML scale: got %g ok=%v, want 1.25", scale, ok)
+	}
+	if err := os.Remove(local); err != nil {
+		return err
+	}
+	if scale, ok := readXNMLPSFScale(frame, ""); ok || scale != 0 {
+		return fmt.Errorf("missing XNML scale: got %g ok=%v, want 0/false", scale, ok)
+	}
+	viaFallback := filepath.Join(fallback, "L_001.xnml")
+	if err := os.WriteFile(viaFallback, []byte(xnml), 0o644); err != nil {
+		return err
+	}
+	if scale, ok := readXNMLPSFScale(frame, fallback); !ok || math.Abs(scale-1.25) > 1e-9 {
+		return fmt.Errorf("fallback XNML scale: got %g ok=%v, want 1.25", scale, ok)
+	}
+	globalOnly := strings.Replace(xnml, "<RelativeScaleFactors>1.25</RelativeScaleFactors>", "", 1)
+	if err := os.WriteFile(viaFallback, []byte(globalOnly), 0o644); err != nil {
+		return err
+	}
+	if scale, ok := readXNMLPSFScale(frame, fallback); !ok || math.Abs(scale-1.1) > 1e-9 {
+		return fmt.Errorf("global-only XNML scale: got %g ok=%v, want 1.1", scale, ok)
+	}
+	invalid := strings.Replace(xnml, `<xnml version="1.0"`, `<xnml version="1.0" valid="false"`, 1)
+	if err := os.WriteFile(viaFallback, []byte(invalid), 0o644); err != nil {
+		return err
+	}
+	if scale, ok := readXNMLPSFScale(frame, fallback); ok || scale != 0 {
+		return fmt.Errorf("valid=false XNML scale: got %g ok=%v, want 0/false", scale, ok)
+	}
+	if err := os.WriteFile(viaFallback, []byte("<xnml><broken>"), 0o644); err != nil {
+		return err
+	}
+	if scale, ok := readXNMLPSFScale(frame, fallback); ok || scale != 0 {
+		return fmt.Errorf("malformed XNML scale: got %g ok=%v, want 0/false", scale, ok)
+	}
+	if got := applyPSFScaleSNRWeight(0.8, 1.25); math.Abs(float64(got)-1.0) > 1e-6 {
+		return fmt.Errorf("PSF Scale SNR weight: got %g, want 1.0", got)
+	}
+	for _, scale := range []float64{0, math.NaN(), math.Inf(1)} {
+		if got := applyPSFScaleSNRWeight(0.8, scale); got != 0 {
+			return fmt.Errorf("PSF Scale SNR weight at %g: got %g, want 0", scale, got)
+		}
+	}
+	csvPath := filepath.Join(dir, "metrics.csv")
+	if err := writeFrameMetricsCSV(csvPath, []frameDiag{{Path: frame, PSFScale: 1.25}}); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(csvPath)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(data), "psf_scale") || !strings.Contains(string(data), "1.2500") {
+		return fmt.Errorf("metrics CSV missing psf_scale column: %s", data)
+	}
+	opts, err := parseArgs([]string{"--psf-scale-snr", "--xnml-dir", fallback})
+	if err != nil || !opts.PSFScaleSNR || opts.XNMLDir != fallback {
+		return fmt.Errorf("XNML flags: %+v err=%v", opts, err)
+	}
+	if _, err := parseArgs([]string{"--psf-scale-snr", "--no-register"}); err == nil {
+		return errors.New("--psf-scale-snr with --no-register should fail")
 	}
 	return nil
 }
@@ -27609,6 +28626,65 @@ func runInternalAISidecarMock(args []string) int {
 	return 0
 }
 
+// astrometryTestWCS is a minimal FITS WCS header in the format returned by
+// both solve-field and nova, used by the solver selftests.
+func astrometryTestWCS() []byte {
+	cards := []string{
+		"CTYPE1  = 'RA---TAN-SIP'",
+		"CTYPE2  = 'DEC--TAN-SIP'",
+		"CRVAL1  =                   83.8221",
+		"CRVAL2  =                   22.0145",
+		"CRPIX1  =                  512.0000",
+		"CRPIX2  =                  342.0000",
+		"CD1_1   =               -1.000000E-4",
+		"CD1_2   =                0.000000E+0",
+		"CD2_1   =                0.000000E+0",
+		"CD2_2   =                1.000000E-4",
+		"A_ORDER =                    2",
+		"B_ORDER =                    2",
+		"A_2_0   =                1.000000E-5",
+		"A_1_1   =                2.000000E-5",
+		"A_0_2   =                3.000000E-5",
+		"B_2_0   =                4.000000E-5",
+		"B_1_1   =                5.000000E-5",
+		"B_0_2   =                6.000000E-5",
+		"END",
+	}
+	var buf bytes.Buffer
+	for _, card := range cards {
+		fmt.Fprintf(&buf, "%-80s", card)
+	}
+	for buf.Len()%2880 != 0 {
+		buf.WriteByte(' ')
+	}
+	return buf.Bytes()
+}
+
+const internalAstrometryFlag = "--internal-astrometry-mock"
+
+func runInternalAstrometryMock(args []string) int {
+	wcsPath := ""
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "--wcs":
+			wcsPath = args[i+1]
+		case "-D":
+			if wcsPath == "" {
+				wcsPath = filepath.Join(args[i+1], "solved.wcs")
+			}
+		}
+	}
+	if wcsPath == "" {
+		fmt.Fprintln(os.Stderr, "internal astrometry mock: no --wcs or -D argument")
+		return 2
+	}
+	if err := os.WriteFile(wcsPath, astrometryTestWCS(), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "internal astrometry mock:", err)
+		return 1
+	}
+	return 0
+}
+
 func filterFilesByIncludeList(files []string, path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -27791,7 +28867,7 @@ func writeFrameMetricsCSV(path string, diags []frameDiag) error {
 		return err
 	}
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"frame", "stars", "inliers", "hfr_px", "fwhm_px", "eccentricity", "snr", "bg_sigma", "intrinsic_quality", "weight", "note"}); err != nil {
+	if err := w.Write([]string{"frame", "stars", "inliers", "hfr_px", "fwhm_px", "eccentricity", "snr", "bg_sigma", "intrinsic_quality", "weight", "psf_scale", "note"}); err != nil {
 		f.Close()
 		return err
 	}
@@ -27806,6 +28882,7 @@ func writeFrameMetricsCSV(path string, diags []frameDiag) error {
 			strconv.FormatFloat(d.BgSigma, 'f', 6, 64),
 			strconv.FormatFloat(d.IntrinsicQ, 'f', 2, 64),
 			strconv.FormatFloat(d.Weight, 'f', 4, 64),
+			strconv.FormatFloat(d.PSFScale, 'f', 4, 64),
 			d.Note,
 		}
 		if err := w.Write(rec); err != nil {
@@ -28122,6 +29199,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == internalAISidecarFlag {
 		os.Exit(runInternalAISidecarMock(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == internalAstrometryFlag {
+		os.Exit(runInternalAstrometryMock(os.Args[2:]))
+	}
 	printBanner()
 	opts, err := parseArgs(os.Args[1:])
 	if err != nil {
@@ -28281,6 +29361,8 @@ func main() {
 		XISFRev2:               opts.XISFRev2,
 		CreateBigTIFF:          opts.CreateBigTIFF,
 		HFRQuality:             opts.HFRQuality,
+		PSFScaleSNR:            opts.PSFScaleSNR,
+		XNMLDir:                opts.XNMLDir,
 		Annotate:               opts.Annotate,
 		AnnotationCatalogs:     opts.AnnotationCatalogs,
 		Starless:               opts.Starless,
@@ -28356,6 +29438,13 @@ func main() {
 		GaiaNside:              opts.GaiaNside,
 		GaiaMagLimit:           opts.GaiaMagLimit,
 		PlateCenter:            opts.PlateCenter,
+		PlateSolver:            opts.PlateSolver,
+		AstrometryCmd:          opts.AstrometryCmd,
+		AstrometryAPIKey:       opts.AstrometryAPIKey,
+		AstrometryURL:          opts.AstrometryURL,
+		AstrometryTimeout:      opts.AstrometryTimeout,
+		SolverFocalLength:      opts.SolverFocalLength,
+		SolverPixelSize:        opts.SolverPixelSize,
 		WritePNG:               opts.WritePNG,
 		WriteBMP:               opts.WriteBMP,
 		Limit:                  opts.Limit,

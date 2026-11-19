@@ -10,9 +10,9 @@ touching code. Documentation in English. Final user reports in Spanish.
 Version and tests
 -----------------
 - Source version is v0.6.1 (`var version` in main.go).
-- Registered self-tests: 248. Count entries in `runSelfTests`, not every
+- Registered self-tests: 253. Count entries in `runSelfTests`, not every
   function whose name starts with `test`. Expect:
-      all 248 self-tests passed
+      all 253 self-tests passed
   Update this number only when a case is added or removed.
 
 Build and install

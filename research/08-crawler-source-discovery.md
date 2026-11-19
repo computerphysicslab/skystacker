@@ -530,3 +530,36 @@ Already indexed (no new row needed): `astrometry.net/`, Siril annotations/drizzl
 ### 10.3 Roadmap candidates promoted
 
 From these facts the following were added to `ROADMAP.md`: SSO annotation with velocity vectors; frame-selection expression engine; `.xnml`/`PSFScaleSNR` ingestion; matched-filter source detection; layered SVG annotation extension; asymmetric-clipping/harmonic-inpainting background; CFA pre-drizzle background (blocked by item 14); and a deferred R&D spike on spline distortion models. APP-style global mosaic optimisation was *not* added: it remains explicitly rejected with the other mosaic items.
+
+## 11. goCrawler full export (2026-11-18)
+
+**Provenance.** `research/pendingToAnalyse/corpus-skystacker-research (1).txt`
+was a 1.45 MB goCrawler export with 86 URL blocks. It was reviewed,
+deduplicated against §5/§6/§9/§10 and consolidated below; the export was
+removed and the folder kept. 24 URLs are genuinely new; three `/stable`↔`/latest`
+pairs were ignored as aliases.
+
+### 11.1 New source index (24 URLs)
+
+Astropy sub-pages: `wcs/supported_projections.html`, `wcs/note_sip.html`,
+`wcs/reference_api.html`, `visualization/normalization.html`,
+`io/fits/usage/image.html`, `coordinates/`, `coordinates/matchsep.html`.
+LSST/services: `pipelines.lsst.io/v/daily/api/lsst.meas.astrom.AstrometryTask.html`,
+`heasarc.gsfc.nasa.gov/fitsio/`, `astroquery .../sdss/`, `astroquery .../ipac/irsa/`,
+`sep .../apertures.html`. Catalogs: `cosmos.esa.int/web/gaia/dr3`,
+`cosmos.esa.int/web/hipparcos/tycho-2`, `astrosource.readthedocs.io`,
+`github.com/mommermi/photometrypipeline` (banned domain, record only). Other:
+`hnsky.org/reverse_mapping.htm`, two APP quick-start/tutorial pages, Siril
+landing page, Shupe SIP→PV PDF, two STScI DrizzlePac/MultiDrizzle PDFs and the
+N.I.N.A. manual PDF.
+
+### 11.2 Consolidated findings
+
+- **Drizzle metrology (→ [01](01-architecture-and-core-engine.md)).** DrizzlePac reports correlated-noise ratio R for a uniform dither pattern with `r=pixfrac/scale` (example p=0.6, s=0.5 → R=1.662) and recommends weight-image RMS <20% of median (later guidance: σ/mean ≳0.3). Kernel family includes `tophat`; `pixfrac<0.001` forces point. HDF-N used pixfrac 0.5 at 0.4× output scale. AstroDrizzle `stepsize=10`, `resetbits=4096`, context images use 32-bit contributor bitmasks, `blendheaders`→`HDRTAB`. `minmed` is good for 3–6 images, avoid ≥10; plain median for larger stacks. APP uses quality weighting, discards worst 5%, one κ=3 LNC pass and 8th-degree local-normalisation corrections.
+- **Astrometry (→ [02](02-astrometry-and-identification.md)).** Gaia DR4: ~400 TB, `gaia_source` 2.000e9 rows/586 GB, 66 months, J2017.5, Gaia-CRF4/TCB. DR3: 1.46e9 sources, G≈3–21, 585M 5-param/882M 6-param, 1–3 mas median position, parallax zero point ≈−17 µas. Tycho-2: 2.5M stars. Astropy applies SIP whenever A/B coefficients exist, even without `-SIP` in CTYPE. LSST `AstrometryTask` sets WCS=None and source coords NaN when `distMean` exceeds the configured limit. SDSS cone radius ≤3′, IRSA default 10″. SEP annulus apertures ignore masked pixels; Kron radius≈2.5×; `winpos` σ≈2.35× half-light radius; FITS arrays are big-endian and need byteswapping. Focal length formula: `f[mm]=(pixel[µm]/scale[″/px])×206.26`.
+- **Literature (→ [03](03-reference-and-literature.md)).** New references: DrizzlePac Handbook (Gonzaga, Hack, Fruchter & Mack 2012), Fruchter et al. 2010 BetaDrizzle, MultiDrizzle Handbook v3.0 (2009), Shupe et al. SIP→PV (SPIE 2012), Lauer 1999 PASP 111 227, Arendt, Fixsen & Moseley 2000 ApJ 536 500, Kalirai et al. 2012 AJ 143 11, Pence 1999 CFITSIO. SIP→PV algorithm: zero PV1_0/PV2_0/PV1_2/PV2_2, set PV1_1/PV2_1=1, evaluate SIP on a 5-pixel grid, solve reverse coefficients.
+- **Calibration/RAW (→ [04]/[07]).** ASTAP flat-dark pedestal 500–1000 ADU; `CALSTAT` D/F/B/S (ideal DFBS); incompatible-master keywords `D_temperature/D_exposure/D_gain`; width/height cannot be overridden. PixInsight sky-flat high rejection <0.02, 90 bias + 45 dark at −10 °C. CMOS: dark scaling and superbias are CCD-oriented and can harm CMOS; in-camera long-exposure NR must be off. ASTAP LibRaw full active area 5202×3464 vs cropped 5184×3456. N.I.N.A. emits `ROWORDER`, `BAYERPAT/XBAYROFF/YBAYROFF`, `EGAIN`, `PIERSIDE`, XISF LZ4/LZ4HC/Zlib; its solver stack uses primary + blind fallback with sync/reslew/repeat-until-error.
+
+### 11.3 Roadmap candidates promoted
+
+Nine items were added to `ROADMAP.md`: drizzle correlated-noise/weight-coverage report, WHT/CTX sidecars, dither-pattern validator, SIP↔PV helper, primary+blind solver chain, cone-search cross-match client, aperture-photometry upgrade, calibration status keywords, and acquisition-keyword parity self-test.

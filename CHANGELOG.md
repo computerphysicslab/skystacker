@@ -1,6 +1,10 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Consolidated the 124 KB calibrationless blind-solving corpus into `research/02` §15 (invariant counts, flux-ranked compact quads, Astrometry.net/Tetra/ASTAP index data, six-stage reference architecture, failure modes and 12 new sources), cross-linked from `research/03` §6.2 and removed the processed file; roadmap extended to 77 items with new items 75-77.
+- Delivered roadmap item 68: `--plate-solver auto` now falls back to a genuine blind astrometric solve through astrometry.net (local `solve-field` or nova web API) when no RA/Dec seed is available, with WCS import, Gaia re-fit, focal-length sanity check and API-key redaction; new `--image-op plate-solve` solves a bare JPEG/FITS, and three new roadmap items (72-74) cover EXIF seeds, ASTAP and native quad hashing; self-tests 253.
+- Delivered roadmap item 52: `--psf-scale-snr` folds the XNML 1.0 relative scale from `<basename>.xnml` sidecars into PSF-based frame weights (opt-in, `--xnml-dir` fallback folder, zero weight when the sidecar is missing); per-frame scale reported in the metrics CSV and report; self-tests 253.
+- Roadmap extended to 71 items: nine Open items (63-71) promoted from the full goCrawler export, consolidated in `research/08` §11.
 - Delivered roadmap items 58-62: standalone `--process-image` mode with single-image post-processing, multi-image arithmetic, pairwise transform/quality metrics, per-image Gaia SVG maps and HiPS survey cutouts; self-tests 248.
 - Roadmap extended to 62 items: five new Open items (58-62) for standalone single-/multi-image processing, pairwise measurement and per-image sky-map/survey products; design recorded in `research/01`.
 - Delivered roadmap items 48-49: `--survey-cutout` fetches a CDS HiPS FITS cutout at the solved frame's pixel geometry (star-match diagnostic, FITS+JPEG output) and `--sky-map` writes a Gaia-based `stacked_sky_map.svg`; self-tests 247.

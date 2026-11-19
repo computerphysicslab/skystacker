@@ -111,7 +111,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
   - **CLI-only**: No GUI is included.
   - **External RAW decoding**: Native JPEG and native FITS decoding (with ImageMagick fallback) are built in; CR2 decoding is built in (pure Go, lossless JPEG/SOF3); CR3 still uses `dcraw`/`dcraw_emu` or ImageMagick at runtime.
   - **Drizzle & SIP resampling**: Drizzle and Bayer drizzle are not wired. SIP order-2 is applied in WCS forward/inverse helpers (`wcsTanForward`, `wcsTanInverseSIP`) used by plate-solve/diagnostics, and optionally in the stacking resampler via `--resample-sip` (requires a stored `plate_solution.json` with SIP coefficients).
-  - **Seeded plate solving**: Whole-sky blind plate solving is out of scope; `--plate-solve` requires a pointing seed (`--plate-center` or FITS `RA`/`DEC` headers) because blind mode scans only a 3×3 `nside=64` neighbourhood around `(0,0)`.
+  - **Plate solving with blind fallback**: the internal Gaia solver uses `--plate-center` or FITS `RA`/`DEC` when available; without a seed it falls back to a real blind solve via astrometry.net (local `solve-field` or the nova web API), so no EXIF coordinates are needed. The old 3×3 `nside=64` scan is no longer the only blind path.
 
 ---
 
@@ -179,7 +179,7 @@ Additional optional stages can be toggled via CLI flags: chromatic-aberration re
 
 ### Astrometric Plate Solving & Gaia DR3 Layer
 
-- **WCS solver (`--plate-solve`)**: Solves a TAN WCS astrometric solution after stacking using star pattern matching against Gaia DR3, writing `plate_solution.json` (including fitted SIP order-2 distortion coefficients). Supply `--plate-center RA,DEC` in decimal degrees or rely on the reference frame's FITS `RA`/`DEC` header keywords. With `--post-only`, the solver runs on stars detected in the existing `_work/stacked_mean.f32raw` (requires `--plate-center`; no FITS header available).
+- **WCS solver (`--plate-solve`)**: Solves a TAN WCS astrometric solution after stacking using star pattern matching against Gaia DR3, writing `plate_solution.json` (including fitted SIP order-2 distortion coefficients). Supply `--plate-center RA,DEC` in decimal degrees or rely on the reference frame's FITS `RA`/`DEC` header keywords; otherwise `--plate-solver auto` tries a blind solve through local astrometry.net (`--astrometry-cmd`, needs installed indexes) and then the nova web API (`--astrometry-api-key` or `AN_API_KEY`). External WCS results are re-fitted against Gaia at the solved centre. With `--post-only`, the solver runs on stars detected in `_work/stacked_mean.f32raw`; a temporary JPEG is generated for the blind backend.
 - **HEALPix & TAP client**: Implements the HEALPix nested scheme (`nside` power of 2 from `2` to `8192`, default `64` at ~0.84 deg² per tile) and queries ESA's Gaia TAP `/sync` endpoint with a 180 s per-attempt timeout, 5 s progress heartbeat, automatic retries (`2 s` / `4 s` backoff on 5xx/network errors), and 1 req/sec rate limiting.
 - **Persistent tile cache**: Since Gaia DR3 is a frozen catalogue, downloaded tiles are cached permanently in your OS user cache directory (`~/.cache/skystacker/gaia_cache/` on Linux, `~/Library/Caches/skystacker/gaia_cache/` on macOS), enabling offline operation with `--gaia-offline`.
 
@@ -468,7 +468,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry | `false` |
 | `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout` | `CDS/P/DSS2/color` / `30` |
 | `--process-image PATH[,PATH...]` | Process existing JPG/PNG/FITS images without stacking | — |
-| `--image-op OP` | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout` | — |
+| `--image-op OP` | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve` (blind-capable) | — |
 | `--image-output DIR` | Output directory for image-mode products | `image_processing` |
 
 Image mode writes `<basename>_<op>.f32raw` + JPEG (and JSON metadata), never
@@ -590,7 +590,11 @@ frames unless `--external-allow-nonlinear` is given.
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--plate-solve` | Run TAN WCS plate solve after stacking or on the existing stack with `--post-only`; writes `plate_solution.json` | `false` |
-| `--plate-center RA,DEC` | Pointing seed in decimal degrees (falls back to FITS `RA`/`DEC`; blind mode scans only 3×3 `nside=64` around `(0,0)`) | — |
+| `--plate-center RA,DEC` | Optional pointing seed in decimal degrees (falls back to FITS `RA`/`DEC`) | — |
+| `--plate-solver MODE` | `auto` (seeded Gaia, then astrometry.net), `gaia`, `astrometry-local`, `astrometry-web` | `auto` |
+| `--astrometry-cmd CMD` / `--astrometry-api-key KEY` | local `solve-field` command / nova API key (`AN_API_KEY` also read) | `solve-field` / — |
+| `--astrometry-url URL` / `--astrometry-timeout N` | nova API base URL / solve timeout in seconds | nova / `180` |
+| `--solver-focal-length MM` / `--solver-pixel-size UM` | optional plate-scale hint and post-solve sanity check | — |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
 | `--gaia-cache-dir string` | Gaia HEALPix tile cache directory | OS user cache dir (`~/.cache/skystacker/gaia_cache`) |
 | `--gaia-nside int` | HEALPix `nside` resolution (power of 2, `2`–`8192`) | `64` |
@@ -713,7 +717,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 246 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 253 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
 
 The following capabilities have been implemented through `0.6.1`:
 

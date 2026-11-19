@@ -15,7 +15,7 @@ import (
 var imageOperations = []string{
 	"blur", "sharpen", "background", "stretch", "denoise", "deconvolve", "starless",
 	"sum", "subtract", "average", "median", "min", "max",
-	"measure-transform", "measure-quality", "sky-map", "survey-cutout",
+	"measure-transform", "measure-quality", "sky-map", "survey-cutout", "plate-solve",
 }
 
 func validImageOperation(op string) bool { return slices.Contains(imageOperations, op) }
@@ -231,7 +231,7 @@ func imageWCS(o *cliOptions, f *frame, path, dir, base string) (*plateSolution, 
 	oldOffline := plateGaiaOffline
 	plateGaiaOffline = o.GaiaOffline
 	defer func() { plateGaiaOffline = oldOffline }()
-	sol, err := solvePlate(stars, f.Width, f.Height, seedRA, seedDec, "", gaiaDefaultMirror)
+	sol, err := solvePlateWithFallback(stars, f.Width, f.Height, seedRA, seedDec, path, solverOptionsFromCLI(o))
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +256,19 @@ func runImageCommand(o *cliOptions) error {
 	}
 	op := o.ImageOp
 	switch op {
+	case "plate-solve":
+		o.PlateSolve = true
+		f, err := decodeImageFile(paths[0], 0, 0)
+		if err != nil {
+			return err
+		}
+		sol, err := imageWCS(o, f, paths[0], dir, filepath.Base(paths[0]))
+		if err != nil {
+			return err
+		}
+		logf("Plate solved: CRVAL=(%.6f, %.6f) RMS=%.2f arcsec method=%s",
+			sol.WCS.CRVAL1*180/math.Pi, sol.WCS.CRVAL2*180/math.Pi, sol.RMSArcsec, sol.Method)
+		return nil
 	case "sky-map":
 		f, err := decodeImageFile(paths[0], 0, 0)
 		if err != nil {

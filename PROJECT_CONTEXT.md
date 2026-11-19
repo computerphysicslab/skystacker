@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 248 passing.** Update this number after any test change.
+**Self-test count: 253 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -1742,7 +1742,7 @@ rejection and disk spill. `--scale N` downsamples.
 - Public API: `Options`, `Collect(ctx, Options) Report`, `Report.JSON()/WriteJSON()/Text()`. OS-specific collectors sit behind a `platform` interface with `//go:build` files for linux (`/proc`, cgroup, dpkg/rpm/apk/pacman), darwin (`sysctl`, `vm_stat`, `sw_vers`, brew) and windows (PowerShell/CIM, Get-HotFix); unknown OS degrades with `ErrUnsupported`.
 - Collectors cover host/OS, Go build info and `runtime/metrics`, CPU/load, memory/swap/cgroup, filesystems, top processes, tools, whitelisted+redacted env, program dir walk with file/byte counts and binary SHA-256, network interfaces and local package inventory. Every collector has a timeout and a 64 KiB command-output cap; failures go to `Report.Errors`.
 - CLI: `--diagnose`, `--diagnose-json`, `--diagnose-quick`, `--diagnose-integrated`, `--diagnose-timeout`, `--diagnose-top`, `--diagnose-updates`. Standalone mode exits early in `main()`; integrated mode writes `diagnostics.txt`/`.json` next to a normal report. E2E `--diagnose --diagnose-json --diagnose-updates` produced a 17 kB JSON and a readable text report on this host.
-- CI has a `goDiagnostics` job (vet, CGO=0 test, cross-build linux/darwin/windows); `goDiagnostics/README.md` documents the copy-paste `require`+`replace` protocol for other projects. Selftests 248.
+- CI has a `goDiagnostics` job (vet, CGO=0 test, cross-build linux/darwin/windows); `goDiagnostics/README.md` documents the copy-paste `require`+`replace` protocol for other projects. Selftests 253.
 
 ### Module naming convention (2026-11-18, mandatory)
 
@@ -1753,7 +1753,7 @@ rejection and disk spill. `--scale N` downsamples.
 ### Roadmap items 19–28 (2026-11-18)
 
 - Delivered: frame metrics CSV + include-list culling, `--keep-sharpest` HFR selection (applied to pass-2 inputs), metadata-matched calibration library, comet+stars recombination, `--batch` JSON queue (self-exec, no shell), PSF-based starless radii, stdlib à trous wavelet denoise, FFT Wiener deconvolution with tiled overlap-add, and Gaia ensemble photometry (`photometry.csv/.json`).
-- Each feature has a registered selftest; total **248**. E2E checks covered the batch queue, include-list + sharpest selection + metrics CSV, and post-only wavelets/Wiener/photometry.
+- Each feature has a registered selftest; total **253**. E2E checks covered the batch queue, include-list + sharpest selection + metrics CSV, and post-only wavelets/Wiener/photometry.
 - Item 27 (mosaic) remains blocked by item 13 (per-frame WCS). All other former *Open* items are now *Done*; `ROADMAP.md` is the authoritative tracker.
 - Item 34 validated 2026-11-18: three 16-light OrionNebula runs gave center/border 1.00972 (self-flat only), 1.00972 (plus global normalize) and 1.02599 (plus local normalize). Local normalization touches the same low-frequency field (tile-median ratio 1.2667) but the final shift is ~1.6%, not a runaway double division. The report emits an overlap warning with the measured ratio; `testSelfFlatNormalizeInteraction` covers the synthetic gradient-only case. Self-tests 246.
 - Item 47 delivered 2026-11-18: `donations.go` holds the public ETH/USDT-USDC and BTC addresses as constants, 110 rotating English templates with address placeholders, and terminal QR codes via MIT-licensed `github.com/skip2/go-qrcode`. The footer is printed only after a fully successful stack+postprocess run (verified: full run shows it, `--stack-only` and `--no-donation` do not); `--no-donation-qr` omits QR, `--donation` prints it standalone without processing images, and `--batch` children are suppressed. This is the first third-party build dependency; the binary remains pure Go and `CGO_ENABLED=0`.
@@ -1768,6 +1768,20 @@ rejection and disk spill. `--scale N` downsamples.
 ### Roadmap Open items delivered (2026-11-18)
 
 - Items 29-44 were implemented in one pass: dither diagnostic and small-dither warning, `--rejection` stack-size heuristic, quoted sidecar argv tokenizer, `--post-preset detail-last`, GHS parameter-mapping test, independent WCS/SIP fixture, Gaia DR4 TAP adaptation (<=4 concurrent, DataLink IDs, blackout guard), pooled rejection buffers with 64px tiles, XISF/PGM/PPM input, 16-bit/mono sidecar FITS, `--wavelet-adaptive`, `--dark-scale-entropy`, `--cosmic-reject`, 9-zone tilt diagnostics and `--streak-detect`.
-- All 248 selftests pass after items 58-62; `ROADMAP.md` now shows 42 Done, 6 Open, 6 Blocked, 1 Executed/not accepted and 7 Deferred (earlier 37/0/5/1/6 snapshot was superseded).
+- All 253 selftests pass after items 58-62, 52 and 68; `ROADMAP.md` now shows 44 Done, 15 Open, 6 Blocked, 1 Executed/not accepted and 8 Deferred (earlier 43/14/6/1/7 snapshot was superseded by item 68 and items 72-74).
 - Items 48-49 were then delivered: `sky_products.go` adds `--sky-map` (Gaia-based `stacked_sky_map.svg` at exact frame dimensions, with optional extended-object ellipses) and `--survey-cutout` (CDS hips2fits FITS at the solved frame's width/height/FOV/rotation, saved as `survey_reference.fits/.jpg` with a star-match diagnostic). Both are opt-in and never block offline runs.
 - Items 58-62 deliver the standalone image mode in `image_mode.go`: `--process-image PATH[,PATH...]` with `--image-op` for blur/sharpen/background/stretch/denoise/deconvolve/starless, sum/subtract/average/median/min/max, measure-transform/measure-quality (CSV+JSON), plus per-image sky-map and survey-cutout using the existing `sky_products.go` helpers. Inputs are never modified; outputs go to `--image-output`.
+
+### Roadmap item 52 — XNML / PSF Scale SNR ingestion (2026-11-18)
+
+- `--psf-scale-snr` (opt-in, requires star detection) multiplies each frame's PSF quality weight by the relative scale from its PixInsight LocalNormalization `.xnml` sidecar; `--xnml-dir PATH` adds a fallback folder when sidecars are not next to the lights. Default weights are unchanged.
+- `readXNMLPSFScale` parses XNML 1.0 `<RelativeScaleFactors>` (fallback `<GlobalNormalization><Scale>`), honours `valid="false"` and returns 0 when the sidecar is absent or malformed, matching PixInsight where PSF Scale SNR is zero without normalization data. Frames with zero scale get zero weight and a warning is logged.
+- The per-frame scale is recorded as `psf_scale` in the `--frame-metrics` CSV, as `PSFScale` in `report.txt`/`report.json`, and covered by `testXNMLPSFScaleSNR` with synthetic XML (local, fallback folder, global-only, invalid, malformed, weight arithmetic and flag parsing).
+
+### Roadmap item 68 — blind plate-solving fallback chain (2026-11-18)
+
+- `--plate-solver auto` (default) keeps the existing seeded Gaia solve when `--plate-center` or FITS `RA`/`DEC` is available, then falls back to a **genuine blind solve** through astrometry.net: local `solve-field` first (`--astrometry-cmd`), then the nova web API (`--astrometry-api-key` or `AN_API_KEY`/`ASTROMETRY_API_KEY`). No coordinates from the user are required.
+- Backends are opt-in by availability and never block offline runs: a missing CLI or key is logged and the chain continues; with neither backend configured the error explains how to enable one. `--plate-solver gaia|astrometry-local|astrometry-web` pins a single path.
+- `parseAstrometryWCS` converts the returned FITS WCS (CD/CDELT+PC, 1-based CRPIX, quadratic SIP) into the internal 0-based `wcsTan`; `refineAstrometrySolution` then queries Gaia at the solved centre and reuses `plateSolutionFromGaia`, so external solves carry the same `plate_solution.json` schema, RMS and SIP as internal ones.
+- Optional `--solver-focal-length MM`/`--solver-pixel-size UM` provide an arcsec/px hint (`f[mm]=(pixel[µm]/scale[″/px])×206.26`) and a post-solve sanity warning. API keys are redacted from the report command line.
+- Wired into the stacking pipeline, `--post-only` (temporary JPEG from the stored stack) and standalone image mode; `--process-image … --image-op plate-solve` now solves a single JPEG/FITS with no metadata. Four new selftests cover WCS parsing, the local CLI mock, a mock nova API (login/upload/poll/WCS download) and the fallback chain.
