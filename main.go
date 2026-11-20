@@ -111,89 +111,90 @@ var buildDate = ""
 // =========================================================================
 
 type cliOptions struct {
-	Clean                bool
-	InputDir             string
-	OutputDir            string
-	Workers              int
-	Recursive            bool
-	Overwrite            bool
-	Version              bool
-	Help                 bool
-	SelfTest             bool
-	Register             bool
-	NoAffine             bool
-	Method               string
-	MaskBG               bool
-	DarkFile             string
-	FlatFile             string
-	BiasFile             string
-	CalibRoot            string
-	PostProcess          bool
-	StackOnly            bool
-	PostOnly             bool
-	NoColorCalib         bool
-	NoSharpen            bool
-	BGDegree             int
-	StretchFactor        float64
-	SharpenAmount        float64
-	SharpenRadius        float64
-	HDRAmount            float64
-	StarRadius           int
-	StarSigma            float64
-	BgPercentile         float64
-	NoAutoStretch        bool
-	STFShadowsClip       float64
-	STFTargetBG          float64
-	STFLinked            bool
-	NoHDRBlend           bool
-	HDRBlendFactor       float64
-	NoHDRMix             bool
-	NoDenoise            bool
-	DenoiseStrength      float64
-	DenoiseRadius        int
-	DenoiseChroma        float64
-	NoCurves             bool
-	CurvesBlack          float64
-	CurvesGamma          float64
-	AddSpikes            bool
-	SpikesPercent        float64
-	SpikesLength         float64
-	SpikesIntensity      float64
-	SpikesArms           int
-	SpikesSoftness       float64
-	SpikesMinRatio       float64
-	SpikesLengthSoftness float64
-	SpikesLengthMinRatio float64
-	SpikesMinCount       int
-	NoExif               bool
-	SigmaClipThreshold   float64
-	SigmaClipIters       int
-	SigmaClipLow         float64
-	SigmaClipHigh        float64
-	TileSize             int
-	Scale                int
-	NoNativeCR2          bool
-	Force                bool
-	Normalize            bool
-	LocalNormalize       bool
-	NormalizeMode        string
-	NormalizePerChannel  bool
-	LNTileSize           int
-	SynthCalib           bool
-	SynthDark            bool
-	SynthFlat            bool
-	SynthBias            bool
-	SynthCalibReport     bool
-	BlackLevel           string
-	BPMFile              string
-	BPMAuto              bool
-	BPMAutoSigma         float64
-	ExportMasters        bool
-	SelfFlat             bool
-	NoSelfFlat           bool
-	SelfFlatModel        string
-	SelfFlatLinearSRGB   bool
-	ReferenceCrop        string
+	Clean                  bool
+	InputDir               string
+	OutputDir              string
+	Workers                int
+	Recursive              bool
+	Overwrite              bool
+	Version                bool
+	Help                   bool
+	SelfTest               bool
+	Register               bool
+	NoAffine               bool
+	Method                 string
+	MaskBG                 bool
+	DarkFile               string
+	FlatFile               string
+	BiasFile               string
+	CalibRoot              string
+	PostProcess            bool
+	StackOnly              bool
+	PostOnly               bool
+	NoColorCalib           bool
+	NoSharpen              bool
+	BGDegree               int
+	StretchFactor          float64
+	SharpenAmount          float64
+	SharpenRadius          float64
+	HDRAmount              float64
+	StarRadius             int
+	StarSigma              float64
+	BgPercentile           float64
+	NoAutoStretch          bool
+	STFShadowsClip         float64
+	STFTargetBG            float64
+	STFLinked              bool
+	StretchColorPreserving bool
+	NoHDRBlend             bool
+	HDRBlendFactor         float64
+	NoHDRMix               bool
+	NoDenoise              bool
+	DenoiseStrength        float64
+	DenoiseRadius          int
+	DenoiseChroma          float64
+	NoCurves               bool
+	CurvesBlack            float64
+	CurvesGamma            float64
+	AddSpikes              bool
+	SpikesPercent          float64
+	SpikesLength           float64
+	SpikesIntensity        float64
+	SpikesArms             int
+	SpikesSoftness         float64
+	SpikesMinRatio         float64
+	SpikesLengthSoftness   float64
+	SpikesLengthMinRatio   float64
+	SpikesMinCount         int
+	NoExif                 bool
+	SigmaClipThreshold     float64
+	SigmaClipIters         int
+	SigmaClipLow           float64
+	SigmaClipHigh          float64
+	TileSize               int
+	Scale                  int
+	NoNativeCR2            bool
+	Force                  bool
+	Normalize              bool
+	LocalNormalize         bool
+	NormalizeMode          string
+	NormalizePerChannel    bool
+	LNTileSize             int
+	SynthCalib             bool
+	SynthDark              bool
+	SynthFlat              bool
+	SynthBias              bool
+	SynthCalibReport       bool
+	BlackLevel             string
+	BPMFile                string
+	BPMAuto                bool
+	BPMAutoSigma           float64
+	ExportMasters          bool
+	SelfFlat               bool
+	NoSelfFlat             bool
+	SelfFlatModel          string
+	SelfFlatLinearSRGB     bool
+	ReferenceCrop          string
 
 	CreateTIFF      bool
 	TiffCompression string
@@ -215,6 +216,7 @@ type cliOptions struct {
 	AcquisitionCheck string
 	CheckSurveyFITS  string
 	ExtinctionReport bool
+	VerifySolution   bool
 
 	GaiaTest               string
 	GaiaMirror             string
@@ -264,6 +266,7 @@ type cliOptions struct {
 	CreateBigTIFF          bool
 	HFRQuality             bool
 	MatchedFilter          bool
+	PSFAuto                bool
 	PSFScaleSNR            bool
 	XNMLDir                string
 	Annotate               bool
@@ -495,6 +498,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.STFShadowsClip, "stf-shadows", -2.8, "STF shadow clip in units of sigma (default -2.8)")
 	fs.Float64Var(&o.STFTargetBG, "stf-target", 0.25, "STF target background level (default 0.25)")
 	fs.BoolVar(&o.STFLinked, "stf-linked", false, "use linked channels for STF (default unlinked for auto color balance)")
+	fs.BoolVar(&o.StretchColorPreserving, "stretch-color-preserving", false, "stretch luminance only and preserve linear RGB ratios")
 	fs.BoolVar(&o.NoHDRBlend, "no-hdr-blend", false, "skip the final HDR blend step (post_step5_hdr.jpg)")
 	fs.Float64Var(&o.HDRBlendFactor, "hdr-blend-factor", 1.0, "HDR blend amount: post_step4 + factor*post_step1 (default 1.0)")
 	fs.BoolVar(&o.NoHDRMix, "no-hdr-mix", false, "skip the step-7 weighted mix outputs (post_step7_1..4.jpg)")
@@ -608,6 +612,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.CreateBigTIFF, "bigtiff", false, "write BigTIFF float32 stacks (64-bit offsets, files >4 GiB)")
 	fs.BoolVar(&o.HFRQuality, "hfr-quality", false, "use star HFR instead of blob size as the FWHM proxy for frame quality weighting")
 	fs.BoolVar(&o.MatchedFilter, "matched-filter", false, "use matched-filter (T = alpha C^-1 S) star detection on linear frames")
+	fs.BoolVar(&o.PSFAuto, "psf-auto", false, "fit Gaussian/Moffat per star and keep the lower-residual centroid")
 	fs.BoolVar(&o.PSFScaleSNR, "psf-scale-snr", false, "weight frames by PSF Scale SNR: multiply PSF quality weights by the relative scale from <basename>.xnml sidecars (zero when missing)")
 	fs.StringVar(&o.XNMLDir, "xnml-dir", "", "fallback folder for .xnml sidecars when they are not next to the light frames")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
@@ -618,6 +623,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
 	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
 	fs.BoolVar(&o.ExtinctionReport, "extinction-report", false, "report-only Rayleigh extinction coefficients (forces report.json)")
+	fs.BoolVar(&o.VerifySolution, "verify-solution", false, "verify stored plate solution against cached Gaia stars (report-only)")
 	fs.BoolVar(&o.Provenance, "provenance", false, "write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fs.BoolVar(&o.Diagnose, "diagnose", false, "collect a host/runtime diagnostic snapshot and exit")
 	fs.BoolVar(&o.DiagnoseJSON, "diagnose-json", false, "with --diagnose: also write diagnostics.json")
@@ -1427,6 +1433,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --stf-shadows F    STF shadow clip in sigma units (default -2.8)")
 	fmt.Fprintln(w, "  --stf-target F     STF target background level (default 0.25)")
 	fmt.Fprintln(w, "  --stf-linked       use linked channels for STF (default: unlinked)")
+	fmt.Fprintln(w, "  --stretch-color-preserving stretch luminance only, keep linear RGB ratios")
 	fmt.Fprintln(w, "  --no-hdr-blend    skip the final HDR blend (post_step5_hdr.jpg)")
 	fmt.Fprintln(w, "  --hdr-blend-factor F  HDR blend amount: post_step4 + F*post_step1 (default 1.0)")
 	fmt.Fprintln(w, "  --no-hdr-mix     skip the step-7 weighted mix (post_step7_1..4.jpg)")
@@ -1510,6 +1517,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --tiff-tiles / --tiff-predictor  tiled TIFF / horizontal predictor for LZW-Deflate")
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
 	fmt.Fprintln(w, "  --matched-filter   matched-filter star detection (T = alpha C^-1 S, opt-in)")
+	fmt.Fprintln(w, "  --psf-auto         fit Gaussian/Moffat per star, keep lower-residual centroid")
 	fmt.Fprintln(w, "  --psf-scale-snr    PSF quality weights x XNML relative scale; frames without .xnml get zero weight")
 	fmt.Fprintln(w, "  --xnml-dir PATH    fallback folder for .xnml sidecars (default: same folder as each light)")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
@@ -1518,6 +1526,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
 	fmt.Fprintln(w, "  --extinction-report report-only Rayleigh coefficients per RGB channel")
+	fmt.Fprintln(w, "  --verify-solution  compare stored WCS with Gaia over the whole frame")
 	fmt.Fprintln(w, "  --provenance       write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fmt.Fprintln(w, "  --diagnose         host/runtime diagnostic snapshot; write diagnostics.txt and exit")
 	fmt.Fprintln(w, "  --diagnose-json    also write diagnostics.json")
@@ -5854,12 +5863,15 @@ type processingReport struct {
 	FramesWithExif          int
 	RefExif                 exifData
 	PlateSolution           *plateSolution
-	ConeTruncated           bool              `json:"cone_truncated,omitempty"`
-	ConeRows                int               `json:"cone_rows,omitempty"`
-	ConeCoveredRadiusArcsec float64           `json:"cone_covered_radius_arcsec,omitempty"`
-	ConeCoveredAreaDeg2     float64           `json:"cone_covered_area_deg2,omitempty"`
-	ConeLimitReason         string            `json:"cone_limit_reason,omitempty"`
-	ExtinctionReport        *extinctionReport `json:"extinction_report,omitempty"`
+	ConeTruncated           bool                        `json:"cone_truncated,omitempty"`
+	ConeRows                int                         `json:"cone_rows,omitempty"`
+	ConeCoveredRadiusArcsec float64                     `json:"cone_covered_radius_arcsec,omitempty"`
+	ConeCoveredAreaDeg2     float64                     `json:"cone_covered_area_deg2,omitempty"`
+	ConeLimitReason         string                      `json:"cone_limit_reason,omitempty"`
+	ExtinctionReport        *extinctionReport           `json:"extinction_report,omitempty"`
+	StretchColorPreserving  bool                        `json:"stretch_color_preserving,omitempty"`
+	PSFAutoReport           *psfAutoReport              `json:"psf_auto,omitempty"`
+	SolutionVerification    *solutionVerificationReport `json:"solution_verification,omitempty"`
 }
 
 type provEntity struct {
@@ -6137,6 +6149,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.MatchedFilter {
 		add("--matched-filter")
 	}
+	if o.PSFAuto {
+		add("--psf-auto")
+	}
 	if o.PSFScaleSNR {
 		add("--psf-scale-snr")
 	}
@@ -6160,6 +6175,9 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.ExtinctionReport {
 		add("--extinction-report")
+	}
+	if o.VerifySolution {
+		add("--verify-solution")
 	}
 	if o.Provenance {
 		add("--provenance")
@@ -6375,6 +6393,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.NoAutoStretch {
 		add("--no-auto-stretch")
 	}
+	if o.StretchColorPreserving {
+		add("--stretch-color-preserving")
+	}
 	if o.NoDenoise {
 		add("--no-denoise")
 	}
@@ -6566,6 +6587,16 @@ func (r *processingReport) writeTo(w io.Writer) error {
 	if r.ExtinctionReport != nil {
 		ew.printf("%s\n", formatExtinctionReport(r.ExtinctionReport))
 	}
+	if r.StretchColorPreserving {
+		ew.printf("Stretch: colour-preserving luminance stretch (linear RGB ratios preserved)\n\n")
+	}
+	if r.PSFAutoReport != nil {
+		ew.printf("PSF auto: gaussian=%d moffat=%d median beta=%.2f\n\n", r.PSFAutoReport.Gaussian, r.PSFAutoReport.Moffat, r.PSFAutoReport.MedianBeta)
+	}
+	if r.SolutionVerification != nil {
+		v := r.SolutionVerification
+		ew.printf("Solution verification: RMS %.4f px, matches %d/%d, zone anomaly %v\n\n", v.GlobalRMSPx, v.NMatches, v.NGaiaInFrame, v.ZoneAnomaly)
+	}
 	ew.printf("Output files:\n")
 	for _, f := range r.OutputFiles {
 		ew.printf("  %s\n", f)
@@ -6661,81 +6692,82 @@ func writeFileAtomic(path string, fn func(io.Writer) error) error {
 // =========================================================================
 
 type runOptions struct {
-	Clean                bool
-	InputDir             string
-	OutputDir            string
-	Workers              int
-	Recursive            bool
-	Overwrite            bool
-	Register             bool
-	NoAffine             bool
-	DarkFile             string
-	FlatFile             string
-	BiasFile             string
-	CalibRoot            string
-	Method               string
-	MaskBG               bool
-	PostProcess          bool
-	StackOnly            bool
-	PostOnly             bool
-	NoColorCalib         bool
-	NoSharpen            bool
-	BGDegree             int
-	StretchFactor        float64
-	SharpenAmount        float64
-	SharpenRadius        float64
-	HDRAmount            float64
-	StarRadius           int
-	StarSigma            float64
-	BgPercentile         float64
-	NoAutoStretch        bool
-	STFShadowsClip       float64
-	STFTargetBG          float64
-	STFLinked            bool
-	NoHDRBlend           bool
-	HDRBlendFactor       float64
-	NoHDRMix             bool
-	NoDenoise            bool
-	DenoiseStrength      float64
-	DenoiseRadius        int
-	DenoiseChroma        float64
-	NoCurves             bool
-	CurvesBlack          float64
-	CurvesGamma          float64
-	AddSpikes            bool
-	SpikesPercent        float64
-	SpikesLength         float64
-	SpikesIntensity      float64
-	SpikesArms           int
-	SpikesSoftness       float64
-	SpikesMinRatio       float64
-	SpikesLengthSoftness float64
-	SpikesLengthMinRatio float64
-	SpikesMinCount       int
-	NoExif               bool
-	SigmaClipThreshold   float64
-	SigmaClipIters       int
-	SigmaClipLow         float64
-	SigmaClipHigh        float64
-	TileSize             int
-	Scale                int
-	NoNativeCR2          bool
-	Force                bool
-	Normalize            bool
-	LocalNormalize       bool
-	NormalizeMode        string
-	NormalizePerChannel  bool
-	LNTileSize           int
-	SynthCalib           bool
-	BlackLevel           string
-	BPMFile              string
-	BPMAuto              bool
-	BPMAutoSigma         float64
-	ExportMasters        bool
-	SelfFlat             bool
-	NoSelfFlat           bool
-	SelfFlatModel        string
-	SelfFlatLinearSRGB   bool
+	Clean                  bool
+	InputDir               string
+	OutputDir              string
+	Workers                int
+	Recursive              bool
+	Overwrite              bool
+	Register               bool
+	NoAffine               bool
+	DarkFile               string
+	FlatFile               string
+	BiasFile               string
+	CalibRoot              string
+	Method                 string
+	MaskBG                 bool
+	PostProcess            bool
+	StackOnly              bool
+	PostOnly               bool
+	NoColorCalib           bool
+	NoSharpen              bool
+	BGDegree               int
+	StretchFactor          float64
+	SharpenAmount          float64
+	SharpenRadius          float64
+	HDRAmount              float64
+	StarRadius             int
+	StarSigma              float64
+	BgPercentile           float64
+	NoAutoStretch          bool
+	STFShadowsClip         float64
+	STFTargetBG            float64
+	STFLinked              bool
+	StretchColorPreserving bool
+	NoHDRBlend             bool
+	HDRBlendFactor         float64
+	NoHDRMix               bool
+	NoDenoise              bool
+	DenoiseStrength        float64
+	DenoiseRadius          int
+	DenoiseChroma          float64
+	NoCurves               bool
+	CurvesBlack            float64
+	CurvesGamma            float64
+	AddSpikes              bool
+	SpikesPercent          float64
+	SpikesLength           float64
+	SpikesIntensity        float64
+	SpikesArms             int
+	SpikesSoftness         float64
+	SpikesMinRatio         float64
+	SpikesLengthSoftness   float64
+	SpikesLengthMinRatio   float64
+	SpikesMinCount         int
+	NoExif                 bool
+	SigmaClipThreshold     float64
+	SigmaClipIters         int
+	SigmaClipLow           float64
+	SigmaClipHigh          float64
+	TileSize               int
+	Scale                  int
+	NoNativeCR2            bool
+	Force                  bool
+	Normalize              bool
+	LocalNormalize         bool
+	NormalizeMode          string
+	NormalizePerChannel    bool
+	LNTileSize             int
+	SynthCalib             bool
+	BlackLevel             string
+	BPMFile                string
+	BPMAuto                bool
+	BPMAutoSigma           float64
+	ExportMasters          bool
+	SelfFlat               bool
+	NoSelfFlat             bool
+	SelfFlatModel          string
+	SelfFlatLinearSRGB     bool
 	// ReferenceCrop is a path to an image whose frame defines the output.
 	// Every light is matched to that image by star patterns and warped
 	// into its pixel frame in memory; the output is exactly refW x refH.
@@ -6753,6 +6785,7 @@ type runOptions struct {
 	CreateBigTIFF          bool
 	HFRQuality             bool
 	MatchedFilter          bool
+	PSFAuto                bool
 	PSFScaleSNR            bool
 	XNMLDir                string
 	Annotate               bool
@@ -6761,6 +6794,7 @@ type runOptions struct {
 	Starless               bool
 	JSONReport             bool
 	ExtinctionReport       bool
+	VerifySolution         bool
 	Provenance             bool
 	Diagnose               bool
 	DiagnoseJSON           bool
@@ -7703,15 +7737,21 @@ func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]sta
 }
 
 var matchedFilterEnabled bool
+var psfAutoEnabled bool
+var lastPSFAutoReport *psfAutoReport
 
 func detectStarsForOptions(f *frame, maxStars int) []star {
+	var stars []star
 	if matchedFilterEnabled {
-		stars := matchedFilterDetect(f, 4.0, maxStars)
-		if len(stars) >= 3 {
-			return stars
-		}
+		stars = matchedFilterDetect(f, 4.0, maxStars)
 	}
-	return detectStarsWithDetrend(f, maxStars)
+	if len(stars) < 3 {
+		stars = detectStarsWithDetrend(f, maxStars)
+	}
+	if psfAutoEnabled {
+		stars, lastPSFAutoReport = refineCentroidsPSF(f, stars)
+	}
+	return stars
 }
 
 // detectStarsWithDetrend retries star detection on a scratch copy with a
@@ -10684,10 +10724,12 @@ func selfFlatGammaNote(linear bool) string {
 
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
-	if opts.ExtinctionReport {
+	if opts.ExtinctionReport || opts.VerifySolution {
 		opts.JSONReport = true
 	}
 	matchedFilterEnabled = opts.MatchedFilter
+	psfAutoEnabled = opts.PSFAuto
+	lastPSFAutoReport = nil
 	var plateSolutionOut *plateSolution
 
 	// Tighter GC while we hold large frame buffers.  Default GOGC=100 lets
@@ -13181,6 +13223,18 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		rep.ConeLimitReason = coneInfo.Reason
 	}
 	rep.ExtinctionReport = extinctionInfo
+	rep.StretchColorPreserving = opts.StretchColorPreserving
+	rep.PSFAutoReport = lastPSFAutoReport
+	if opts.VerifySolution {
+		if vr, verr := runSolutionVerification(outputDir, opts); verr != nil {
+			logf("solution verification failed: %v", verr)
+		} else {
+			rep.SolutionVerification = vr
+			rep.OutputFiles = append(rep.OutputFiles,
+				filepath.Join(outputDir, "solution_verification.json"),
+				filepath.Join(outputDir, "stacked_solution_residuals.svg"))
+		}
+	}
 	if opts.ExportVotable != "" {
 		if err := writeVOTable(opts.ExportVotable, collectVOTableCatalog(&opts, plateSolutionOut)); err != nil {
 			logf("VOTable export failed: %v", err)
@@ -30325,6 +30379,50 @@ func autoStretch(f *frame, shadowsClip, targetBG float64, linked bool) *frame {
 	return result
 }
 
+func colorPreservingStretch(f *frame, shadowsClip, targetBG float64) *frame {
+	if shadowsClip >= 0 {
+		shadowsClip = -2.8
+	}
+	if targetBG <= 0 || targetBG >= 1 {
+		targetBG = 0.25
+	}
+	lums := make([]float32, 0, f.Width*f.Height)
+	for i := 0; i+2 < len(f.Pix); i += 3 {
+		r, g, b := float64(f.Pix[i]), float64(f.Pix[i+1]), float64(f.Pix[i+2])
+		lums = append(lums, float32(0.299*r+0.587*g+0.114*b))
+	}
+	c0, m := computeSTFParams(lums, shadowsClip, targetBG)
+	logf("  color-preserving stretch: c0=%.4f m=%.4f", c0, m)
+	result := &frame{Width: f.Width, Height: f.Height, Pix: make([]float32, len(f.Pix)), Nonlinear: true}
+	for y := 0; y < f.Height; y++ {
+		for x := 0; x < f.Width; x++ {
+			i := (y*f.Width + x) * 3
+			if i+2 >= len(f.Pix) {
+				break
+			}
+			r, g, b := float64(f.Pix[i]), float64(f.Pix[i+1]), float64(f.Pix[i+2])
+			lum := 0.299*r + 0.587*g + 0.114*b
+			if lum <= 1e-6 {
+				continue
+			}
+			norm := (lum - c0) / (1 - c0)
+			stretched := mtf(m, norm)
+			if math.IsNaN(stretched) || math.IsInf(stretched, 0) || stretched < 0 {
+				stretched = 0
+			}
+			rr, gg, bb := r/lum, g/lum, b/lum
+			outR, outG, outB := stretched*rr, stretched*gg, stretched*bb
+			peak := math.Max(outR, math.Max(outG, outB))
+			if peak > 1 {
+				scale := 1 / peak
+				outR, outG, outB = outR*scale, outG*scale, outB*scale
+			}
+			result.Pix[i], result.Pix[i+1], result.Pix[i+2] = float32(outR), float32(outG), float32(outB)
+		}
+	}
+	return result
+}
+
 // blendHDR combines a stretched display frame (base, typically step 4)
 // with a linear background-removed frame (detail, typically step 1) via
 // pixel-wise addition, clamped to [0, 1]. The stretched base supplies the
@@ -31682,7 +31780,12 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 	if !opts.NoAutoStretch {
 		logf("  post: auto-stretch (STF: shadows=%.1f target=%.2f linked=%v)",
 			opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
-		stretched := autoStretch(cur, opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		var stretched *frame
+		if opts.StretchColorPreserving {
+			stretched = colorPreservingStretch(cur, opts.STFShadowsClip, opts.STFTargetBG)
+		} else {
+			stretched = autoStretch(cur, opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		}
 		stretched.Nonlinear = true
 		step4Frame = stretched
 		p = filepath.Join(outputDir, "post_step4_auto_stretched.jpg")
@@ -34199,6 +34302,7 @@ func main() {
 		StarSigma:              opts.StarSigma,
 		BgPercentile:           opts.BgPercentile,
 		NoAutoStretch:          opts.NoAutoStretch,
+		StretchColorPreserving: opts.StretchColorPreserving,
 		STFShadowsClip:         opts.STFShadowsClip,
 		STFTargetBG:            opts.STFTargetBG,
 		STFLinked:              opts.STFLinked,
@@ -34260,6 +34364,7 @@ func main() {
 		CreateBigTIFF:          opts.CreateBigTIFF,
 		HFRQuality:             opts.HFRQuality,
 		MatchedFilter:          opts.MatchedFilter,
+		PSFAuto:                opts.PSFAuto,
 		PSFScaleSNR:            opts.PSFScaleSNR,
 		XNMLDir:                opts.XNMLDir,
 		Annotate:               opts.Annotate,
@@ -34268,6 +34373,7 @@ func main() {
 		Starless:               opts.Starless,
 		JSONReport:             opts.JSONReport,
 		ExtinctionReport:       opts.ExtinctionReport,
+		VerifySolution:         opts.VerifySolution,
 		Provenance:             opts.Provenance,
 		Diagnose:               opts.Diagnose,
 		DiagnoseJSON:           opts.DiagnoseJSON,

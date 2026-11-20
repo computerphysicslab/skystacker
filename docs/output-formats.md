@@ -47,7 +47,9 @@ is used it also carries `cone_truncated`, `cone_rows`,
 `cone_limit_reason`; the one-shot `--check-survey-fits` writes a
 `survey_wcs_flags` object instead. `--extinction-report` adds an
 `extinction_report` object with airmass, site pressure/elevation and per-channel
-Rayleigh coefficients.
+Rayleigh coefficients. `--verify-solution` adds a `solution_verification` object
+with global and 3×3-zone RMS, match fraction and a residual map, and writes
+`solution_verification.json` plus `stacked_solution_residuals.svg`.
 
 ### VOTable catalog export
 

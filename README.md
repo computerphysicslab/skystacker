@@ -439,6 +439,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--annotation-catalogs LIST` | Comma-separated JSON catalogs (RA/Dec degrees; optional name/type/mag/major/minor/pa) for multi-catalog cross-match | — |
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 | `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
+| `--verify-solution` | Report-only whole-frame WCS verification against cached Gaia | `false` |
 | `--extinction-report` | Report-only Rayleigh coefficients per RGB channel (forces `report.json`) | `false` |
 | `--provenance` | Write `provenance.json` with an IVOA ProvenanceDM-style entity/activity/agent graph | `false` |
 | `--diagnose` | Collect a host/runtime diagnostic snapshot (`diagnostics.txt`) and exit | `false` |
@@ -543,6 +544,8 @@ frames unless `--external-allow-nonlinear` is given.
 | `--stf-shadows float` | STF shadow clip point in sigma units | `-2.8` |
 | `--stf-target float` | STF target background median level | `0.25` |
 | `--stf-linked` | Link RGB channels during STF auto-stretch (preserves colour balance) | `false` |
+| `--stretch-color-preserving` | Stretch luminance only and preserve linear RGB ratios | `false` |
+| `--psf-auto` | Fit Gaussian/Moffat per star and keep the lower-residual centroid | `false` |
 
 ### Post-Processing: Denoise, Curves, HDR & Optional Stages
 

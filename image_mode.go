@@ -452,7 +452,11 @@ func runImageCommand(o *cliOptions) error {
 			})
 		}
 	case "stretch":
-		result = autoStretch(result, o.STFShadowsClip, o.STFTargetBG, o.STFLinked)
+		if o.StretchColorPreserving {
+			result = colorPreservingStretch(result, o.STFShadowsClip, o.STFTargetBG)
+		} else {
+			result = autoStretch(result, o.STFShadowsClip, o.STFTargetBG, o.STFLinked)
+		}
 	case "denoise":
 		if o.Wavelets {
 			if o.WaveletAdaptive {

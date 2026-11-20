@@ -98,6 +98,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--photometry` | off | Ensemble Gaia aperture photometry. |
 | `--aperture-photometry` | off | Local annulus sky, Kron/FLUX_RADIUS and neighbour masking in `--photometry`. |
 | `--matched-filter` | off | Matched-filter star detection (`T = αC⁻¹S`) instead of the high-pass threshold. |
+| `--psf-auto` | off | Fit Gaussian/Moffat per star and keep the lower-residual centroid. |
 | `--blind-benchmark DIR` / `--benchmark-solvers LIST` | — | Head-to-head solve corpus CSV (solvers include `native`). |
 | `--blind-index FILE` | `<gaia-cache-dir>/blind_index.json` | Gaia quad index for `--plate-solver native`. |
 | `--build-blind-index FILE` | — | Build that index from cached Gaia tiles and exit. |
@@ -122,6 +123,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--xisf-rev2` | off | XISF checksum + strict sample validation. |
 | `--png` / `--bmp` | off | Extra display previews. |
 | `--json-report` / `--provenance` | off | Structured report / IVOA-style provenance. |
+| `--verify-solution` | off | Whole-frame Gaia verification; writes `solution_verification.json` and a residual SVG. |
 | `--extinction-report` | off | Report λ⁻⁴ Rayleigh coefficients; forces `report.json`. |
 | `--starless` | off | Starless and star-layer products. |
 
@@ -132,7 +134,7 @@ See [post-processing.md](post-processing.md).
 | Flag group | Examples |
 |---|---|
 | Background | `--bg-degree N`, `--bg-multiscale`, `--bg-asymmetric` (with `--bg-clip-low/-high`, `--bg-harmonic-scale`, `--bg-poly-degree`, `--bg-rbf`) |
-| Stretch | `--stretch F`, `--no-auto-stretch`, `--stf-shadows F`, `--stf-target F`, `--stf-linked` |
+| Stretch | `--stretch F`, `--no-auto-stretch`, `--stf-shadows F`, `--stf-target F`, `--stf-linked`, `--stretch-color-preserving` |
 | Denoise | `--no-denoise`, `--denoise-strength F`, `--denoise-radius N`, `--denoise-chroma F`, `--wavelets`, `--wavelet-scales N`, `--wavelet-sigma F`, `--wavelet-adaptive` |
 | Sharpen | `--no-sharpen`, `--sharpen-amount F`, `--sharpen-radius F`, `--wavesharp`, `--wave-gains LIST` |
 | Deconvolve | `--deconvolve`, `--deconvolve-wiener`, `--deconvolve-grid`, `--deconv-sigma F`, `--deconv-iters N`, `--deconv-grid-size N` |
