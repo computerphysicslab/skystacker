@@ -625,6 +625,7 @@ frames unless `--external-allow-nonlinear` is given.
 | `--export-stars FILE` | Export detected stars of `--process-image` as flux-sorted JSON/CSV; no `--image-op` required | — |
 | `--classify-objects FILE` | Report-only diffuse-object morphology (CAS/Gini/M20) and IVOA object-type JSON; no `--image-op` required | — |
 | `--test-debayer PATH` | One-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg` | — |
+| `--check-survey-fits FILE` | Report-only check of survey FITS WCS/header caveats; writes `report.txt`/`report.json` | — |
 | `--selftest` | Run embedded self-tests and exit | — |
 | `--version` | Print version and exit | — |
 | `--help` | Print command-line help and exit | — |

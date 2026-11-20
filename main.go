@@ -213,6 +213,7 @@ type cliOptions struct {
 	KeepCache        bool
 	TestDebayer      string
 	AcquisitionCheck string
+	CheckSurveyFITS  string
 
 	GaiaTest               string
 	GaiaMirror             string
@@ -518,6 +519,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.KeepCache, "keep-cache", false, "keep the star/transform cache after a successful run (default: remove it)")
 	fs.StringVar(&o.TestDebayer, "test-debayer", "", "test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fs.StringVar(&o.AcquisitionCheck, "check-acquisition-keywords", "", "validate ROWORDER/BAYERPAT/XBAYROFF/YBAYROFF/EGAIN/PIERSIDE in a RAW/FITS file and exit")
+	fs.StringVar(&o.CheckSurveyFITS, "check-survey-fits", "", "report-only check of survey FITS WCS/header caveats and exit")
 	fs.StringVar(&o.GaiaTest, "test-gaia", "", `test Gaia DR3 query on RA,DEC (decimal degrees): prints the tile, star count, first 5 stars, then exits`)
 	fs.BoolVar(&o.PlateSolve, "plate-solve", false, "run TAN WCS plate solve after stacking or in --post-only (writes plate_solution.json)")
 	fs.StringVar(&o.PlateTest, "test-plate", "", "one-shot plate solve on RA,DEC in decimal degrees: prints WCS, then exits")
@@ -699,7 +701,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -1470,6 +1472,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --cache-dir string cache directory (default: <output>/_work/cache)")
 	fmt.Fprintln(w, "  --test-debayer P  test FITS debayering on one file: writes <base>.jpg and <base>_raw.jpg, then exits")
 	fmt.Fprintln(w, "  --check-acquisition-keywords P  validate N.I.N.A. RAW/FITS acquisition keywords (JSON)")
+	fmt.Fprintln(w, "  --check-survey-fits P           report FITS/WCS caveats in a survey cutout (JSON)")
 	fmt.Fprintln(w, "  --test-gaia R,D    test Gaia DR3 query on RA,DEC in decimal degrees, then exit")
 	fmt.Fprintln(w, "  --plate-solve      run TAN WCS plate solve after stacking, or on the existing stack with --post-only (writes plate_solution.json)")
 	fmt.Fprintln(w, "  --test-plate R,D   one-shot plate solve on RA,DEC in decimal degrees, then exit")
@@ -5775,73 +5778,78 @@ func parseExifTIFF(data []byte, e *exifData) {
 }
 
 type processingReport struct {
-	Version               string
-	Timestamp             time.Time
-	CommandLine           string
-	ResolvedFlags         []string
-	InputDir              string
-	OutputDir             string
-	Discovered            int
-	Accepted              []string
-	Rejected              []rejection
-	Width                 int
-	Height                int
-	Channels              int
-	Method                string
-	AccumulatorType       string
-	OutputFormat          string
-	OutputScaling         string
-	RegistrationOn        bool
-	RegisteredCount       int
-	RegistrationFails     []string
-	CropRect              image.Rectangle
-	SumNormalization      float32
-	BlackLevelTag         string
-	BlackLevelValue       float64
-	BlackLevelApplied     bool
-	BPMApplied            bool
-	BPMPath               string
-	BPMPixelCount         int
-	SelfFlatApplied       bool
-	SelfFlatModel         string
-	SelfFlatFrames        int
-	SelfFlatPath          string
-	SelfFlatCenterEdge    float64
-	SelfFlatResidual      float64
-	SelfFlatDegree        int
-	SelfFlatCellSize      int
-	SelfFlatValidCells    int
-	SelfFlatRejectedCells int
-	SelfFlatTotalCells    int
-	SelfFlatMaskedFrac    float64
-	SelfFlatMin           float64
-	SelfFlatMax           float64
-	SelfFlatOLSRMS        float64
-	SelfFlatRadialRMS     float64
-	SelfFlatIRLSIters     int
-	SelfFlatExtrapolated  bool
-	SelfFlatCoeffs        [3][]float64
-	MasterExports         []string
-	CalStatus             string
-	CalMasters            []calibrationProvenance
-	DrizzleNoise          *drizzleReport
-	DitherCoverage        *ditherCoverageReport
-	PostProcessApplied    bool
-	BGDegree              int
-	StretchFactor         float64
-	SharpenApplied        bool
-	SharpenAmount         float64
-	SharpenRadius         float64
-	OutputFiles           []string
-	Workers               int
-	Duration              time.Duration
-	Notes                 []string
-	FrameDiags            []frameDiag
-	CropExplanation       string
-	TotalExposureSec      float64
-	FramesWithExif        int
-	RefExif               exifData
-	PlateSolution         *plateSolution
+	Version                 string
+	Timestamp               time.Time
+	CommandLine             string
+	ResolvedFlags           []string
+	InputDir                string
+	OutputDir               string
+	Discovered              int
+	Accepted                []string
+	Rejected                []rejection
+	Width                   int
+	Height                  int
+	Channels                int
+	Method                  string
+	AccumulatorType         string
+	OutputFormat            string
+	OutputScaling           string
+	RegistrationOn          bool
+	RegisteredCount         int
+	RegistrationFails       []string
+	CropRect                image.Rectangle
+	SumNormalization        float32
+	BlackLevelTag           string
+	BlackLevelValue         float64
+	BlackLevelApplied       bool
+	BPMApplied              bool
+	BPMPath                 string
+	BPMPixelCount           int
+	SelfFlatApplied         bool
+	SelfFlatModel           string
+	SelfFlatFrames          int
+	SelfFlatPath            string
+	SelfFlatCenterEdge      float64
+	SelfFlatResidual        float64
+	SelfFlatDegree          int
+	SelfFlatCellSize        int
+	SelfFlatValidCells      int
+	SelfFlatRejectedCells   int
+	SelfFlatTotalCells      int
+	SelfFlatMaskedFrac      float64
+	SelfFlatMin             float64
+	SelfFlatMax             float64
+	SelfFlatOLSRMS          float64
+	SelfFlatRadialRMS       float64
+	SelfFlatIRLSIters       int
+	SelfFlatExtrapolated    bool
+	SelfFlatCoeffs          [3][]float64
+	MasterExports           []string
+	CalStatus               string
+	CalMasters              []calibrationProvenance
+	DrizzleNoise            *drizzleReport
+	DitherCoverage          *ditherCoverageReport
+	PostProcessApplied      bool
+	BGDegree                int
+	StretchFactor           float64
+	SharpenApplied          bool
+	SharpenAmount           float64
+	SharpenRadius           float64
+	OutputFiles             []string
+	Workers                 int
+	Duration                time.Duration
+	Notes                   []string
+	FrameDiags              []frameDiag
+	CropExplanation         string
+	TotalExposureSec        float64
+	FramesWithExif          int
+	RefExif                 exifData
+	PlateSolution           *plateSolution
+	ConeTruncated           bool    `json:"cone_truncated,omitempty"`
+	ConeRows                int     `json:"cone_rows,omitempty"`
+	ConeCoveredRadiusArcsec float64 `json:"cone_covered_radius_arcsec,omitempty"`
+	ConeCoveredAreaDeg2     float64 `json:"cone_covered_area_deg2,omitempty"`
+	ConeLimitReason         string  `json:"cone_limit_reason,omitempty"`
 }
 
 type provEntity struct {
@@ -6526,6 +6534,17 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		}
 		ew.printf("  RMS:      %.3f arcsec\n", r.PlateSolution.RMSArcsec)
 		ew.printf("  matches:  %d / %d stars\n", r.PlateSolution.NMatches, r.PlateSolution.NStars)
+		ew.printf("\n")
+	}
+	if r.ConeRows > 0 || r.ConeTruncated {
+		ew.printf("Cone-search coverage:\n")
+		ew.printf("  truncated: %v\n", r.ConeTruncated)
+		ew.printf("  rows:      %d\n", r.ConeRows)
+		ew.printf("  radius:    %.3f arcsec\n", r.ConeCoveredRadiusArcsec)
+		ew.printf("  area:      %.6f deg^2\n", r.ConeCoveredAreaDeg2)
+		if r.ConeLimitReason != "" {
+			ew.printf("  reason:    %s\n", r.ConeLimitReason)
+		}
 		ew.printf("\n")
 	}
 	ew.printf("Output files:\n")
@@ -13057,6 +13076,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		notes = append(notes, fmt.Sprintf("Comet stack: %d frames aligned so the reference comet pixel (%.1f, %.1f) stays fixed. Rate is (%.4f, %.4f) reference pixels per second from EXIF DateTimeOriginal. Stars trail in stacked_comet; the star stack is unchanged.",
 			cometFrames, opts.CometX, opts.CometY, opts.CometRatePxX, opts.CometRatePxY))
 	}
+	coneInfo := computeConeTruncationReport(&opts, plateSolutionOut)
 	rep := &processingReport{
 		Version:               version,
 		Timestamp:             start,
@@ -13123,6 +13143,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		FramesWithExif:        framesWithExif,
 		RefExif:               refExif,
 		PlateSolution:         plateSolutionOut,
+	}
+	if coneInfo != nil {
+		rep.ConeTruncated = coneInfo.Truncated
+		rep.ConeRows = coneInfo.Rows
+		rep.ConeCoveredRadiusArcsec = coneInfo.RadiusArcsec
+		rep.ConeCoveredAreaDeg2 = coneInfo.AreaDeg2
+		rep.ConeLimitReason = coneInfo.Reason
 	}
 	if opts.StreakDetect && len(finalMeanPix) == refW*refH*3 {
 		mask, hits := detectStreakMask(&frame{Width: refW, Height: refH, Pix: finalMeanPix}, 5)
@@ -13311,7 +13338,34 @@ type coneVOTable struct {
 	Rows []struct {
 		Cells []string `xml:"TD"`
 	} `xml:"RESOURCE>TABLE>DATA>TABLEDATA>TR"`
+	Infos []struct {
+		Name  string `xml:"name,attr"`
+		Value string `xml:"value,attr"`
+	} `xml:"INFO"`
+	ResourceInfos []struct {
+		Name  string `xml:"name,attr"`
+		Value string `xml:"value,attr"`
+	} `xml:"RESOURCE>INFO"`
 }
+
+type coneResult struct {
+	Sources             []coneSource `json:"sources"`
+	Rows                int          `json:"rows"`
+	Truncated           bool         `json:"truncated"`
+	CoveredRadiusArcsec float64      `json:"covered_radius_arcsec"`
+	CoveredAreaDeg2     float64      `json:"covered_area_deg2"`
+	LimitReason         string       `json:"limit_reason,omitempty"`
+}
+
+type coneTruncationReport struct {
+	Truncated    bool    `json:"cone_truncated"`
+	Rows         int     `json:"cone_rows"`
+	RadiusArcsec float64 `json:"cone_covered_radius_arcsec"`
+	AreaDeg2     float64 `json:"cone_covered_area_deg2"`
+	Reason       string  `json:"cone_limit_reason,omitempty"`
+}
+
+const coneServiceRowLimit = 200000
 
 type coneService struct {
 	URL       string
@@ -13334,12 +13388,13 @@ var coneServices = map[string]coneService{
 	"irsa": {
 		URL: "https://irsa.ipac.caltech.edu/TAP/sync", MaxArcsec: 60,
 		Build: func(ra, dec, radius float64) url.Values {
-			query := fmt.Sprintf("SELECT TOP 200 ra,dec,w3mpro AS mag,designation AS name FROM wise.allwise WHERE CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',%g,%g,%g))=1",
-				ra, dec, radius/3600.0)
+			query := fmt.Sprintf("SELECT TOP %d ra,dec,w3mpro AS mag,designation AS name FROM wise.allwise WHERE CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',%g,%g,%g))=1",
+				coneServiceRowLimit, ra, dec, radius/3600.0)
 			v := url.Values{}
 			v.Set("REQUEST", "doQuery")
 			v.Set("LANG", "ADQL")
 			v.Set("FORMAT", "votable")
+			v.Set("MAXREC", strconv.Itoa(coneServiceRowLimit))
 			v.Set("QUERY", query)
 			return v
 		},
@@ -13351,7 +13406,7 @@ var coneServices = map[string]coneService{
 			v.Set("-source", "I/345/gaia2")
 			v.Set("-c", fmt.Sprintf("%g,%g", ra, dec))
 			v.Set("-c.r", strconv.FormatFloat(radius/60, 'g', -1, 64))
-			v.Set("-out.max", "200")
+			v.Set("-out.max", strconv.Itoa(coneServiceRowLimit))
 			return v
 		},
 	},
@@ -13360,24 +13415,32 @@ var coneServices = map[string]coneService{
 // coneSearch queries a VO cone-search service and parses its VOTable result.
 // baseURL is injectable so selftests can use a local HTTP server.
 func coneSearch(service coneService, baseURL string, raDeg, decDeg, radiusArcsec float64, timeout time.Duration) ([]coneSource, error) {
+	result, err := coneSearchDetailed(service, baseURL, raDeg, decDeg, radiusArcsec, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return result.Sources, nil
+}
+
+func coneSearchDetailed(service coneService, baseURL string, raDeg, decDeg, radiusArcsec float64, timeout time.Duration) (coneResult, error) {
 	if radiusArcsec <= 0 || radiusArcsec > service.MaxArcsec {
-		return nil, fmt.Errorf("cone radius %g arcsec outside (0, %g]", radiusArcsec, service.MaxArcsec)
+		return coneResult{}, fmt.Errorf("cone radius %g arcsec outside (0, %g]", radiusArcsec, service.MaxArcsec)
 	}
 	if baseURL == "" {
 		baseURL = service.URL
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, err
+		return coneResult{}, err
 	}
 	u.RawQuery = service.Build(raDeg, decDeg, radiusArcsec).Encode()
 	data, err := astrometryHTTPRequest(&http.Client{}, http.MethodGet, u.String(), nil, "", "", timeout)
 	if err != nil {
-		return nil, fmt.Errorf("cone search: %w", err)
+		return coneResult{}, fmt.Errorf("cone search: %w", err)
 	}
 	var table coneVOTable
 	if err := xml.Unmarshal(data, &table); err != nil {
-		return nil, fmt.Errorf("cone search: VOTable: %w", err)
+		return coneResult{}, fmt.Errorf("cone search: VOTable: %w", err)
 	}
 	col := func(names []string, keys ...string) int {
 		for _, key := range keys {
@@ -13395,7 +13458,7 @@ func coneSearch(service coneService, baseURL string, raDeg, decDeg, radiusArcsec
 	}
 	iRA, iDec := col(names, "ra"), col(names, "dec")
 	if iRA < 0 || iDec < 0 {
-		return nil, errors.New("cone search: VOTable has no ra/dec columns")
+		return coneResult{}, errors.New("cone search: VOTable has no ra/dec columns")
 	}
 	iMag, iName := col(names, "mag"), col(names, "name", "id")
 	out := make([]coneSource, 0, len(table.Rows))
@@ -13417,31 +13480,77 @@ func coneSearch(service coneService, baseURL string, raDeg, decDeg, radiusArcsec
 		}
 		out = append(out, s)
 	}
-	return out, nil
+	reason := ""
+	checkInfo := func(name, value string) {
+		n, v := strings.ToUpper(name), strings.ToUpper(value)
+		if strings.Contains(n, "TRUNC") || strings.Contains(n, "OVERFLOW") ||
+			strings.Contains(v, "TRUNCATED") || strings.Contains(v, "OVERFLOW") {
+			if reason == "" {
+				reason = "service_reported_truncation"
+			}
+		}
+	}
+	for _, info := range table.Infos {
+		checkInfo(info.Name, info.Value)
+	}
+	for _, info := range table.ResourceInfos {
+		checkInfo(info.Name, info.Value)
+	}
+	if len(table.Rows) >= coneServiceRowLimit && reason == "" {
+		reason = "service_row_limit"
+	}
+	centerRA, centerDec := raDeg*math.Pi/180, decDeg*math.Pi/180
+	maxSep := 0.0
+	for _, s := range out {
+		if sep := angularSeparation(centerRA, centerDec, s.RA, s.Dec); sep > maxSep {
+			maxSep = sep
+		}
+	}
+	covered := maxSep * 180 / math.Pi * 3600
+	if covered <= 0 || covered > radiusArcsec {
+		covered = radiusArcsec
+	}
+	area := math.Pi * math.Pow(covered/3600, 2)
+	return coneResult{
+		Sources:             out,
+		Rows:                len(table.Rows),
+		Truncated:           reason != "",
+		CoveredRadiusArcsec: covered,
+		CoveredAreaDeg2:     area,
+		LimitReason:         reason,
+	}, nil
 }
 
 // coneSearchCached persists results under the Gaia cache directory so an
 // offline rerun can annotate with the same external sources.
-func coneSearchCached(cacheDir, name string, service coneService, baseURL string, raDeg, decDeg, radiusArcsec float64, timeout time.Duration) ([]coneSource, error) {
+func coneSearchCachedDetailed(cacheDir, name string, service coneService, baseURL string, raDeg, decDeg, radiusArcsec float64, timeout time.Duration) (coneResult, error) {
 	if cacheDir != "" {
-		key := fmt.Sprintf("cone_%s_%.6f_%.6f_%.3f.json", name, raDeg, decDeg, radiusArcsec)
+		key := fmt.Sprintf("cone2_%s_%.6f_%.6f_%.3f.json", name, raDeg, decDeg, radiusArcsec)
 		path := filepath.Join(cacheDir, key)
 		if data, err := os.ReadFile(path); err == nil {
-			var cached []coneSource
+			var cached coneResult
 			if err := json.Unmarshal(data, &cached); err == nil {
 				return cached, nil
 			}
 		}
-		out, err := coneSearch(service, baseURL, raDeg, decDeg, radiusArcsec, timeout)
+		result, err := coneSearchDetailed(service, baseURL, raDeg, decDeg, radiusArcsec, timeout)
 		if err != nil {
-			return nil, err
+			return coneResult{}, err
 		}
-		if data, err := json.Marshal(out); err == nil {
+		if data, err := json.Marshal(result); err == nil {
 			os.WriteFile(path, data, 0o644)
 		}
-		return out, nil
+		return result, nil
 	}
-	return coneSearch(service, baseURL, raDeg, decDeg, radiusArcsec, timeout)
+	return coneSearchDetailed(service, baseURL, raDeg, decDeg, radiusArcsec, timeout)
+}
+
+func coneSearchCached(cacheDir, name string, service coneService, baseURL string, raDeg, decDeg, radiusArcsec float64, timeout time.Duration) ([]coneSource, error) {
+	result, err := coneSearchCachedDetailed(cacheDir, name, service, baseURL, raDeg, decDeg, radiusArcsec, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return result.Sources, nil
 }
 
 type annotatedSource struct {
@@ -13627,21 +13736,26 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 			cat = append(cat, annotatedSource{x: x, y: y, name: e.Name, kind: e.Type, major: e.Major, minor: e.Minor, pa: e.PA})
 		}
 	}
+	coneCenterRA, coneCenterDec := w.CRVAL1, w.CRVAL2
+	coneCoveredRad := opts.ConeRadiusArcsec * math.Pi / (180 * 3600)
+	coneTruncated := false
 	if opts.ConeCatalog != "" {
 		service, ok := coneServices[opts.ConeCatalog]
 		if !ok {
 			logf("Catalog annotation: unknown cone catalogue %q", opts.ConeCatalog)
-		} else if sources, cerr := coneSearchCached(gaiaDefaultCacheDir(), opts.ConeCatalog, service, "",
+		} else if result, cerr := coneSearchCachedDetailed(gaiaDefaultCacheDir(), opts.ConeCatalog, service, "",
 			w.CRVAL1*180/math.Pi, w.CRVAL2*180/math.Pi, opts.ConeRadiusArcsec, 60*time.Second); cerr != nil {
 			logf("Catalog annotation: cone search failed: %v", cerr)
 		} else {
-			for _, s := range sources {
+			coneTruncated = result.Truncated
+			coneCoveredRad = result.CoveredRadiusArcsec * math.Pi / (180 * 3600)
+			for _, s := range result.Sources {
 				x, y := wcsTanForward(&w, s.RA, s.Dec)
 				if x >= 0 && y >= 0 && x < float64(iw) && y < float64(ih) {
 					cat = append(cat, annotatedSource{x: x, y: y, name: s.Name, kind: "cone"})
 				}
 			}
-			logf("Catalog annotation: %d source(s) from %s cone search", len(sources), opts.ConeCatalog)
+			logf("Catalog annotation: %d source(s) from %s cone search (truncated=%v)", len(result.Sources), opts.ConeCatalog, result.Truncated)
 		}
 	}
 	srcFrame := &frame{Width: iw, Height: ih, Pix: pix}
@@ -13678,6 +13792,9 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 			continue
 		}
 		ra, dec := wcsTanInverseSIP(&w, st.X, st.Y)
+		if !coneCoverageAllows(coneTruncated && opts.ConeCatalog != "", coneCenterRA, coneCenterDec, coneCoveredRad, ra, dec) {
+			continue
+		}
 		anomalies = append(anomalies, anomalyRecord{X: st.X, Y: st.Y, RA: ra, Dec: dec, Flux: st.Flux, SNR: snr})
 	}
 	jpgPath := filepath.Join(outputDir, "stacked_mean.jpg")
@@ -33973,6 +34090,13 @@ func main() {
 		}
 		fmt.Println(string(data))
 		if !report.OK {
+			os.Exit(1)
+		}
+		return
+	}
+	if opts.CheckSurveyFITS != "" {
+		if err := runSurveyFITSCheck(opts.CheckSurveyFITS, opts.OutputDir); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
 			os.Exit(1)
 		}
 		return

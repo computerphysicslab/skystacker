@@ -41,7 +41,11 @@ outputs; use `.f32raw`/FITS/XISF for measurements.
 
 Enabled with `--json-report`. Mirrors `report.txt` with arrays for accepted and
 rejected frames, per-frame diagnostics (including `PSFScale` and `Weight`),
-resolved flags, exposure summary, output files and notes.
+resolved flags, exposure summary, output files and notes. When `--cone-catalog`
+is used it also carries `cone_truncated`, `cone_rows`,
+`cone_covered_radius_arcsec`, `cone_covered_area_deg2` and an optional
+`cone_limit_reason`; the one-shot `--check-survey-fits` writes a
+`survey_wcs_flags` object instead.
 
 ### `plate_solution.json`
 
