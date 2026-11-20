@@ -209,14 +209,19 @@ type cliOptions struct {
 	PostHDR         bool
 	PostStretch     bool
 
-	NoCache          bool
-	CacheDir         string
-	KeepCache        bool
-	TestDebayer      string
-	AcquisitionCheck string
-	CheckSurveyFITS  string
-	ExtinctionReport bool
-	VerifySolution   bool
+	NoCache              bool
+	CacheDir             string
+	KeepCache            bool
+	TestDebayer          string
+	AcquisitionCheck     string
+	CheckSurveyFITS      string
+	ExtinctionReport     bool
+	VerifySolution       bool
+	TransformationReport bool
+	GaiaAsync            bool
+	GaiaMaxRec           int
+	GaiaVerbosity        int
+	VORegistry           string
 
 	GaiaTest               string
 	GaiaMirror             string
@@ -624,6 +629,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
 	fs.BoolVar(&o.ExtinctionReport, "extinction-report", false, "report-only Rayleigh extinction coefficients (forces report.json)")
 	fs.BoolVar(&o.VerifySolution, "verify-solution", false, "verify stored plate solution against cached Gaia stars (report-only)")
+	fs.BoolVar(&o.TransformationReport, "transformation-report", false, "report-only AAVSO-style photometric transformation coefficients")
+	fs.BoolVar(&o.GaiaAsync, "gaia-async", false, "use asynchronous Gaia TAP submission with job polling")
+	fs.IntVar(&o.GaiaMaxRec, "gaia-maxrec", 2000, "explicit MAXREC for Gaia TAP queries")
+	fs.IntVar(&o.GaiaVerbosity, "gaia-verbosity", 0, "optional TAP VERBOSITY (1-3)")
+	fs.StringVar(&o.VORegistry, "vo-registry", "", "IVOA registry endpoint for TAP service discovery")
 	fs.BoolVar(&o.Provenance, "provenance", false, "write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fs.BoolVar(&o.Diagnose, "diagnose", false, "collect a host/runtime diagnostic snapshot and exit")
 	fs.BoolVar(&o.DiagnoseJSON, "diagnose-json", false, "with --diagnose: also write diagnostics.json")
@@ -713,7 +723,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -1527,6 +1537,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
 	fmt.Fprintln(w, "  --extinction-report report-only Rayleigh coefficients per RGB channel")
 	fmt.Fprintln(w, "  --verify-solution  compare stored WCS with Gaia over the whole frame")
+	fmt.Fprintln(w, "  --transformation-report report-only AAVSO photometric coefficients")
+	fmt.Fprintln(w, "  --gaia-async / --gaia-maxrec N / --gaia-verbosity N / --vo-registry URL  asynchronous TAP options")
 	fmt.Fprintln(w, "  --provenance       write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fmt.Fprintln(w, "  --diagnose         host/runtime diagnostic snapshot; write diagnostics.txt and exit")
 	fmt.Fprintln(w, "  --diagnose-json    also write diagnostics.json")
@@ -5872,6 +5884,8 @@ type processingReport struct {
 	StretchColorPreserving  bool                        `json:"stretch_color_preserving,omitempty"`
 	PSFAutoReport           *psfAutoReport              `json:"psf_auto,omitempty"`
 	SolutionVerification    *solutionVerificationReport `json:"solution_verification,omitempty"`
+	TransformationReport    *transformationReport       `json:"transformation_report,omitempty"`
+	TAPAsyncReport          *tapAsyncReport             `json:"tap_async,omitempty"`
 }
 
 type provEntity struct {
@@ -6178,6 +6192,21 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.VerifySolution {
 		add("--verify-solution")
+	}
+	if o.TransformationReport {
+		add("--transformation-report")
+	}
+	if o.GaiaAsync {
+		add("--gaia-async")
+	}
+	if o.GaiaMaxRec != 2000 {
+		add(fmt.Sprintf("--gaia-maxrec %d", o.GaiaMaxRec))
+	}
+	if o.GaiaVerbosity > 0 {
+		add(fmt.Sprintf("--gaia-verbosity %d", o.GaiaVerbosity))
+	}
+	if o.VORegistry != "" {
+		add("--vo-registry " + quoteReportArg(o.VORegistry))
 	}
 	if o.Provenance {
 		add("--provenance")
@@ -6597,6 +6626,13 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		v := r.SolutionVerification
 		ew.printf("Solution verification: RMS %.4f px, matches %d/%d, zone anomaly %v\n\n", v.GlobalRMSPx, v.NMatches, v.NGaiaInFrame, v.ZoneAnomaly)
 	}
+	if r.TransformationReport != nil {
+		ew.printf("%s\n", formatTransformationReport(r.TransformationReport))
+	}
+	if r.TAPAsyncReport != nil {
+		v := r.TAPAsyncReport
+		ew.printf("TAP async: mode=%s status=%s rows=%d polls=%d truncated=%v fallback=%v\n\n", v.Mode, v.Status, v.Rows, v.Polls, v.Truncated, v.FallbackUsed)
+	}
 	ew.printf("Output files:\n")
 	for _, f := range r.OutputFiles {
 		ew.printf("  %s\n", f)
@@ -6795,6 +6831,11 @@ type runOptions struct {
 	JSONReport             bool
 	ExtinctionReport       bool
 	VerifySolution         bool
+	TransformationReport   bool
+	GaiaAsync              bool
+	GaiaMaxRec             int
+	GaiaVerbosity          int
+	VORegistry             string
 	Provenance             bool
 	Diagnose               bool
 	DiagnoseJSON           bool
@@ -10724,7 +10765,7 @@ func selfFlatGammaNote(linear bool) string {
 
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
-	if opts.ExtinctionReport || opts.VerifySolution {
+	if opts.ExtinctionReport || opts.VerifySolution || opts.TransformationReport || opts.GaiaAsync {
 		opts.JSONReport = true
 	}
 	matchedFilterEnabled = opts.MatchedFilter
@@ -12553,6 +12594,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return fmt.Errorf("create work directory: %w", err)
 	}
+	acceptedForBayer := make([]string, 0, len(accepted))
+	for _, c := range accepted {
+		acceptedForBayer = append(acceptedForBayer, c.path)
+	}
+	bayerPattern := firstBayerPattern(acceptedForBayer)
 	tiffDir := filepath.Join(outputDir, "TIFF")
 	if opts.CreateTIFF {
 		if err := os.MkdirAll(tiffDir, 0o755); err != nil {
@@ -12620,7 +12666,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 		if opts.CreateTIFF {
 			logf("Writing registered sum TIFF")
-			if err := writeStackTIFF(sumTiff, outW, outH, sumPix, sumDivisor, false, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
+			if err := writeStackTIFF(sumTiff, outW, outH, sumPix, sumDivisor, false, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor, Bayer: bayerPattern}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
 			}
 		}
@@ -12641,7 +12687,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeStackTIFF(sumBigTiff, outW, outH, sumPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
+			if err := writeStackTIFF(sumBigTiff, outW, outH, sumPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor, Bayer: bayerPattern}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum bigtiff: %w", err)
 			}
 		}
@@ -12682,7 +12728,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeStackTIFF(meanBigTiff, outW, outH, meanPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
+			if err := writeStackTIFF(meanBigTiff, outW, outH, meanPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor, Bayer: bayerPattern}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write mean bigtiff: %w", err)
 			}
 		}
@@ -12779,7 +12825,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 		if opts.CreateTIFF {
 			logf("Writing sum TIFF")
-			if err := writeStackTIFF(sumTiff, outW, outH, sumPix, sumDivisor, false, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
+			if err := writeStackTIFF(sumTiff, outW, outH, sumPix, sumDivisor, false, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor, Bayer: bayerPattern}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
 			}
 		}
@@ -12800,7 +12846,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeStackTIFF(sumBigTiff, outW, outH, sumPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
+			if err := writeStackTIFF(sumBigTiff, outW, outH, sumPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor, Bayer: bayerPattern}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum bigtiff: %w", err)
 			}
 		}
@@ -12841,7 +12887,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeStackTIFF(meanBigTiff, outW, outH, meanPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
+			if err := writeStackTIFF(meanBigTiff, outW, outH, meanPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor, Bayer: bayerPattern}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write mean bigtiff: %w", err)
 			}
 		}
@@ -13148,6 +13194,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if opts.ExtinctionReport {
 		extinctionInfo = computeExtinctionReport(acceptedPaths)
 	}
+	var transformationInfo *transformationReport
+	if opts.TransformationReport {
+		transformationInfo = computeTransformationReport(acceptedPaths, extinctionInfo)
+	}
+	var tapAsyncInfo *tapAsyncReport
+	if opts.GaiaAsync {
+		tapAsyncInfo = computeTAPAsyncReport(&opts, plateSolutionOut)
+	}
 	rep := &processingReport{
 		Version:               version,
 		Timestamp:             start,
@@ -13223,6 +13277,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		rep.ConeLimitReason = coneInfo.Reason
 	}
 	rep.ExtinctionReport = extinctionInfo
+	rep.TransformationReport = transformationInfo
+	rep.TAPAsyncReport = tapAsyncInfo
 	rep.StretchColorPreserving = opts.StretchColorPreserving
 	rep.PSFAutoReport = lastPSFAutoReport
 	if opts.VerifySolution {
@@ -34374,6 +34430,11 @@ func main() {
 		JSONReport:             opts.JSONReport,
 		ExtinctionReport:       opts.ExtinctionReport,
 		VerifySolution:         opts.VerifySolution,
+		TransformationReport:   opts.TransformationReport,
+		GaiaAsync:              opts.GaiaAsync,
+		GaiaMaxRec:             opts.GaiaMaxRec,
+		GaiaVerbosity:          opts.GaiaVerbosity,
+		VORegistry:             opts.VORegistry,
 		Provenance:             opts.Provenance,
 		Diagnose:               opts.Diagnose,
 		DiagnoseJSON:           opts.DiagnoseJSON,

@@ -50,6 +50,10 @@ is used it also carries `cone_truncated`, `cone_rows`,
 Rayleigh coefficients. `--verify-solution` adds a `solution_verification` object
 with global and 3×3-zone RMS, match fraction and a residual map, and writes
 `solution_verification.json` plus `stacked_solution_residuals.svg`.
+`--transformation-report` adds a `transformation_report` object with `OBSTYPE`,
+`FILTER`, `TRANS` and per-band ZP/extinction/colour coefficients.
+`--gaia-async` adds a `tap_async` object with the job URL, final status, poll
+count, row count, truncation flag and sync-fallback reason.
 
 ### VOTable catalog export
 

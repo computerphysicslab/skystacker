@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	gotiff "github.com/computerphysicslab/skystacker/goTiff"
 )
@@ -14,6 +15,7 @@ type tiffWriteConfig struct {
 	astro       bool
 	tiled       bool
 	predictor   bool
+	Bayer       string
 }
 
 func (c tiffWriteConfig) active() bool {
@@ -66,7 +68,7 @@ func writeStackTIFF(path string, width, height int, pix []float32, divisor float
 		Pixels: scaled,
 	}
 	if cfg.astro && wcs != nil {
-		img.Metadata = map[string]string{"ImageDescription": astroTIFFDescription(wcs)}
+		img.Metadata = map[string]string{"ImageDescription": astroTIFFDescription(wcs, cfg.Bayer)}
 	}
 	opt := &gotiff.Options{
 		Compression: compression,
@@ -77,12 +79,29 @@ func writeStackTIFF(path string, width, height int, pix []float32, divisor float
 	return writeFileAtomic(path, func(w io.Writer) error { return gotiff.Encode(w, img, opt) })
 }
 
-func astroTIFFDescription(w *wcsTan) string {
+func astroTIFFDescription(w *wcsTan, bayer string) string {
 	if w == nil {
 		return ""
 	}
 	deg := 180 / math.Pi
-	return fmt.Sprintf("CTYPE1  = 'RA---TAN'\nCTYPE2  = 'DEC--TAN'\nCRVAL1  = %.12f\nCRVAL2  = %.12f\nCRPIX1  = %.8f\nCRPIX2  = %.8f\nCD1_1   = %.12e\nCD1_2   = %.12e\nCD2_1   = %.12e\nCD2_2   = %.12e\n",
+	text := fmt.Sprintf("CTYPE1  = 'RA---TAN'\nCTYPE2  = 'DEC--TAN'\nCRVAL1  = %.12f\nCRVAL2  = %.12f\nCRPIX1  = %.8f\nCRPIX2  = %.8f\nCD1_1   = %.12e\nCD1_2   = %.12e\nCD2_1   = %.12e\nCD2_2   = %.12e\n",
 		w.CRVAL1*deg, w.CRVAL2*deg, w.CRPIX1, w.CRPIX2,
 		w.CD[0][0]*deg, w.CD[0][1]*deg, w.CD[1][0]*deg, w.CD[1][1]*deg)
+	if bayer != "" {
+		text += fmt.Sprintf("BAYERPAT= '%-8s'\n", bayer)
+	}
+	return text
+}
+
+func firstBayerPattern(paths []string) string {
+	for _, path := range paths {
+		cards, err := readFITSPrimaryHeader(path)
+		if err != nil {
+			continue
+		}
+		if v := strings.TrimSpace(cards["BAYERPAT"]); v != "" {
+			return v
+		}
+	}
+	return ""
 }

@@ -83,6 +83,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--astrometry-timeout N` | `180` | Blind-solve timeout in seconds. |
 | `--solver-focal-length MM` / `--solver-pixel-size UM` | — | Scale hint and sanity check. |
 | `--gaia-mirror URL` / `--gaia-cache-dir DIR` | ESA / OS cache | Gaia TAP endpoint and cache. |
+| `--gaia-async` / `--gaia-maxrec N` / `--gaia-verbosity N` / `--vo-registry URL` | off / `2000` / `0` / — | Async TAP submission with job polling, explicit limits and registry discovery. |
 | `--gaia-nside N` / `--gaia-mag-limit M` | `64` / `14.0` | Tile resolution and magnitude limit. |
 | `--gaia-offline` / `--gaia-cache-refresh` | off | Offline mode / forced refresh. |
 | `--gaia-multitile` (default on) / `--no-gaia-multitile` | on | Grow the seeded Gaia catalogue from all cached tiles around the pointing. |
@@ -124,6 +125,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--png` / `--bmp` | off | Extra display previews. |
 | `--json-report` / `--provenance` | off | Structured report / IVOA-style provenance. |
 | `--verify-solution` | off | Whole-frame Gaia verification; writes `solution_verification.json` and a residual SVG. |
+| `--transformation-report` | off | Report-only AAVSO-style photometric transformation coefficients. |
 | `--extinction-report` | off | Report λ⁻⁴ Rayleigh coefficients; forces `report.json`. |
 | `--starless` | off | Starless and star-layer products. |
 
