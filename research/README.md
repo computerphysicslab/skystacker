@@ -12,8 +12,8 @@ the contribution files are then removed.
 | File | Scope |
 |---|---|
 | [README.md](README.md) | This index, current status and the consolidation protocol |
-| [01-architecture-and-core-engine.md](01-architecture-and-core-engine.md) | Pipeline workflows, memory model, star detection/registration, stacking math, post-processing, diagnostics, formats, CLI reference, ASTAP interop, roadmap and status |
-| [02-astrometry-and-identification.md](02-astrometry-and-identification.md) | Plate solving, TAN/SIP, catalogues, annotation/anomalies, morphology, time domain, IVOA, HEALPix verification and implementation status |
+| [01-architecture-and-core-engine.md](01-architecture-and-core-engine.md) | Pipeline workflows, memory model, star detection/registration, stacking math, post-processing, diagnostics, formats, CLI reference, ASTAP interop, VOTable masks, roadmap and status |
+| [02-astrometry-and-identification.md](02-astrometry-and-identification.md) | Plate solving, TAN/SIP, catalogues, VO/TAP services, WCS refinement, annotation/anomalies, morphology, time domain, IVOA, HEALPix verification and implementation status |
 | [03-reference-and-literature.md](03-reference-and-literature.md) | One master bibliography, one glossary/index, microarchitecture reference, file formats, BXT/NXT/SXT analysis and the 76-source advanced reference survey (§6) |
 | [04-calibration-and-self-flat.md](04-calibration-and-self-flat.md) | Master frames, physical models, recoverability table, self-flat v1/grid/IRLS, validation record, refusal policy, detector physics and open gaps |
 | [05-toolchain-and-modularity.md](05-toolchain-and-modularity.md) | Go toolchain chronology and final state, Go 1.24–1.27 gains, modularization decision, goPureRaw module, file-format interoperability backlog |
@@ -29,13 +29,14 @@ original contribution files whose unique content it now owns. No other
 
 SkyStacker v0.6.1, Go 1.27.4, 274 registered self-tests. Native CR2 decoding
 and the goPureRaw library are in use; `--resample-sip`, fused sigma-clip,
-external AI sidecars and FITS/XISF writers are shipped. Still open: CFA/Bayer
-drizzle, FITS Rice, BigTIFF, XISF Rev 2, per-frame astrometric reprojection
-and bit-exact CR2 validation. Authoritative code-facing docs are the root
-`README.md`, `TECHNICAL_SPEC.md`, `PROJECT_CONTEXT.md` and `BENCHMARKS.md`.
+external AI sidecars, FITS/XISF writers, star-catalog export and diffuse-object
+classification are shipped. Still open: CFA/Bayer drizzle, FITS Rice, BigTIFF,
+XISF Rev 2, per-frame astrometric reprojection, bit-exact CR2 validation and
+roadmap items 90–96. Authoritative code-facing docs are the root `README.md`,
+`TECHNICAL_SPEC.md`, `PROJECT_CONTEXT.md` and `BENCHMARKS.md`.
 
 <!-- consolidation-status:start -->
-Last consolidation: 2026-11-18
+Last consolidation: 2026-11-20
 Canonical theme files: 8
 Pending incoming files: none
 <!-- consolidation-status:end -->

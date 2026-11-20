@@ -563,3 +563,33 @@ N.I.N.A. manual PDF.
 ### 11.3 Roadmap candidates promoted
 
 Nine items were added to `ROADMAP.md`: drizzle correlated-noise/weight-coverage report, WHT/CTX sidecars, dither-pattern validator, SIP↔PV helper, primary+blind solver chain, cone-search cross-match client, aperture-photometry upgrade, calibration status keywords, and acquisition-keyword parity self-test.
+
+## 12. goCrawler all-scope export (2026-11-20, append-only)
+
+**Provenance.** `research/pendingToAnalyse/corpus-skystacker-research-all.txt` was a 1.0 MB goCrawler export generated at `2026-11-20T09:54:20Z` with 115 URL-delimited blocks. It was reviewed against §5/§6/§9/§10/§11 and the thematic files; the export was removed and the folder kept with `.gitkeep`. Three `/stable`↔`/latest` pairs were treated as aliases. Most blocks are re-crawls of pages already indexed in cycles 6–11 (drizzle, calibration, ASTAP, Pan-STARRS, SIP→PV, Gaia DR3/DR4, Siril/PixInsight/APP); their technical facts are not duplicated here.
+
+### 12.1 New source index (9 URLs)
+
+| URL | Theme | Relevance |
+|---|---|---|
+| `https://pyvo.readthedocs.io/en/latest/dal/index.html` | 02 | async TAP jobs vs sync timeouts, `maxrec`, `verbosity`, VO registry discovery |
+| `https://tweakwcs.readthedocs.io/` | 02 | iterative WCS correction against a reference catalog; FITS WCS and JWST GWCS |
+| `https://astroquery.readthedocs.io/en/latest/mast/mast.html` | 02 | MAST mission-specific and portal API queries, token handling |
+| `https://astroquery.readthedocs.io/en/latest/esasky/esasky.html` | 02 | ESASky cone/region catalog, map and spectra queries, SSO crossmatch |
+| `https://astroquery.readthedocs.io/en/latest/ipac/irsa/most.html` | 02 | IRSA MOST SSO precovery over 2MASS/WISE/ZTF images |
+| `https://docs.astropy.org/en/stable/io/votable/index.html` | 01 | VOTable 1.3 `BINARY2` masked columns and metadata-preserving writer |
+| `https://docs.astropy.org/en/stable/nddata/bitmask.html` | 01 | bit-field DQ arrays converted to boolean masks with ignore flags |
+| `https://docs.astropy.org/en/stable/coordinates/apply_space_motion.html` | 02 | `apply_space_motion` proper-motion + radial-velocity propagation |
+| `https://drizzlepac.readthedocs.io/` | 01 | DrizzlePac/AstroDrizzle/Tweakreg/MVM documentation hub |
+
+Already indexed without new rows: `archive.stsci.edu` + Pan-STARRS caveats, IRSA 2MASS, MAST/SHupe SIP→PV, Ginga (Python viewer, out of scope) and the Astropy WCS/coordinates sub-pages from cycle 11.
+
+### 12.2 Consolidated findings
+
+- **VO and catalog clients (→ [02](02-astrometry-and-identification.md) §21).** PyVO distinguishes synchronous TAP (connection held for the whole query, brittle for minute-long jobs) from asynchronous submission that returns a job URL for polling and queuing; `maxrec` must be overridden explicitly and `verbosity` is service-specific. ESASky defaults to 10,000 sources per mission (100,000 with `row_limit=-1`) and adds SSO crossmatch; IRSA MOST finds archival images covering predicted SSO positions; MAST exposes mission-specific and low-level portal APIs. `apply_space_motion` assumes straight-line constant velocity with RV=0 when unspecified — consistent with the shipped item 76 but not a new feature.
+- **WCS and masks (→ [01](01-architecture-and-core-engine.md), [02](02-astrometry-and-identification.md) §21).** `tweakwcs` refines an existing WCS by minimising catalog residuals; HST-style DQ bit fields become boolean masks only after applying ignore flags. VOTable `BINARY2` masks integer/bit-field columns that older `BINARY` cannot. These motivate items 95, 93 and a mask-aware VOTable writer, not a Python dependency.
+- **Drizzle and calibration (→ [01]/[04]).** No new facts beyond §9–§11: pixfrac/scale, correlated-noise ratio R, weight-map RMS, kernel choices and CFA droplet rules are already absorbed.
+
+### 12.3 Roadmap candidates promoted
+
+Four new Open items were added, ordered by effort: VOTable BINARY2 writer (93), async TAP/VO registry client (94), iterative WCS refinement (95) and MAST/ESASky/IRSA MOST archive adapters (96). Ginga and other Python-only viewers were rejected under the stdlib-only constraint; radial-velocity propagation was absorbed into the already-Done item 76.

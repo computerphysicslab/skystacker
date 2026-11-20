@@ -777,3 +777,7 @@ running `runPipeline`, `imageArithmetic` handles the multi-image operations,
 before the per-image Gaia SVG and HiPS cutout products.
 
 A full goCrawler export with DrizzlePac metrology and APP workflow numbers is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §11; its findings are consolidated there.
+
+## VOTable masks and DQ semantics (2026-11-20, append-only)
+
+The all-scope corpus ([08](08-crawler-source-discovery.md) §12) adds two file-format facts not previously indexed. VOTable 1.3 `BINARY2` supports masked integer and bit-field columns that legacy `BINARY` cannot; a writer that preserves `PARAM`/`INFO` must serialise an existing VOTable tree instead of re-deriving one from a plain table. HST-style DQ arrays are bit fields: a pixel is bad only after the chosen ignore flags are applied to `bitfield_to_boolean_mask`. SkyStacker's consumer is the cone-search/VOTable client (item 69) and the 32-bit contributor mask from item 85. Item 93 will add a stdlib VOTable 1.3 writer with `BINARY2` masks and a masked-column round-trip test; no Python dependency is introduced.
