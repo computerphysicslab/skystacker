@@ -74,6 +74,8 @@ guards the seeded M42 attempt produces a plausible-looking but false solution
 instead of reported. The remaining work is a better scale estimator and a
 proper multi-hypothesis (RANSAC + log-odds) verifier.
 
+**Second-pass engineering (2026-11-20).** The four blueprint phases were implemented: `--blind-detrend` with HFD/eccentricity gating, multi-tile Gaia gathering by default, Bayesian log-odds with scale-consistent pruning and best-hypothesis selection, an SBI1 binary index with density caps and exponential descriptor keys, and sub-degree nside-16/32 regional tooling with stored proper motions. Seven Go tests cover the new units. The corpus result is still **0/14**: the engineering is shipped but the scientific acceptance criteria are not met, so the roadmap rows are marked executed/not accepted.
+
 Set `SKYSTACKER_DEBUG_MATCH=1` to print matcher diagnostics
 (`nF`, `nG`, scale estimate, triangle counts, best inliers, threshold).
 

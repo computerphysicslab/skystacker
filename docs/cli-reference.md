@@ -79,7 +79,8 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--gaia-mirror URL` / `--gaia-cache-dir DIR` | ESA / OS cache | Gaia TAP endpoint and cache. |
 | `--gaia-nside N` / `--gaia-mag-limit M` | `64` / `14.0` | Tile resolution and magnitude limit. |
 | `--gaia-offline` / `--gaia-cache-refresh` | off | Offline mode / forced refresh. |
-| `--gaia-multitile` | off | Grow the seeded Gaia catalogue from all cached tiles around the pointing. |
+| `--gaia-multitile` (default on) / `--no-gaia-multitile` | on | Grow the seeded Gaia catalogue from all cached tiles around the pointing. |
+| `--blind-detrend` | off | Detrended, HFD-filtered star extraction for blind solves on processed frames. |
 | `--gaia-loose-match` | off | Relax matcher thresholds for processed images (8 arcsec, 1/8 of top stars). |
 | `--resample-sip` | off | Apply stored SIP in the stacking resampler. |
 | `--annotate` | off | Gaia projection + anomaly flags. |
@@ -97,6 +98,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--blind-allsky` / `--blind-max-tiles N` | off / `0` | Sweep Gaia sky tiles before building; bound the sweep to N tiles. |
 | `--blind-tile-offset N` / `--blind-refresh` | `0` / off | Chunked/resumable catalog builds. |
 | `--blind-region RA,DEC,RADIUS` / `--blind-index-info FILE` | — | Cone-limited regional index / print index metadata. |
+| `--blind-density-cap N` | `0` | Stars/deg² per sub-cell when building an index (0 = brightest-star cut); `.sbi` paths use the compact SBI1 binary format. |
 | `--blind-catalog ID` | — | Use a published magnitude-limited catalog by id. |
 | `--list-blind-catalogs` | off | Print the catalog registry and exit. |
 | `--download-blind-catalog ID` | — | Download and verify a catalog into the local cache. |

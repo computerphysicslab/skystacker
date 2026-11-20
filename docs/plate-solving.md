@@ -242,7 +242,9 @@ with `--build-blind-index FILE --blind-allsky --gaia-nside 4
 --blind-tile-offset N --blind-refresh`. See
 [catalogs/README.md](../catalogs/README.md) for the format and publishing
 workflow, and [blind-corpus-results.md](blind-corpus-results.md) for measured
-results on 14 real images from 50 to 1200 mm.
+results on 14 real images from 50 to 1200 mm. Indexes written to `.sbi` use the
+compact SBI1 binary format (shared star table with proper motions, band/tile/
+quad tables); JSON and `.gz` catalogs remain readable.
 
 **Scope of the prototype:** `--blind-allsky` can now sweep tiles across the sky
 at a chosen `--gaia-nside` (bounded by `--blind-max-tiles`), but a fine-grained

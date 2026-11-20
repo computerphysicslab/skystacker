@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Implemented the engineering deliverables of items 78–81 in `blind_engine.go`/`blind_index.go`: detrended+HFD-filtered extraction, default multi-tile Gaia gathering, Bayesian log-odds with scale-consistent pruning, SBI1 binary density-uniform index with exponential keys, and sub-degree/DR4 tooling with proper-motion records; seven Go tests added. Corpus acceptance criteria remain unmet (0/14), so the items are marked executed/not accepted.
+- Consolidated the 75 KB efficient-blind-solving corpus into `research/02` §17 (five defect classes for the 0/14 result, four-phase blueprint, Gaia DR4/v3.15 index constraints and a deduplicated source index), removed the processed file and promoted items 78–81; roadmap extended to 81 items.
 - Raised blind-solve diagnostics on the real corpus: `--gaia-multitile`, `--gaia-loose-match`, nearest-neighbour scale estimation, focal-hint override, RMS/seed-centre sanity gates and `SKYSTACKER_DEBUG_MATCH`; false seeded solutions are now rejected instead of reported.
 - Added `scripts/bench-blind.sh` and evaluated the 14-image real blind-solving corpus (50/150/300/1200 mm): 0/14 solves with `mag10`, documented in `docs/blind-corpus-results.md`; added quad-geometry hypothesis verification to the native solver (synthetic tests pass, real images still fail).
 - Advanced item 73: multi-quad generation (up to 10 per star) and coarse+fine descriptor bins make the native solver tolerant of 1 px centroid noise (`testNativeBlindNoisy`); rebuilt `mag10deep` to 309,078 quads (~25 MB) and refreshed its checksum; self-tests 274.

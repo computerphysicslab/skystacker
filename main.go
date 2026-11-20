@@ -216,6 +216,7 @@ type cliOptions struct {
 	GaiaMagLimit           float64
 	GaiaOffline            bool
 	GaiaMultiTile          bool
+	BlindDetrend           bool
 	GaiaLooseMatch         bool
 	GaiaCacheRefresh       bool
 	PlateSolve             bool
@@ -225,6 +226,7 @@ type cliOptions struct {
 	BenchmarkSolvers       string
 	BlindIndex             string
 	BuildBlindIndex        string
+	BlindDensityCap        float64
 	BlindCatalog           string
 	ListBlindCatalogs      bool
 	DownloadBlindCatalog   string
@@ -520,6 +522,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.ListBlindCatalogs, "list-blind-catalogs", false, "list downloadable plate-solving catalogs and exit")
 	fs.StringVar(&o.DownloadBlindCatalog, "download-blind-catalog", "", "download a catalog into the local cache with checksum verification, then exit")
 	fs.Float64Var(&o.BlindMagLimit, "blind-mag-limit", 14, "Gaia G-band magnitude limit when building a catalog")
+	fs.Float64Var(&o.BlindDensityCap, "blind-density-cap", 0, "stars/deg^2 cap per sub-cell when building an index (0 = brightest-star cut)")
 	fs.IntVar(&o.BlindBrightest, "blind-brightest", 100, "brightest stars per HEALPix tile when building a catalog")
 	fs.BoolVar(&o.BlindAllSky, "blind-allsky", false, "with --build-blind-index: query Gaia tiles across the sky before building the index")
 	fs.IntVar(&o.BlindMaxTiles, "blind-max-tiles", 0, "maximum number of tiles for --blind-allsky (0 = whole sky at --gaia-nside)")
@@ -552,8 +555,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
 	fs.Float64Var(&o.GaiaMagLimit, "gaia-mag-limit", 14.0, "Gaia G-band magnitude limit for tile queries (0-20)")
 	fs.BoolVar(&o.GaiaOffline, "gaia-offline", false, "never query the Gaia mirror; cache misses are a hard error")
-	fs.BoolVar(&o.GaiaMultiTile, "gaia-multitile", false, "grow the seeded Gaia catalogue from all cached tiles around the pointing")
+	fs.BoolVar(&o.GaiaMultiTile, "gaia-multitile", true, "grow the seeded Gaia catalogue from all cached tiles around the pointing")
+	var noMultiTile bool
+	fs.BoolVar(&noMultiTile, "no-gaia-multitile", false, "disable multi-tile Gaia gathering")
 	fs.BoolVar(&o.GaiaLooseMatch, "gaia-loose-match", false, "relax Gaia match thresholds for processed images (8 arcsec, 1/8 inliers)")
+	fs.BoolVar(&o.BlindDetrend, "blind-detrend", false, "detrend/HFD-filter detections for blind solving on processed frames")
 	fs.BoolVar(&o.GaiaCacheRefresh, "gaia-cache-refresh", false, "re-download tiles even if cached (still updates the cache)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
@@ -679,7 +685,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -696,6 +702,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, err
 	}
 	o.Register = !noRegister
+	if noMultiTile {
+		o.GaiaMultiTile = false
+	}
 	if o.PSFScaleSNR && !o.Register {
 		return nil, fmt.Errorf("--psf-scale-snr requires star detection; it cannot be combined with --no-register")
 	}
@@ -1547,7 +1556,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
 	fmt.Fprintln(w, "  --gaia-mag-limit M Gaia G-band magnitude limit (0-20, default 14.0)")
 	fmt.Fprintln(w, "  --gaia-offline     never query the Gaia mirror; cache misses are a hard error")
-	fmt.Fprintln(w, "  --gaia-multitile   use all cached Gaia tiles around the pointing for seeded solves")
+	fmt.Fprintln(w, "  --gaia-multitile (default on) / --no-gaia-multitile  cached-tile Gaia gathering")
+	fmt.Fprintln(w, "  --blind-detrend    detrended, HFD-filtered extraction for blind solving")
 	fmt.Fprintln(w, "  --gaia-cache-refresh  re-download tiles even if cached (still updates the cache)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
@@ -6263,8 +6273,11 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.GaiaOffline {
 		add("--gaia-offline")
 	}
-	if o.GaiaMultiTile {
-		add("--gaia-multitile")
+	if !o.GaiaMultiTile {
+		add("--no-gaia-multitile")
+	}
+	if o.BlindDetrend {
+		add("--blind-detrend")
 	}
 	if o.MaskBG {
 		add("--mask-bg")
@@ -6722,6 +6735,7 @@ type runOptions struct {
 	// GaiaOffline makes the plate-solve step use only cached Gaia tiles.
 	GaiaOffline    bool
 	GaiaMultiTile  bool
+	BlindDetrend   bool
 	GaiaLooseMatch bool
 	GaiaMirror     string
 	GaiaNside      int
@@ -15132,6 +15146,7 @@ func solveLinear3(M [3][3]float64, b [3]float64) []float64 {
 }
 
 var gaiaMultiTile bool
+var nativeDensityCap float64
 
 // cachedGaiaStarsAround gathers stars from all cached HEALPix tiles whose
 // centres lie within radiusRad of (ra,dec). This avoids the single-tile
@@ -15979,9 +15994,10 @@ func refineAstrometrySolution(sol *plateSolution, stars []star) *plateSolution {
 // votes for HEALPix tiles from image quads, and verifies the winning tile with
 // the existing Gaia matcher and WCS fit. No external solver is involved.
 const (
-	nativeIndexVersion = 2
-	nativeQuadBin      = 0.05
-	nativeBrightest    = 100
+	nativeIndexVersion      = 2
+	nativeDensityCapDefault = 0
+	nativeQuadBin           = 0.05
+	nativeBrightest         = 100
 )
 
 // nativeScaleBand models the density/scale trade-off used by Astrometry.net
@@ -16030,6 +16046,35 @@ type nativeQuadSample struct {
 func nativeBinWith(v, bin float64) int64 { return int64(math.Round(v / bin)) }
 
 func nativeBin(v float64) int64 { return nativeBinWith(v, nativeQuadBin) }
+
+// nativeExpBin implements TETRA-style exponential bins: narrow near zero and
+// progressively wider away from it, so centroid jitter does not push a
+// descriptor across a hard boundary. The mapping is constant-time.
+// nativeExpKeyFromFine converts a b20 descriptor into TETRA-style bins.
+func nativeExpKeyFromFine(fine string) string {
+	rest := strings.TrimPrefix(fine, "b20|")
+	parts := strings.Split(rest, ":")
+	if len(parts) != 4 {
+		return ""
+	}
+	bins := make([]int64, 4)
+	for i, p := range parts {
+		n, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			return ""
+		}
+		bins[i] = nativeExpBin(float64(n) * nativeQuadBin)
+	}
+	return fmt.Sprintf("exp|%d:%d:%d:%d", bins[0], bins[1], bins[2], bins[3])
+}
+
+func nativeExpBin(v float64) int64 {
+	if v < 0 {
+		v = -v
+	}
+	const base = 1.2
+	return int64(math.Log1p(v/0.01) / math.Log(base))
+}
 
 // nativeQuadKey encodes a four-star pattern in a scale-, rotation-,
 // translation- and parity-invariant form. The longest pair is the backbone;
@@ -16127,6 +16172,9 @@ func nativeQuads(pts []point2D, idx []int, sky []gaiaStar) []nativeQuadSample {
 						out = append(out, nativeQuadSample{Key: key, Longest: longest, Pts: ordered, Sky: quadSky})
 						if fine, _, finePts, ok := nativeQuadKeyBinned(quad, 0.02, "b20|"); ok {
 							out = append(out, nativeQuadSample{Key: fine, Longest: longest, Pts: finePts, Sky: quadSky})
+							if expKey := nativeExpKeyFromFine(fine); expKey != "" {
+								out = append(out, nativeQuadSample{Key: expKey, Longest: longest, Pts: finePts, Sky: quadSky})
+							}
 						}
 						emitted++
 					}
@@ -16166,6 +16214,9 @@ func buildNativeIndexFromCache(cacheDir string, nside, brightest int) (*nativeBl
 			continue
 		}
 		stars := append([]gaiaStar{}, tile.Stars...)
+		if nativeDensityCap > 0 {
+			stars = selectDensityUniformStars(stars, nside, nativeDensityCap)
+		}
 		sort.SliceStable(stars, func(i, j int) bool { return stars[i].MagG < stars[j].MagG })
 		if len(stars) > brightest {
 			stars = stars[:brightest]
@@ -16391,6 +16442,20 @@ func runBuildBlindIndex(path, cacheDir string, nside, brightest int) error {
 	if err != nil {
 		return err
 	}
+	if strings.HasSuffix(path, ".sbi") {
+		var buf bytes.Buffer
+		if err := writeNativeIndexBinary(&buf, idx); err != nil {
+			return err
+		}
+		data := buf.Bytes()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return writeFileAtomic(path, func(out io.Writer) error {
+			_, err := out.Write(data)
+			return err
+		})
+	}
 	data, err := json.Marshal(idx)
 	if err != nil {
 		return err
@@ -16598,6 +16663,9 @@ func readNativeIndex(path string) (*nativeBlindIndex, error) {
 	if err != nil {
 		return nil, err
 	}
+	if isNativeBinaryIndex(path) {
+		return readNativeIndexBinary(bytes.NewReader(data))
+	}
 	if strings.HasSuffix(path, ".gz") {
 		zr, err := gzip.NewReader(bytes.NewReader(data))
 		if err != nil {
@@ -16735,12 +16803,19 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 			lastErr = fmt.Errorf("%s: no consistent transform", label)
 			return nil
 		}
+		odds := bayesianLogOdds(len(matches), len(ordered), len(catalog),
+			5.0*math.Pi/(180.0*3600.0), 0.008)
+		if odds < 10 {
+			lastErr = fmt.Errorf("%s: log-odds %.1f below threshold", label, odds)
+			return nil
+		}
 		sol, err := plateSolutionFromGaia(ordered, catalog, "native")
 		if err != nil {
 			lastErr = err
 			return nil
 		}
 		sol.Verify = verifySolution(ordered, catalog, matches, 5.0, 0.008)
+		sol.Verify.LogOdds = odds
 		logf("  plate: native blind solve %s", label)
 		return sol
 	}
@@ -16759,6 +16834,13 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 		}
 	}
 	geoCatalogs := make(map[int][]gaiaStar)
+	const logOddsThreshold = 10.0
+	type geoCandidate struct {
+		sol     *plateSolution
+		logOdds float64
+		inliers int
+	}
+	var bestGeo *geoCandidate
 	for _, h := range hypotheses {
 		catalog, cached := geoCatalogs[h.hit.Ipix]
 		if !cached {
@@ -16769,14 +16851,35 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 		if !ok {
 			continue
 		}
-		sol, err := plateSolutionFromMatches(ordered, catalog, matches, "native")
+		pruned := scaleConsistentMatches(matches, ordered, catalog, 0.2)
+		if len(pruned) < 6 {
+			continue
+		}
+		odds := bayesianLogOdds(len(pruned), len(ordered), len(catalog),
+			5.0*math.Pi/(180.0*3600.0), 0.008)
+		if odds < logOddsThreshold {
+			continue
+		}
+		sol, err := plateSolutionFromMatches(ordered, catalog, pruned, "native")
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		sol.Verify = verifySolution(ordered, catalog, matches, 5.0, 0.008)
-		logf("  plate: native blind solve by quad geometry (%d inliers)", len(matches))
-		return sol, nil
+		sol.Verify = verifySolution(ordered, catalog, pruned, 5.0, 0.008)
+		sol.Verify.LogOdds = odds
+		if bestGeo == nil || odds > bestGeo.logOdds {
+			bestGeo = &geoCandidate{sol, odds, len(pruned)}
+		}
+		// Early termination: a statistically overwhelming hypothesis does
+		// not need the remaining collision candidates.
+		if odds > 5*logOddsThreshold {
+			break
+		}
+	}
+	if bestGeo != nil {
+		logf("  plate: native blind solve by quad geometry (%d inliers, log-odds %.1f)",
+			bestGeo.inliers, bestGeo.logOdds)
+		return bestGeo.sol, nil
 	}
 	if sol := verify(combined, "combined cells"); sol != nil {
 		return sol, nil
@@ -16812,6 +16915,15 @@ func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float6
 	timeout := time.Duration(o.AstrometryTimeout) * time.Second
 	if timeout <= 0 {
 		timeout = 180 * time.Second
+	}
+	if o.BlindDetrend && imagePath != "" {
+		if decoded, derr := decodeImageFile(imagePath, 0, 0); derr == nil {
+			if cleaned := detrendedBlindStars(decoded, 200); len(cleaned) >= 3 {
+				stars = cleaned
+			}
+		} else {
+			logf("  plate: detrended extraction failed (%v); using supplied stars", derr)
+		}
 	}
 	seeded := seedRA != 0 || seedDec != 0
 	hint := expectedPlateScale(o.SolverFocalLength, o.SolverPixelSize)
@@ -16930,6 +17042,7 @@ func solverOptionsFromCLI(o *cliOptions) runOptions {
 		SolverPixelSize:   o.SolverPixelSize,
 		GaiaOffline:       o.GaiaOffline,
 		GaiaMultiTile:     o.GaiaMultiTile,
+		BlindDetrend:      o.BlindDetrend,
 		GaiaLooseMatch:    o.GaiaLooseMatch,
 	}
 }
@@ -33751,6 +33864,7 @@ func main() {
 		return
 	}
 	if opts.BuildBlindIndex != "" {
+		nativeDensityCap = opts.BlindDensityCap
 		var err error
 		if opts.BlindAllSky || opts.BlindRegion != "" {
 			var region *blindRegion
@@ -33995,6 +34109,7 @@ func main() {
 		PlateSolve:             opts.PlateSolve,
 		GaiaOffline:            opts.GaiaOffline,
 		GaiaMultiTile:          opts.GaiaMultiTile,
+		BlindDetrend:           opts.BlindDetrend,
 		GaiaLooseMatch:         opts.GaiaLooseMatch,
 		GaiaMirror:             opts.GaiaMirror,
 		GaiaNside:              opts.GaiaNside,
