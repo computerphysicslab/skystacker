@@ -52,7 +52,19 @@ The result is `/tmp/quick-plate/stacked_mean_plate_solution.json`. See
 [plate-solving.md](plate-solving.md) for seeded, local, ASTAP and web options
 with real observed outputs.
 
-## 3. Re-run post-processing on an existing stack
+## 3. Export the detected star list
+
+```bash
+skystacker --process-image assets/MilkyWay.jpg \
+  --export-stars /tmp/stars.json
+```
+
+`/tmp/stars.json` contains up to 500 detections sorted by decreasing flux,
+with 0-based pixel centroids, integrated flux, component size, eccentricity and
+HFR. Use a `.csv` path for a spreadsheet-friendly version. No stacking or
+plate solving is needed.
+
+## 4. Re-run post-processing on an existing stack
 
 ```bash
 skystacker --post-only --resume \

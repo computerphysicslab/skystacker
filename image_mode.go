@@ -3,12 +3,15 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -149,6 +152,75 @@ func writeImageMeasurements(dir string, rep imageMeasureReport) error {
 	return err
 }
 
+type exportedStar struct {
+	X    float64 `json:"x_px"`
+	Y    float64 `json:"y_px"`
+	Flux float64 `json:"flux"`
+	Size int     `json:"size_px"`
+	Ecc  float64 `json:"eccentricity"`
+	HFR  float64 `json:"hfr_px"`
+}
+
+type starCatalog struct {
+	Image     string         `json:"image"`
+	Width     int            `json:"width"`
+	Height    int            `json:"height"`
+	Detection string         `json:"detection"`
+	Count     int            `json:"count"`
+	Stars     []exportedStar `json:"stars"`
+}
+
+// writeStarCatalog exports the detected star list of a single image, sorted
+// from brightest to faintest, as JSON (default) or CSV (path ending in .csv).
+// Coordinates are 0-based pixels and Flux is the background-subtracted
+// integrated intensity from the high-pass detector.
+func writeStarCatalog(path, imagePath string, f *frame, maxStars int) error {
+	if f == nil || path == "" {
+		return errors.New("star catalog: empty frame or path")
+	}
+	if maxStars <= 0 {
+		maxStars = 500
+	}
+	stars := detectStars(f, maxStars)
+	sort.SliceStable(stars, func(i, j int) bool { return stars[i].Flux > stars[j].Flux })
+	catalog := starCatalog{Image: filepath.Base(imagePath), Width: f.Width, Height: f.Height,
+		Detection: "high-pass connected components", Count: len(stars), Stars: make([]exportedStar, 0, len(stars))}
+	for _, s := range stars {
+		catalog.Stars = append(catalog.Stars, exportedStar{s.X, s.Y, s.Flux, s.Size, s.Ecc, s.HFR})
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if strings.HasSuffix(strings.ToLower(path), ".csv") {
+		out, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		w := csv.NewWriter(out)
+		if err := w.Write([]string{"x_px", "y_px", "flux", "size_px", "eccentricity", "hfr_px"}); err != nil {
+			out.Close()
+			return err
+		}
+		for _, s := range catalog.Stars {
+			if err := w.Write([]string{
+				strconv.FormatFloat(s.X, 'f', 3, 64), strconv.FormatFloat(s.Y, 'f', 3, 64),
+				strconv.FormatFloat(s.Flux, 'f', 4, 64), strconv.Itoa(s.Size),
+				strconv.FormatFloat(s.Ecc, 'f', 4, 64), strconv.FormatFloat(s.HFR, 'f', 4, 64),
+			}); err != nil {
+				out.Close()
+				return err
+			}
+		}
+		w.Flush()
+		err = w.Error()
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+		return err
+	}
+	return writeJSON(path, catalog)
+}
+
 func imageArithmetic(op string, frames []*frame) (*frame, error) {
 	w, h := frames[0].Width, frames[0].Height
 	out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
@@ -253,6 +325,13 @@ func runImageCommand(o *cliOptions) error {
 	paths, err := imagePaths(o.ProcessImage)
 	if err != nil {
 		return err
+	}
+	if o.ExportStars != "" {
+		f, err := decodeImageFile(paths[0], 0, 0)
+		if err != nil {
+			return err
+		}
+		return writeStarCatalog(o.ExportStars, paths[0], f, 500)
 	}
 	dir := o.ImageOutput
 	if dir == "" {

@@ -141,6 +141,7 @@ See [post-processing.md](post-processing.md).
 | `--process-image PATH[,PATH...]` | — | Process existing images without stacking. |
 | `--image-op OP` | — | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve`. |
 | `--image-output DIR` | `image_processing` | Output directory. |
+| `--export-stars FILE` | — | Export detected stars of `--process-image` as flux-sorted JSON/CSV; no `--image-op` required. |
 
 ## Diagnostics and control
 

@@ -51,6 +51,16 @@ frame,stars,inliers,hfr_px,fwhm_px,eccentricity,snr,bg_sigma,
 intrinsic_quality,weight,psf_scale,ssweight,note
 ```
 
+### Star catalog export (`--export-stars`)
+
+`--export-stars FILE` writes a `starCatalog` object with `image`, `width`,
+`height`, `detection`, `count` and `stars[]`; each entry has `x_px`, `y_px`,
+`flux`, `size_px`, `eccentricity` and `hfr_px`, sorted brightest-first. A `.csv`
+path writes the same columns as CSV with the header
+`x_px,y_px,flux,size_px,eccentricity,hfr_px`. Coordinates are 0-based pixels
+and `flux` is the background-subtracted integrated intensity from the high-pass
+detector. Run with `--process-image` and no `--image-op`.
+
 ### `photometry.csv` / `photometry.json`
 
 Produced by `--photometry`: x/y, RA/Dec, flux, instrumental and calibrated

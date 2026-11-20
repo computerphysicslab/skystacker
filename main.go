@@ -293,6 +293,7 @@ type cliOptions struct {
 	ProcessImage           string
 	ImageOp                string
 	ImageOutput            string
+	ExportStars            string
 	DeconvolveWiener       bool
 	Photometry             bool
 	AperturePhotometry     bool
@@ -629,6 +630,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.ProcessImage, "process-image", "", "comma-separated image paths to process without stacking")
 	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout, plate-solve")
 	fs.StringVar(&o.ImageOutput, "image-output", "image_processing", "output directory for --process-image results")
+	fs.StringVar(&o.ExportStars, "export-stars", "", "export the detected star list of --process-image as flux-sorted JSON or CSV")
 	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
 	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
 	fs.BoolVar(&o.AperturePhotometry, "aperture-photometry", false, "local annulus background, Kron/FLUX_RADIUS and segmentation masking in --photometry")
@@ -685,7 +687,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -839,7 +841,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.DiagnoseTop < 1 || o.DiagnoseTop > 100 {
 		return nil, fmt.Errorf("--diagnose-top must be in [1, 100], got %d", o.DiagnoseTop)
 	}
-	if o.ProcessImage != "" && !validImageOperation(o.ImageOp) {
+	if o.ProcessImage != "" && o.ExportStars == "" && !validImageOperation(o.ImageOp) {
 		return nil, fmt.Errorf("--image-op must be one of: %s", strings.Join(imageOperations, ", "))
 	}
 	if o.SurveyTimeout < 1 || o.SurveyTimeout > 300 {
@@ -1513,6 +1515,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --survey-hips ID / --survey-timeout N  HiPS survey and HTTP timeout (30 s)")
 	fmt.Fprintln(w, "  --process-image PATH[,PATH...]  process image(s) without running the stacking pipeline")
 	fmt.Fprintln(w, "  --image-op OP / --image-output DIR  operation (see --help listing) and output directory")
+	fmt.Fprintln(w, "  --export-stars FILE            export detected stars (brightest first) as .json/.csv")
 	fmt.Fprintln(w, "                     ops: blur sharpen background stretch denoise deconvolve starless")
 	fmt.Fprintln(w, "                          sum subtract average median min max measure-transform")
 	fmt.Fprintln(w, "                          measure-quality sky-map survey-cutout plate-solve")
@@ -6683,6 +6686,7 @@ type runOptions struct {
 	ProcessImage           string
 	ImageOp                string
 	ImageOutput            string
+	ExportStars            string
 	DeconvolveWiener       bool
 	Photometry             bool
 	AperturePhotometry     bool
