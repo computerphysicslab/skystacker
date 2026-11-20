@@ -214,6 +214,7 @@ type cliOptions struct {
 	TestDebayer      string
 	AcquisitionCheck string
 	CheckSurveyFITS  string
+	ExtinctionReport bool
 
 	GaiaTest               string
 	GaiaMirror             string
@@ -248,6 +249,7 @@ type cliOptions struct {
 	ConeRadiusArcsec       float64
 	PlateSolver            string
 	AstrometryCmd          string
+	SolveFieldArgs         string
 	ASTAPCmd               string
 	AstrometryAPIKey       string
 	AstrometryURL          string
@@ -300,6 +302,7 @@ type cliOptions struct {
 	ImageOp                string
 	ImageOutput            string
 	ExportStars            string
+	ExportVotable          string
 	ClassifyObjects        string
 	DeconvolveWiener       bool
 	Photometry             bool
@@ -544,6 +547,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.ConeRadiusArcsec, "cone-radius", 60, "cone-search radius in arcsec (SDSS max 180, IRSA default 10)")
 	fs.StringVar(&o.PlateSolver, "plate-solver", "auto", "solver chain: auto (seeded Gaia, then astrometry.net), gaia, astrometry-local, astap, astrometry-web")
 	fs.StringVar(&o.AstrometryCmd, "astrometry-cmd", "solve-field", "local astrometry.net solve-field command (quoted argv supported)")
+	fs.StringVar(&o.SolveFieldArgs, "solve-field-args", "", "extra quoted argv for local solve-field (no shell)")
 	fs.StringVar(&o.ASTAPCmd, "astap-cmd", "astap", "local ASTAP blind solver command (needs an installed D05-D80 database)")
 	fs.StringVar(&o.AstrometryAPIKey, "astrometry-api-key", "", "nova.astrometry.net API key (default: AN_API_KEY or ASTROMETRY_API_KEY env)")
 	fs.StringVar(&o.AstrometryURL, "astrometry-url", astrometryDefaultAPIURL, "nova.astrometry.net API base URL")
@@ -613,6 +617,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.PostPreset, "post-preset", "default", "post-processing order: default or detail-last (detail enhancement after denoise)")
 	fs.BoolVar(&o.Starless, "starless", false, "write starless and star-layer float32 stacks/JPEGs after star removal")
 	fs.BoolVar(&o.JSONReport, "json-report", false, "write report.json alongside report.txt")
+	fs.BoolVar(&o.ExtinctionReport, "extinction-report", false, "report-only Rayleigh extinction coefficients (forces report.json)")
 	fs.BoolVar(&o.Provenance, "provenance", false, "write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fs.BoolVar(&o.Diagnose, "diagnose", false, "collect a host/runtime diagnostic snapshot and exit")
 	fs.BoolVar(&o.DiagnoseJSON, "diagnose-json", false, "with --diagnose: also write diagnostics.json")
@@ -644,6 +649,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout, plate-solve")
 	fs.StringVar(&o.ImageOutput, "image-output", "image_processing", "output directory for --process-image results")
 	fs.StringVar(&o.ExportStars, "export-stars", "", "export the detected star list of --process-image as flux-sorted JSON or CSV")
+	fs.StringVar(&o.ExportVotable, "export-votable", "", "export cone/annotation catalogs as VOTable 1.3 BINARY2")
 	fs.StringVar(&o.ClassifyObjects, "classify-objects", "", "report-only diffuse-object morphology and IVOA classification for --process-image")
 	fs.BoolVar(&o.DeconvolveWiener, "deconvolve-wiener", false, "FFT-based Wiener deconvolution instead of Richardson-Lucy")
 	fs.BoolVar(&o.Photometry, "photometry", false, "ensemble aperture photometry against cached Gaia stars (requires --plate-solve)")
@@ -701,7 +707,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -1488,6 +1494,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --blind-mag-limit M / --blind-brightest N  Gaia magnitude limit and stars per tile when building")
 	fmt.Fprintln(w, "  --blind-catalog ID / --list-blind-catalogs / --download-blind-catalog ID  published catalogs")
 	fmt.Fprintln(w, "  --astrometry-cmd CMD local solve-field command (default: solve-field; needs installed index files)")
+	fmt.Fprintln(w, "  --solve-field-args ARGS extra quoted argv for local solve-field (no shell)")
 	fmt.Fprintln(w, "  --astap-cmd CMD     local ASTAP blind solver (default: astap; needs a D05-D80 database)")
 	fmt.Fprintln(w, "  --astrometry-api-key KEY / AN_API_KEY  nova.astrometry.net key for blind web solves")
 	fmt.Fprintln(w, "  --astrometry-url URL / --astrometry-timeout N  web API base URL and solve timeout in seconds")
@@ -1510,6 +1517,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --sso-ephemeris FILE        MPC-style SSO ephemeris (a:/c:/p:/dp:/s: IDs), site header and DATE-OBS")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
+	fmt.Fprintln(w, "  --extinction-report report-only Rayleigh coefficients per RGB channel")
 	fmt.Fprintln(w, "  --provenance       write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fmt.Fprintln(w, "  --diagnose         host/runtime diagnostic snapshot; write diagnostics.txt and exit")
 	fmt.Fprintln(w, "  --diagnose-json    also write diagnostics.json")
@@ -1535,6 +1543,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --process-image PATH[,PATH...]  process image(s) without running the stacking pipeline")
 	fmt.Fprintln(w, "  --image-op OP / --image-output DIR  operation (see --help listing) and output directory")
 	fmt.Fprintln(w, "  --export-stars FILE            export detected stars (brightest first) as .json/.csv")
+	fmt.Fprintln(w, "  --export-votable FILE          export cone/annotation catalogs as VOTable 1.3 BINARY2")
 	fmt.Fprintln(w, "  --classify-objects FILE        report-only diffuse morphology + IVOA object-type JSON")
 	fmt.Fprintln(w, "                     ops: blur sharpen background stretch denoise deconvolve starless")
 	fmt.Fprintln(w, "                          sum subtract average median min max measure-transform")
@@ -5845,11 +5854,12 @@ type processingReport struct {
 	FramesWithExif          int
 	RefExif                 exifData
 	PlateSolution           *plateSolution
-	ConeTruncated           bool    `json:"cone_truncated,omitempty"`
-	ConeRows                int     `json:"cone_rows,omitempty"`
-	ConeCoveredRadiusArcsec float64 `json:"cone_covered_radius_arcsec,omitempty"`
-	ConeCoveredAreaDeg2     float64 `json:"cone_covered_area_deg2,omitempty"`
-	ConeLimitReason         string  `json:"cone_limit_reason,omitempty"`
+	ConeTruncated           bool              `json:"cone_truncated,omitempty"`
+	ConeRows                int               `json:"cone_rows,omitempty"`
+	ConeCoveredRadiusArcsec float64           `json:"cone_covered_radius_arcsec,omitempty"`
+	ConeCoveredAreaDeg2     float64           `json:"cone_covered_area_deg2,omitempty"`
+	ConeLimitReason         string            `json:"cone_limit_reason,omitempty"`
+	ExtinctionReport        *extinctionReport `json:"extinction_report,omitempty"`
 }
 
 type provEntity struct {
@@ -6148,6 +6158,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.JSONReport {
 		add("--json-report")
 	}
+	if o.ExtinctionReport {
+		add("--extinction-report")
+	}
 	if o.Provenance {
 		add("--provenance")
 	}
@@ -6325,6 +6338,9 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.AstrometryCmd != "" && o.AstrometryCmd != "solve-field" {
 		add("--astrometry-cmd " + quoteReportArg(o.AstrometryCmd))
+	}
+	if o.SolveFieldArgs != "" {
+		add("--solve-field-args " + quoteReportArg(o.SolveFieldArgs))
 	}
 	if o.ASTAPCmd != "" && o.ASTAPCmd != "astap" {
 		add("--astap-cmd " + quoteReportArg(o.ASTAPCmd))
@@ -6547,6 +6563,9 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		}
 		ew.printf("\n")
 	}
+	if r.ExtinctionReport != nil {
+		ew.printf("%s\n", formatExtinctionReport(r.ExtinctionReport))
+	}
 	ew.printf("Output files:\n")
 	for _, f := range r.OutputFiles {
 		ew.printf("  %s\n", f)
@@ -6741,6 +6760,7 @@ type runOptions struct {
 	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
+	ExtinctionReport       bool
 	Provenance             bool
 	Diagnose               bool
 	DiagnoseJSON           bool
@@ -6771,6 +6791,7 @@ type runOptions struct {
 	ImageOp                string
 	ImageOutput            string
 	ExportStars            string
+	ExportVotable          string
 	ClassifyObjects        string
 	DeconvolveWiener       bool
 	Photometry             bool
@@ -6841,6 +6862,7 @@ type runOptions struct {
 	ConeRadiusArcsec  float64
 	PlateSolver       string
 	AstrometryCmd     string
+	SolveFieldArgs    string
 	ASTAPCmd          string
 	AstrometryAPIKey  string
 	AstrometryURL     string
@@ -10662,6 +10684,9 @@ func selfFlatGammaNote(linear bool) string {
 
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
+	if opts.ExtinctionReport {
+		opts.JSONReport = true
+	}
 	matchedFilterEnabled = opts.MatchedFilter
 	var plateSolutionOut *plateSolution
 
@@ -13077,6 +13102,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			cometFrames, opts.CometX, opts.CometY, opts.CometRatePxX, opts.CometRatePxY))
 	}
 	coneInfo := computeConeTruncationReport(&opts, plateSolutionOut)
+	var extinctionInfo *extinctionReport
+	if opts.ExtinctionReport {
+		extinctionInfo = computeExtinctionReport(acceptedPaths)
+	}
 	rep := &processingReport{
 		Version:               version,
 		Timestamp:             start,
@@ -13150,6 +13179,14 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		rep.ConeCoveredRadiusArcsec = coneInfo.RadiusArcsec
 		rep.ConeCoveredAreaDeg2 = coneInfo.AreaDeg2
 		rep.ConeLimitReason = coneInfo.Reason
+	}
+	rep.ExtinctionReport = extinctionInfo
+	if opts.ExportVotable != "" {
+		if err := writeVOTable(opts.ExportVotable, collectVOTableCatalog(&opts, plateSolutionOut)); err != nil {
+			logf("VOTable export failed: %v", err)
+		} else {
+			rep.OutputFiles = append(rep.OutputFiles, opts.ExportVotable)
+		}
 	}
 	if opts.StreakDetect && len(finalMeanPix) == refW*refH*3 {
 		mask, hits := detectStreakMask(&frame{Width: refW, Height: refH, Pix: finalMeanPix}, 5)
@@ -13650,7 +13687,7 @@ func runBlindBenchmark(dir string, solvers []string, o *cliOptions) error {
 			var serr error
 			switch solver {
 			case "astrometry-local":
-				sol, serr = solveAstrometryLocal(path, o.AstrometryCmd, hint, timeout)
+				sol, serr = solveAstrometryLocal(path, o.AstrometryCmd, o.SolveFieldArgs, hint, timeout)
 			case "astap":
 				sol, serr = solveASTAPLocal(path, o.ASTAPCmd, timeout)
 			case "native":
@@ -15685,13 +15722,17 @@ func astrometryScaleArgs(hint float64) []string {
 // solveAstrometryLocal runs a local astrometry.net solve-field on the image.
 // It requires the astrometry.net CLI and index files installed on the host;
 // when they are missing the error explains how to use the web backend.
-func solveAstrometryLocal(imagePath, command string, scaleHint float64, timeout time.Duration) (*plateSolution, error) {
+func solveAstrometryLocal(imagePath, command, extraArgs string, scaleHint float64, timeout time.Duration) (*plateSolution, error) {
 	if command == "" {
 		command = "solve-field"
 	}
 	fields, err := splitCommandArgv(command)
 	if err != nil || len(fields) == 0 {
 		return nil, fmt.Errorf("astrometry local: invalid --astrometry-cmd %q: %v", command, err)
+	}
+	extras, err := splitCommandArgv(extraArgs)
+	if err != nil {
+		return nil, fmt.Errorf("astrometry local: invalid --solve-field-args %q: %w", extraArgs, err)
 	}
 	if _, err := exec.LookPath(fields[0]); err != nil {
 		return nil, fmt.Errorf("astrometry local: %q not found: %w (install astrometry.net with index files, or use --plate-solver astrometry-web)", fields[0], err)
@@ -15703,6 +15744,7 @@ func solveAstrometryLocal(imagePath, command string, scaleHint float64, timeout 
 	defer os.RemoveAll(dir)
 	wcsPath := filepath.Join(dir, "solved.wcs")
 	argv := append([]string{}, fields...)
+	argv = append(argv, extras...)
 	argv = append(argv, imagePath, "--no-plots", "--overwrite", "--skip-solved", "-D", dir, "--wcs", wcsPath)
 	argv = append(argv, astrometryScaleArgs(scaleHint)...)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -17139,7 +17181,7 @@ func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float6
 	var sol *plateSolution
 	var err error
 	if mode == "astrometry-local" || mode == "auto" {
-		sol, err = solveAstrometryLocal(imagePath, o.AstrometryCmd, hint, timeout)
+		sol, err = solveAstrometryLocal(imagePath, o.AstrometryCmd, o.SolveFieldArgs, hint, timeout)
 		if err == nil {
 			logf("  plate: blind solve via local astrometry.net")
 		} else if mode == "astrometry-local" {
@@ -17207,6 +17249,7 @@ func solverOptionsFromCLI(o *cliOptions) runOptions {
 	return runOptions{
 		PlateSolver:       o.PlateSolver,
 		AstrometryCmd:     o.AstrometryCmd,
+		SolveFieldArgs:    o.SolveFieldArgs,
 		ASTAPCmd:          o.ASTAPCmd,
 		BlindIndex:        o.BlindIndex,
 		BlindCatalog:      o.BlindCatalog,
@@ -20076,7 +20119,7 @@ func testAstrometryLocalSolver() error {
 		return err
 	}
 	command := fmt.Sprintf("%q %s", filepath.ToSlash(self), internalAstrometryFlag)
-	sol, err := solveAstrometryLocal(image, command, 0, 30*time.Second)
+	sol, err := solveAstrometryLocal(image, command, "", 0, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -32769,6 +32812,11 @@ func runInternalASTAPMock(args []string) int {
 const internalAstrometryFlag = "--internal-astrometry-mock"
 
 func runInternalAstrometryMock(args []string) int {
+	if out := os.Getenv("SKYSTACKER_ASTROMETRY_ARGV_OUT"); out != "" {
+		if data, err := json.Marshal(args); err == nil {
+			_ = os.WriteFile(out, data, 0o644)
+		}
+	}
 	wcsPath := ""
 	for i := 0; i+1 < len(args); i++ {
 		switch args[i] {
@@ -34219,6 +34267,7 @@ func main() {
 		SsoEphemeris:           opts.SsoEphemeris,
 		Starless:               opts.Starless,
 		JSONReport:             opts.JSONReport,
+		ExtinctionReport:       opts.ExtinctionReport,
 		Provenance:             opts.Provenance,
 		Diagnose:               opts.Diagnose,
 		DiagnoseJSON:           opts.DiagnoseJSON,
@@ -34306,6 +34355,8 @@ func main() {
 		ConeRadiusArcsec:       opts.ConeRadiusArcsec,
 		PlateSolver:            opts.PlateSolver,
 		AstrometryCmd:          opts.AstrometryCmd,
+		ExportVotable:          opts.ExportVotable,
+		SolveFieldArgs:         opts.SolveFieldArgs,
 		ASTAPCmd:               opts.ASTAPCmd,
 		BlindIndex:             opts.BlindIndex,
 		BlindCatalog:           opts.BlindCatalog,

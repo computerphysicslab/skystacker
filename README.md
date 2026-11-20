@@ -439,6 +439,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--annotation-catalogs LIST` | Comma-separated JSON catalogs (RA/Dec degrees; optional name/type/mag/major/minor/pa) for multi-catalog cross-match | — |
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 | `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
+| `--extinction-report` | Report-only Rayleigh coefficients per RGB channel (forces `report.json`) | `false` |
 | `--provenance` | Write `provenance.json` with an IVOA ProvenanceDM-style entity/activity/agent graph | `false` |
 | `--diagnose` | Collect a host/runtime diagnostic snapshot (`diagnostics.txt`) and exit | `false` |
 | `--diagnose-json` | Also write `diagnostics.json` | `false` |
@@ -597,6 +598,7 @@ frames unless `--external-allow-nonlinear` is given.
 | `--cone-catalog NAME` / `--cone-radius N` | external VOTable cone search added to annotations (sdss, irsa, vizier; arcsec) | — / `60` |
 | `--blind-benchmark DIR` / `--benchmark-solvers LIST` | head-to-head blind-solve CSV over a corpus | — |
 | `--astrometry-cmd CMD` / `--astrometry-api-key KEY` | local `solve-field` command / nova API key (`AN_API_KEY` also read) | `solve-field` / — |
+| `--solve-field-args ARGS` | extra quoted argv for local `solve-field` (no shell) | — |
 | `--astrometry-url URL` / `--astrometry-timeout N` | nova API base URL / solve timeout in seconds | nova / `180` |
 | `--solver-focal-length MM` / `--solver-pixel-size UM` | optional plate-scale hint and post-solve sanity check | — |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
@@ -623,6 +625,7 @@ frames unless `--external-allow-nonlinear` is given.
 | `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
 | `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query diagnostic; prints `nside`, `ipix`, first 5 stars, and exits | — |
 | `--export-stars FILE` | Export detected stars of `--process-image` as flux-sorted JSON/CSV; no `--image-op` required | — |
+| `--export-votable FILE` | Export cone/annotation catalogs as VOTable 1.3 BINARY2 | — |
 | `--classify-objects FILE` | Report-only diffuse-object morphology (CAS/Gini/M20) and IVOA object-type JSON; no `--image-op` required | — |
 | `--test-debayer PATH` | One-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg` | — |
 | `--check-survey-fits FILE` | Report-only check of survey FITS WCS/header caveats; writes `report.txt`/`report.json` | — |

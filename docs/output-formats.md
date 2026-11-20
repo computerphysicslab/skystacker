@@ -45,7 +45,16 @@ resolved flags, exposure summary, output files and notes. When `--cone-catalog`
 is used it also carries `cone_truncated`, `cone_rows`,
 `cone_covered_radius_arcsec`, `cone_covered_area_deg2` and an optional
 `cone_limit_reason`; the one-shot `--check-survey-fits` writes a
-`survey_wcs_flags` object instead.
+`survey_wcs_flags` object instead. `--extinction-report` adds an
+`extinction_report` object with airmass, site pressure/elevation and per-channel
+Rayleigh coefficients.
+
+### VOTable catalog export
+
+`--export-votable FILE` writes a VOTable 1.3 catalog with `BINARY2` little-endian
+payloads, per-row null masks, `INFO`/`PARAM` metadata and float/int fields for
+RA, Dec, magnitude and row index. It is produced from the same cone/annotation
+sources used by `--annotate`.
 
 ### `plate_solution.json`
 

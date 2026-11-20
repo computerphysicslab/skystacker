@@ -76,6 +76,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--test-plate R,D` | — | One-shot synthetic solve against Gaia, then exit. |
 | `--test-gaia R,D` | — | One-shot Gaia tile query, then exit. |
 | `--astrometry-cmd CMD` | `solve-field` | Local astrometry.net command. |
+| `--solve-field-args ARGS` | — | Extra quoted argv for the local solver; tokenized without a shell. |
 | `--astap-cmd CMD` | `astap` | Local ASTAP command. |
 | `--astrometry-api-key KEY` | env | nova API key (`AN_API_KEY`, `ASTROMETRY_API_KEY`). |
 | `--astrometry-url URL` | nova | API base URL. |
@@ -121,6 +122,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--xisf-rev2` | off | XISF checksum + strict sample validation. |
 | `--png` / `--bmp` | off | Extra display previews. |
 | `--json-report` / `--provenance` | off | Structured report / IVOA-style provenance. |
+| `--extinction-report` | off | Report λ⁻⁴ Rayleigh coefficients; forces `report.json`. |
 | `--starless` | off | Starless and star-layer products. |
 
 ## Post-processing
@@ -151,6 +153,7 @@ See [post-processing.md](post-processing.md).
 | `--image-op OP` | — | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve`. |
 | `--image-output DIR` | `image_processing` | Output directory. |
 | `--export-stars FILE` | — | Export detected stars of `--process-image` as flux-sorted JSON/CSV; no `--image-op` required. |
+| `--export-votable FILE` | — | Export cone/annotation catalogs as VOTable 1.3 BINARY2. |
 | `--classify-objects FILE` | — | Report-only diffuse-object morphology (CAS/Gini/M20) and IVOA object-type JSON; no `--image-op` required. |
 
 ## Diagnostics and control
