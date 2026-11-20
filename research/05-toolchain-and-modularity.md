@@ -279,3 +279,7 @@ File formats / rejection rationale:
 A cycle-7 curated corpus with Siril/APP/RAW-format facts is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §10.
 
 A full goCrawler export with CFITSIO, astrometry index sizes and N.I.N.A. keyword vocabulary is indexed in [08-crawler-source-discovery.md](08-crawler-source-discovery.md) §11.
+
+## goTiff first-party module (2026-11-20, append-only)
+
+Item 98 adds a third first-party module, `github.com/computerphysicslab/skystacker/goTiff`, following the same monorepo pattern as `goPureRaw` and `goDiagnostics`: local `replace` in the root `go.mod`, a `go.work` entry for development only and a dedicated CI job. The foundation keeps the executable stdlib-only and `CGO_ENABLED=0`, exposes a typed API that does not quantise through `image.Image`, and supports classic TIFF (LE/BE), 8/16-bit integers, 32/64-bit floats, grayscale/RGB and uncompressed strips. `x/image/tiff` was rejected as the sole engine because it rejects `SampleFormat=3` and BigTIFF; BSD-3 codecs may be vendored later with attribution under item 99.

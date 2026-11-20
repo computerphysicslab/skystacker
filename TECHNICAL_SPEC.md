@@ -1,7 +1,7 @@
 # SkyStacker — Technical Specification
 
 **Current version:** 0.6.1
-**Implementation language:** Go 1.27.4 (single executable; first-party modules `goPureRaw v0.1.1` and `goDiagnostics v0.0.0`, plus MIT-licensed `github.com/skip2/go-qrcode` for terminal donation QR codes)
+**Implementation language:** Go 1.27.4 (single executable; first-party modules `goPureRaw v0.1.1`, `goDiagnostics v0.0.0` and `goTiff v0.0.0`, plus MIT-licensed `github.com/skip2/go-qrcode` for terminal donation QR codes)
 **Status:** Active Development. Registered `--selftest` cases: 274. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
@@ -10,7 +10,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 ## 2. Scope
 
 ### Included
-- CLI executable `skystacker`, built from the package root (`main.go` + `donations.go`) plus two first-party modules and one MIT QR module; all code remains pure Go with `CGO_ENABLED=0`.
+- CLI executable `skystacker`, built from the package root (`main.go` + `donations.go`) plus three first-party modules and one MIT QR module; all code remains pure Go with `CGO_ENABLED=0`.
 - Input formats: JPG/JPEG/PNG (native), FITS (native, with ImageMagick fallback), SER (8/16-bit mono, Bayer-as-gray, RGB/BGR), CR2 native pure-Go lossless JPEG; CR3 via dcraw/ImageMagick at runtime.
 - Star detection, triangle matching, RANSAC similarity transforms, optional 6-DOF affine refinement.
 - Calibration frames (dark, flat, bias; individual files or auto-discovered folder trees via `--calib-root`).

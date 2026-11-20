@@ -105,7 +105,7 @@ The aim is to provide a transparent, reproducible, and resource-conscious workfl
 
 ## Scope & Architecture
 
-- **Single-binary, static Go CLI**: the executable is built from the package root (`main.go` + `donations.go`), two first-party modules (`goPureRaw/` for CR2, `goDiagnostics/` for system reports) and one small MIT-licensed third-party module (`github.com/skip2/go-qrcode`) used only to render donation QR codes in the terminal. `CGO_ENABLED=0` static cross-platform builds remain.
+- **Single-binary, static Go CLI**: the executable is built from the package root (`main.go` + `donations.go`), three first-party modules (`goPureRaw/` for CR2, `goDiagnostics/` for system reports, `goTiff/` for typed TIFF I/O) and one small MIT-licensed third-party module (`github.com/skip2/go-qrcode`) used only to render donation QR codes in the terminal. `CGO_ENABLED=0` static cross-platform builds remain.
 - **Linear float32 pipeline**: Accumulates and processes image data in IEEE 754 `float32` precision end-to-end.
 - **Current boundaries**:
   - **CLI-only**: No GUI is included.
@@ -745,6 +745,7 @@ The following capabilities have been implemented through `0.6.1`:
 - **Star catalog export**: `--export-stars FILE` emits a flux-sorted JSON/CSV list of detected stars for a single `--process-image` input, with 0-based centroids, flux, size, eccentricity and HFR. Test: `TestExportStarsFluxSorted`.
 - **Diffuse-object classification**: `--classify-objects FILE` writes a report-only JSON catalogue of star-masked components with CAS/Gini/M20 morphology and IVOA `object-type`/`src.class` labels; pipeline pixels are never modified. Test: `TestDiffuseObjectClassification`.
 - **Saturation-aware star detection**: bright stars with large saturated halos are retained via compact-core flux/compactness checks instead of the old 200-pixel cap; diffraction spikes no longer displace centroids. Tests: `TestSaturatedStarDetection`, `TestSaturatedStarWithSpikesDetection`, `TestBrightStarSurvivesFluxTruncation`.
+- **goTiff foundation**: new first-party `goTiff/` module with a typed API for 8/16-bit uint and 32/64-bit float samples, grayscale/RGB, little/big-endian classic TIFF, IFD parsing and uncompressed strips. Tests: `go test ./...` inside `goTiff/`.
 
 ---
 

@@ -66,6 +66,26 @@ jobs:
         working-directory: goPureRaw
         run: CGO_ENABLED=1 go test -race ./...
 
+  # ── goTiff nested module ─────────────────────────────────────────────────
+  gotiff:
+    name: goTiff — build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Build goTiff
+        working-directory: goTiff
+        run: go build ./...
+      - name: Test goTiff (CGO_ENABLED=0)
+        working-directory: goTiff
+        run: CGO_ENABLED=0 go test ./...
+      - name: Race test goTiff
+        working-directory: goTiff
+        run: CGO_ENABLED=1 go test -race ./...
+
   # ── Standalone goDiagnostics module ─────────────────────────────────────
   diagnostics:
     name: goDiagnostics — build & test
