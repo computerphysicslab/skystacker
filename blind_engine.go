@@ -33,6 +33,38 @@ func filterStarsForMatching(stars []star) []star {
 // Processed JPEG/PNG frames contain compression noise and nebular structure;
 // detection therefore runs on a downsampled, background-equalised scratch copy
 // and centroids are mapped back to the original pixel frame.
+func estimateArcsecPerPixel(stars []star, catalog []gaiaStar) float64 {
+	if len(stars) < 4 || len(catalog) < 4 {
+		return 0
+	}
+	if len(catalog) > 200 {
+		sample := append([]gaiaStar(nil), catalog...)
+		sort.Slice(sample, func(i, j int) bool { return sample[i].MagG < sample[j].MagG })
+		catalog = sample[:200]
+	}
+	frameSpacing := medianNeighbourSeparationStars(stars)
+	if frameSpacing <= 0 {
+		return 0
+	}
+	var ra, dec float64
+	for _, g := range catalog {
+		ra += g.RA
+		dec += g.Dec
+	}
+	ra /= float64(len(catalog))
+	dec /= float64(len(catalog))
+	points := make([]point2D, 0, len(catalog))
+	for _, g := range catalog {
+		points = append(points, tangentXY(ra, dec, g.RA, g.Dec))
+	}
+	catalogSpacing := medianNeighbourSeparationPoints(points)
+	if catalogSpacing <= 0 {
+		return 0
+	}
+	arcsec := catalogSpacing / frameSpacing * 206264.806
+	return math.Max(0.05, math.Min(60, arcsec))
+}
+
 func blindDownsampleScale(width, height int) int {
 	if max(width, height) > 3000 {
 		return 4

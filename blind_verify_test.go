@@ -28,6 +28,46 @@ func TestBlindFOVAndTolerance(t *testing.T) {
 	}
 }
 
+func TestEstimateArcsecPerPixel(t *testing.T) {
+	frame := []star{{X: 0}, {X: 10}, {X: 20}, {X: 30}}
+	arcsecPerPx := 2.0
+	catalog := make([]gaiaStar, 4)
+	for i := range catalog {
+		catalog[i] = gaiaStar{RA: 1 + float64(i)*10*arcsecPerPx/206264.806, Dec: 0, MagG: 10}
+	}
+	got := estimateArcsecPerPixel(frame, catalog)
+	if math.Abs(got-arcsecPerPx) > 0.2 {
+		t.Fatalf("estimated %.3f arcsec/px, want %.3f", got, arcsecPerPx)
+	}
+}
+
+func TestBlindRegionTileMargin(t *testing.T) {
+	ra0, dec0 := healpixPix2AngNested(4, 0)
+	region := &blindRegion{RA: ra0, Dec: dec0, Radius: 0}
+	foundNear := blindRegionIncludesTile(region, 4, 0)
+	foundFar := false
+	for ipix := 0; ipix < 12*4*4; ipix++ {
+		ra, dec := healpixPix2AngNested(4, ipix)
+		sep := angularSeparation(region.RA, region.Dec, ra, dec)
+		if blindRegionIncludesTile(region, 4, ipix) {
+			foundNear = true
+		}
+		if sep > region.Radius+0.01 {
+			foundFar = true
+		}
+	}
+	if !foundNear || !foundFar {
+		t.Fatalf("region margin test inconclusive: near=%v far=%v", foundNear, foundFar)
+	}
+	for ipix := 0; ipix < 12*4*4; ipix++ {
+		ra, dec := healpixPix2AngNested(4, ipix)
+		sep := angularSeparation(region.RA, region.Dec, ra, dec)
+		if blindRegionIncludesTile(region, 4, ipix) && sep > region.Radius+0.02 {
+			t.Fatalf("tile %d outside margin selected", ipix)
+		}
+	}
+}
+
 func TestBlindDownsampleScaleRule(t *testing.T) {
 	cases := []struct {
 		w, h int

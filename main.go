@@ -16369,6 +16369,7 @@ const (
 	nativeIndexVersion      = 2
 	nativeDensityCapDefault = 0
 	nativeQuadBin           = 0.05
+	nativeFineQuadBin       = 0.02
 	nativeBrightest         = 100
 )
 
@@ -16435,7 +16436,7 @@ func nativeExpKeyFromFine(fine string) string {
 		if err != nil {
 			return ""
 		}
-		bins[i] = nativeExpBin(float64(n) * nativeQuadBin)
+		bins[i] = nativeExpBin(float64(n) * nativeFineQuadBin)
 	}
 	return fmt.Sprintf("exp|%d:%d:%d:%d", bins[0], bins[1], bins[2], bins[3])
 }
@@ -16542,7 +16543,7 @@ func nativeQuads(pts []point2D, idx []int, sky []gaiaStar) []nativeQuadSample {
 							}
 						}
 						out = append(out, nativeQuadSample{Key: key, Longest: longest, Pts: ordered, Sky: quadSky})
-						if fine, _, finePts, ok := nativeQuadKeyBinned(quad, 0.02, "b20|"); ok {
+						if fine, _, finePts, ok := nativeQuadKeyBinned(quad, nativeFineQuadBin, "b20|"); ok {
 							out = append(out, nativeQuadSample{Key: fine, Longest: longest, Pts: finePts, Sky: quadSky})
 							if expKey := nativeExpKeyFromFine(fine); expKey != "" {
 								out = append(out, nativeQuadSample{Key: expKey, Longest: longest, Pts: finePts, Sky: quadSky})
@@ -16912,6 +16913,15 @@ func parseBlindRegion(spec string) (blindRegion, error) {
 	return blindRegion{ra, dec, radius * math.Pi / 180}, nil
 }
 
+func blindRegionIncludesTile(region *blindRegion, nside, ipix int) bool {
+	if region == nil {
+		return true
+	}
+	ra, dec := healpixPix2AngNested(nside, ipix)
+	margin := 0.5 * math.Sqrt(4*math.Pi/(12*float64(nside)*float64(nside)))
+	return angularSeparation(region.RA, region.Dec, ra, dec) <= region.Radius+margin
+}
+
 // runBuildAllSkyBlindIndex populates the Gaia cache tile by tile at the chosen
 // nside (or reuses cached tiles in offline mode), then builds the quad index.
 // It is bounded by --blind-max-tiles so a partial sky can be indexed first.
@@ -16936,11 +16946,8 @@ func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, of
 	failed := 0
 	selected := 0
 	for ipix := offset; ipix < end; ipix++ {
-		if region != nil {
-			ra, dec := healpixPix2AngNested(nside, ipix)
-			if angularSeparation(region.RA, region.Dec, ra, dec) > region.Radius {
-				continue
-			}
+		if region != nil && !blindRegionIncludesTile(region, nside, ipix) {
+			continue
 		}
 		selected++
 		if _, cached := gaiaLoadTileCache(cacheDir, nside, ipix); cached && (offline || !refresh) {
@@ -17131,6 +17138,24 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 	if len(ordered) > nativeBrightest {
 		ordered = ordered[:nativeBrightest]
 	}
+	if hintArcsec <= 0 {
+		var sampleCatalog []gaiaStar
+		for _, tileStars := range idx.Tiles {
+			for _, s := range tileStars {
+				sampleCatalog = append(sampleCatalog, s)
+				if len(sampleCatalog) >= 5000 {
+					break
+				}
+			}
+			if len(sampleCatalog) >= 5000 {
+				break
+			}
+		}
+		hintArcsec = estimateArcsecPerPixel(ordered, sampleCatalog)
+		if hintArcsec > 0 {
+			logf("  native blind solve: estimated scale %.3f arcsec/px", hintArcsec)
+		}
+	}
 	pts := make([]point2D, len(ordered))
 	for i, s := range ordered {
 		pts[i] = point2D{X: s.X, Y: s.Y}
@@ -17153,8 +17178,9 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 		arcsec float64
 	}
 	var hypotheses []hypothesis
-	votes := make(map[int]int)
-	for _, q := range imageQuads {
+	votes := make(map[int]map[int]bool)
+	seenHypotheses := make(map[string]bool)
+	for qi, q := range imageQuads {
 		if q.Longest <= 0 {
 			continue
 		}
@@ -17167,20 +17193,28 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 				if hintArcsec > 0 && (arcsec/hintArcsec < 0.6 || arcsec/hintArcsec > 1.6) {
 					continue
 				}
-				votes[hit.Ipix]++
-				if len(hypotheses) < 4096 {
+				if votes[hit.Ipix] == nil {
+					votes[hit.Ipix] = make(map[int]bool)
+				}
+				votes[hit.Ipix][qi] = true
+				hypKey := fmt.Sprintf("%d:%d:%.6f:%.6f", hit.Ipix, qi, hit.Stars[0][0], hit.Stars[0][1])
+				if len(hypotheses) < 4096 && !seenHypotheses[hypKey] {
+					seenHypotheses[hypKey] = true
 					hypotheses = append(hypotheses, hypothesis{quad: q, hit: hit, arcsec: arcsec})
 				}
 			}
 		}
+	}
+	if os.Getenv("SKYSTACKER_DEBUG_QUADS") != "" {
+		logf("  native quads: image=%d voted-tiles=%d hypotheses=%d", len(imageQuads), len(votes), len(hypotheses))
 	}
 	if len(votes) == 0 {
 		return nil, fmt.Errorf("native blind solve: no quad matches in %d image quads", len(imageQuads))
 	}
 	type candidate struct{ ipix, count int }
 	list := make([]candidate, 0, len(votes))
-	for ipix, n := range votes {
-		list = append(list, candidate{ipix, n})
+	for ipix, quads := range votes {
+		list = append(list, candidate{ipix, len(quads)})
 	}
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].count != list[j].count {
@@ -17188,8 +17222,13 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 		}
 		return list[i].ipix < list[j].ipix
 	})
-	if len(list) > 5 {
-		list = list[:5]
+	if len(list) > 8 {
+		list = list[:8]
+	}
+	if os.Getenv("SKYSTACKER_DEBUG_QUADS") != "" {
+		for i, c := range list {
+			logf("  native tile #%d: ipix=%d distinct-quads=%d", i+1, c.ipix, c.count)
+		}
 	}
 	var lastErr error
 	verify := func(catalog []gaiaStar, label string) *plateSolution {

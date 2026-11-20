@@ -117,3 +117,21 @@ seeded Gaia tile cache is available in this environment, so the M42 control
 cannot be treated as accepted evidence. The remaining blocker is candidate
 supply/scale estimation on these processed JPEGs, not the log-odds threshold.
 Items 79 and 81 stay open until the corpus table actually flips.
+
+## Third-pass index diagnostics (2026-11-20)
+
+Items 79 and 81 received a third engineering pass without changing their acceptance status:
+
+- quad votes now count distinct image quads per HEALPix tile instead of raw key hits,
+  hypotheses are de-duplicated by `(tile, quad, sky anchor)`, and the top-tile cut was
+  widened from 5 to 8 (20 was tried but exceeded the 90 s benchmark budget);
+- the exponential descriptor key now uses the same fine-bin constant (`0.02`) as the
+  fine descriptor generation;
+- a detection-based scale estimator derives arcsec/pixel from frame and catalogue
+  nearest-neighbour spacing when no focal-length hint exists;
+- regional builds include HEALPix tiles whose centre lies within the cone radius plus
+  half a tile, so boundary stars are no longer dropped;
+- `SKYSTACKER_DEBUG_QUADS=1` logs image quad count, voted tiles and hypothesis count.
+
+The native corpus remains **0/14**; the new estimator and ranking make the failure
+diagnosable but do not yet provide enough correct candidates on processed JPEGs.

@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Third engineering pass on blind items 79/81: distinct-quad tile ranking, hypothesis dedup, consistent fine-bin constant, detection-based scale estimate, regional tile margin and quad-level debug logging. Corpus remains 0/14, so both items stay "executed, not accepted".
 - Second engineering pass on blind items 78/80: FOV-aware log-odds, pixel-scale matching tolerances, smaller triangle-side floor, wider detrend downsampling, seeded benchmark harness and regression tests. Corpus remains 0/14, so both items stay "executed, not accepted".
 - Delivered items 95–96: iterative `--wcs-refine` with outlier rejection and before/after RMS, plus opt-in MAST/ESASky/IRSA MOST archive adapters with row limits, token handling and mock tests. Added `--validate-blind-catalogs` as concrete progress on item 73's large-index storage tooling (item remains Open R&D).
 - Delivered items 91, 92 and 94: Astro-TIFF WCS/BAYERPAT round-trip through goTiff, `--transformation-report` for AAVSO-style photometric coefficients, and an opt-in async Gaia TAP client with job polling, explicit MAXREC/VERBOSITY, VO registry discovery and sync fallback.
