@@ -54,6 +54,10 @@ with global and 3×3-zone RMS, match fraction and a residual map, and writes
 `FILTER`, `TRANS` and per-band ZP/extinction/colour coefficients.
 `--gaia-async` adds a `tap_async` object with the job URL, final status, poll
 count, row count, truncation flag and sync-fallback reason.
+`--wcs-refine` adds a `wcs_refine` object with before/after RMS in pixels,
+match/outlier counts and iteration count, and updates `plate_solution.json`
+with `RMSBeforePx`/`RMSAfterPx`. `--archive-adapters` adds an `archive_adapters`
+object with per-service row counts and truncation/error status.
 
 ### VOTable catalog export
 

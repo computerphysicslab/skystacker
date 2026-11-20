@@ -440,6 +440,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 | `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
 | `--verify-solution` | Report-only whole-frame WCS verification against cached Gaia | `false` |
+| `--validate-blind-catalogs` | Verify checksums/sizes of local published blind catalogs | `false` |
 | `--transformation-report` | Report-only AAVSO-style photometric coefficients | `false` |
 | `--extinction-report` | Report-only Rayleigh coefficients per RGB channel (forces `report.json`) | `false` |
 | `--provenance` | Write `provenance.json` with an IVOA ProvenanceDM-style entity/activity/agent graph | `false` |
@@ -607,6 +608,8 @@ frames unless `--external-allow-nonlinear` is given.
 | `--solver-focal-length MM` / `--solver-pixel-size UM` | optional plate-scale hint and post-solve sanity check | — |
 | `--gaia-mirror string` | Gaia TAP mirror URL | `https://gea.esac.esa.int/tap-server/tap` |
 | `--gaia-async` / `--gaia-maxrec N` / `--gaia-verbosity N` / `--vo-registry URL` | Async TAP polling, explicit limits and VO registry discovery | `false` / `2000` / `0` / — |
+| `--wcs-refine` | Iteratively refine the stored WCS against Gaia residuals | `false` |
+| `--archive-adapters LIST` / `--mast-token TOKEN` | MAST/ESASky/IRSA MOST opt-in archive queries | — |
 | `--gaia-cache-dir string` | Gaia HEALPix tile cache directory | OS user cache dir (`~/.cache/skystacker/gaia_cache`) |
 | `--gaia-nside int` | HEALPix `nside` resolution (power of 2, `2`–`8192`) | `64` |
 | `--gaia-mag-limit float` | Gaia G-band faint magnitude limit (`0`–`20`) | `14.0` |

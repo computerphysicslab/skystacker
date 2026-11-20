@@ -218,6 +218,9 @@ type cliOptions struct {
 	ExtinctionReport     bool
 	VerifySolution       bool
 	TransformationReport bool
+	WCSRefine            bool
+	ArchiveAdapters      string
+	MASTToken            string
 	GaiaAsync            bool
 	GaiaMaxRec           int
 	GaiaVerbosity        int
@@ -244,6 +247,7 @@ type cliOptions struct {
 	BlindCatalog           string
 	ListBlindCatalogs      bool
 	DownloadBlindCatalog   string
+	ValidateBlindCatalogs  bool
 	BlindMagLimit          float64
 	BlindBrightest         int
 	BlindAllSky            bool
@@ -542,6 +546,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.BlindCatalog, "blind-catalog", "", "use a published magnitude-limited catalog by id (see --list-blind-catalogs)")
 	fs.BoolVar(&o.ListBlindCatalogs, "list-blind-catalogs", false, "list downloadable plate-solving catalogs and exit")
 	fs.StringVar(&o.DownloadBlindCatalog, "download-blind-catalog", "", "download a catalog into the local cache with checksum verification, then exit")
+	fs.BoolVar(&o.ValidateBlindCatalogs, "validate-blind-catalogs", false, "verify checksums/sizes of local published blind catalogs and exit")
 	fs.Float64Var(&o.BlindMagLimit, "blind-mag-limit", 14, "Gaia G-band magnitude limit when building a catalog")
 	fs.Float64Var(&o.BlindDensityCap, "blind-density-cap", 0, "stars/deg^2 cap per sub-cell when building an index (0 = brightest-star cut)")
 	fs.IntVar(&o.BlindBrightest, "blind-brightest", 100, "brightest stars per HEALPix tile when building a catalog")
@@ -630,6 +635,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.ExtinctionReport, "extinction-report", false, "report-only Rayleigh extinction coefficients (forces report.json)")
 	fs.BoolVar(&o.VerifySolution, "verify-solution", false, "verify stored plate solution against cached Gaia stars (report-only)")
 	fs.BoolVar(&o.TransformationReport, "transformation-report", false, "report-only AAVSO-style photometric transformation coefficients")
+	fs.BoolVar(&o.WCSRefine, "wcs-refine", false, "iteratively refine the stored WCS against Gaia residuals")
+	fs.StringVar(&o.ArchiveAdapters, "archive-adapters", "", "opt-in archive adapters: mast,esasky,irsa-most")
+	fs.StringVar(&o.MASTToken, "mast-token", "", "MAST bearer token (or MAST_TOKEN env)")
 	fs.BoolVar(&o.GaiaAsync, "gaia-async", false, "use asynchronous Gaia TAP submission with job polling")
 	fs.IntVar(&o.GaiaMaxRec, "gaia-maxrec", 2000, "explicit MAXREC for Gaia TAP queries")
 	fs.IntVar(&o.GaiaVerbosity, "gaia-verbosity", 0, "optional TAP VERBOSITY (1-3)")
@@ -723,7 +731,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--archive-adapters" || arg == "--mast-token" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -1508,6 +1516,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --blind-allsky / --blind-max-tiles N  query Gaia sky tiles before building (bounded by N)")
 	fmt.Fprintln(w, "  --blind-tile-offset N / --blind-refresh  chunked/resumed builds instead of re-querying cached tiles")
 	fmt.Fprintln(w, "  --blind-region RA,DEC,RADIUS / --blind-index-info FILE  regional index and metadata tooling")
+	fmt.Fprintln(w, "  --validate-blind-catalogs  verify local published catalog checksums and sizes")
 	fmt.Fprintln(w, "  --blind-mag-limit M / --blind-brightest N  Gaia magnitude limit and stars per tile when building")
 	fmt.Fprintln(w, "  --blind-catalog ID / --list-blind-catalogs / --download-blind-catalog ID  published catalogs")
 	fmt.Fprintln(w, "  --astrometry-cmd CMD local solve-field command (default: solve-field; needs installed index files)")
@@ -1539,6 +1548,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --verify-solution  compare stored WCS with Gaia over the whole frame")
 	fmt.Fprintln(w, "  --transformation-report report-only AAVSO photometric coefficients")
 	fmt.Fprintln(w, "  --gaia-async / --gaia-maxrec N / --gaia-verbosity N / --vo-registry URL  asynchronous TAP options")
+	fmt.Fprintln(w, "  --wcs-refine       iteratively refine stored WCS against Gaia residuals")
+	fmt.Fprintln(w, "  --archive-adapters LIST / --mast-token TOKEN  opt-in MAST/ESASky/IRSA MOST queries")
 	fmt.Fprintln(w, "  --provenance       write provenance.json (IVOA ProvenanceDM-style run graph)")
 	fmt.Fprintln(w, "  --diagnose         host/runtime diagnostic snapshot; write diagnostics.txt and exit")
 	fmt.Fprintln(w, "  --diagnose-json    also write diagnostics.json")
@@ -5886,6 +5897,8 @@ type processingReport struct {
 	SolutionVerification    *solutionVerificationReport `json:"solution_verification,omitempty"`
 	TransformationReport    *transformationReport       `json:"transformation_report,omitempty"`
 	TAPAsyncReport          *tapAsyncReport             `json:"tap_async,omitempty"`
+	WCSRefineReport         *wcsRefineReport            `json:"wcs_refine,omitempty"`
+	ArchiveAdaptersReport   *archiveAdaptersReport      `json:"archive_adapters,omitempty"`
 }
 
 type provEntity struct {
@@ -6195,6 +6208,12 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.TransformationReport {
 		add("--transformation-report")
+	}
+	if o.WCSRefine {
+		add("--wcs-refine")
+	}
+	if o.ArchiveAdapters != "" {
+		add("--archive-adapters " + o.ArchiveAdapters)
 	}
 	if o.GaiaAsync {
 		add("--gaia-async")
@@ -6633,6 +6652,13 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		v := r.TAPAsyncReport
 		ew.printf("TAP async: mode=%s status=%s rows=%d polls=%d truncated=%v fallback=%v\n\n", v.Mode, v.Status, v.Rows, v.Polls, v.Truncated, v.FallbackUsed)
 	}
+	if r.WCSRefineReport != nil {
+		v := r.WCSRefineReport
+		ew.printf("WCS refine: before %.4f px -> after %.4f px, matches=%d outliers=%d iterations=%d\n\n", v.RMSBeforePx, v.RMSAfterPx, v.NMatches, v.NOutliers, v.NIterations)
+	}
+	if r.ArchiveAdaptersReport != nil {
+		ew.printf("Archive adapters: %s\n\n", formatArchiveAdaptersReport(r.ArchiveAdaptersReport))
+	}
 	ew.printf("Output files:\n")
 	for _, f := range r.OutputFiles {
 		ew.printf("  %s\n", f)
@@ -6832,6 +6858,9 @@ type runOptions struct {
 	ExtinctionReport       bool
 	VerifySolution         bool
 	TransformationReport   bool
+	WCSRefine              bool
+	ArchiveAdapters        string
+	MASTToken              string
 	GaiaAsync              bool
 	GaiaMaxRec             int
 	GaiaVerbosity          int
@@ -10765,7 +10794,7 @@ func selfFlatGammaNote(linear bool) string {
 
 func runPipeline(ctx context.Context, opts runOptions) error {
 	start := time.Now()
-	if opts.ExtinctionReport || opts.VerifySolution || opts.TransformationReport || opts.GaiaAsync {
+	if opts.ExtinctionReport || opts.VerifySolution || opts.TransformationReport || opts.GaiaAsync || opts.WCSRefine {
 		opts.JSONReport = true
 	}
 	matchedFilterEnabled = opts.MatchedFilter
@@ -13279,6 +13308,20 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	rep.ExtinctionReport = extinctionInfo
 	rep.TransformationReport = transformationInfo
 	rep.TAPAsyncReport = tapAsyncInfo
+	var wcsRefineInfo *wcsRefineReport
+	if opts.WCSRefine && plateSolutionOut != nil {
+		if rr, rerr := runWCSRefine(plateSolutionOut, outputDir, opts); rerr != nil {
+			logf("WCS refinement failed: %v", rerr)
+		} else {
+			wcsRefineInfo = rr
+		}
+	}
+	rep.WCSRefineReport = wcsRefineInfo
+	var archiveInfo *archiveAdaptersReport
+	if opts.ArchiveAdapters != "" {
+		archiveInfo = computeArchiveAdaptersReport(&opts, plateSolutionOut, nil)
+	}
+	rep.ArchiveAdaptersReport = archiveInfo
 	rep.StretchColorPreserving = opts.StretchColorPreserving
 	rep.PSFAutoReport = lastPSFAutoReport
 	if opts.VerifySolution {
@@ -14656,15 +14699,17 @@ type wcsTan struct {
 
 // plateSolution is the output of a successful plate solve.
 type plateSolution struct {
-	WCS       wcsTan
-	SIP       []float64
-	PV1       []float64             `json:"PV1,omitempty"`
-	PV2       []float64             `json:"PV2,omitempty"`
-	Verify    *solutionVerification `json:"Verify,omitempty"`
-	RMSArcsec float64
-	NMatches  int
-	NStars    int
-	Method    string
+	WCS         wcsTan
+	SIP         []float64
+	PV1         []float64             `json:"PV1,omitempty"`
+	PV2         []float64             `json:"PV2,omitempty"`
+	Verify      *solutionVerification `json:"Verify,omitempty"`
+	RMSArcsec   float64
+	NMatches    int
+	NStars      int
+	Method      string
+	RMSBeforePx float64 `json:"RMSBeforePx,omitempty"`
+	RMSAfterPx  float64 `json:"RMSAfterPx,omitempty"`
 }
 
 // sipToPV converts SkyStacker's order-2 SIP vector [A20,A11,A02,B20,B11,B02]
@@ -34224,6 +34269,13 @@ func main() {
 		}
 		return
 	}
+	if opts.ValidateBlindCatalogs {
+		if err := validateLocalBlindCatalogs(); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if opts.ListBlindCatalogs {
 		if err := listBlindCatalogs(); err != nil {
 			fmt.Fprintln(os.Stderr, "skystacker:", err)
@@ -34431,6 +34483,9 @@ func main() {
 		ExtinctionReport:       opts.ExtinctionReport,
 		VerifySolution:         opts.VerifySolution,
 		TransformationReport:   opts.TransformationReport,
+		WCSRefine:              opts.WCSRefine,
+		ArchiveAdapters:        opts.ArchiveAdapters,
+		MASTToken:              opts.MASTToken,
 		GaiaAsync:              opts.GaiaAsync,
 		GaiaMaxRec:             opts.GaiaMaxRec,
 		GaiaVerbosity:          opts.GaiaVerbosity,

@@ -84,6 +84,8 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--solver-focal-length MM` / `--solver-pixel-size UM` | — | Scale hint and sanity check. |
 | `--gaia-mirror URL` / `--gaia-cache-dir DIR` | ESA / OS cache | Gaia TAP endpoint and cache. |
 | `--gaia-async` / `--gaia-maxrec N` / `--gaia-verbosity N` / `--vo-registry URL` | off / `2000` / `0` / — | Async TAP submission with job polling, explicit limits and registry discovery. |
+| `--wcs-refine` | off | Iteratively refine the stored WCS against Gaia residuals. |
+| `--archive-adapters LIST` / `--mast-token TOKEN` | — | Opt-in MAST/ESASky/IRSA MOST queries with row limits and token handling. |
 | `--gaia-nside N` / `--gaia-mag-limit M` | `64` / `14.0` | Tile resolution and magnitude limit. |
 | `--gaia-offline` / `--gaia-cache-refresh` | off | Offline mode / forced refresh. |
 | `--gaia-multitile` (default on) / `--no-gaia-multitile` | on | Grow the seeded Gaia catalogue from all cached tiles around the pointing. |
@@ -106,6 +108,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--blind-allsky` / `--blind-max-tiles N` | off / `0` | Sweep Gaia sky tiles before building; bound the sweep to N tiles. |
 | `--blind-tile-offset N` / `--blind-refresh` | `0` / off | Chunked/resumable catalog builds. |
 | `--blind-region RA,DEC,RADIUS` / `--blind-index-info FILE` | — | Cone-limited regional index / print index metadata. |
+| `--validate-blind-catalogs` | off | Verify local published catalog checksums and sizes, then exit. |
 | `--blind-density-cap N` | `0` | Stars/deg² per sub-cell when building an index (0 = brightest-star cut); `.sbi` paths use the compact SBI1 binary format. |
 | `--blind-catalog ID` | — | Use a published magnitude-limited catalog by id. |
 | `--list-blind-catalogs` | off | Print the catalog registry and exit. |

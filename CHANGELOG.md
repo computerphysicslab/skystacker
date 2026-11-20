@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Delivered items 95–96: iterative `--wcs-refine` with outlier rejection and before/after RMS, plus opt-in MAST/ESASky/IRSA MOST archive adapters with row limits, token handling and mock tests. Added `--validate-blind-catalogs` as concrete progress on item 73's large-index storage tooling (item remains Open R&D).
 - Delivered items 91, 92 and 94: Astro-TIFF WCS/BAYERPAT round-trip through goTiff, `--transformation-report` for AAVSO-style photometric coefficients, and an opt-in async Gaia TAP client with job polling, explicit MAXREC/VERBOSITY, VO registry discovery and sync fallback.
 - Delivered items 85–87: colour-preserving luminance stretch, per-star Gaussian/Moffat PSF auto-selection and whole-frame Gaia solution verification with zone RMS and residual SVG.
 - Delivered items 84, 90 and 93: `--extinction-report` adds report-only Rayleigh coefficients, `--solve-field-args` passes quoted argv to the local Astrometry.net adapter without a shell, and `--export-votable` writes VOTable 1.3 BINARY2 catalogs with masks and metadata.
