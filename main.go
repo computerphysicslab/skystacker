@@ -1612,7 +1612,7 @@ func discoverFiles(root string, recursive bool, exclude []string) ([]string, err
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" || ext == ".ser" || ext == ".pgm" || ext == ".ppm" || ext == ".xisf" {
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".cr2" || ext == ".cr3" || ext == ".fits" || ext == ".fit" || ext == ".ser" || ext == ".pgm" || ext == ".ppm" || ext == ".xisf" || ext == ".tif" || ext == ".tiff" || ext == ".btf" || ext == ".bigtiff" {
 			files = append(files, abs)
 		}
 		return nil
@@ -2252,6 +2252,9 @@ func decodeImageConfig(path string) (image.Config, error) {
 	if ext == ".cr2" || ext == ".cr3" {
 		return decodeCR2Config(path)
 	}
+	if ext == ".tif" || ext == ".tiff" || ext == ".btf" || ext == ".bigtiff" {
+		return decodeTIFFConfig(path)
+	}
 	if ext == ".fits" || ext == ".fit" {
 		w, h, _, _, _, _, _, _, _, _, _, err := parseFITSHeader(path)
 		if err == nil && w > 0 && h > 0 {
@@ -2408,6 +2411,9 @@ func decodeImageFile(path string, targetW, targetH int) (*frame, error) {
 		if frm, err := decodeXISFInput(path, targetW, targetH); err == nil {
 			return frm, nil
 		}
+	}
+	if ext == ".tif" || ext == ".tiff" || ext == ".btf" || ext == ".bigtiff" {
+		return decodeTIFFInput(path, targetW, targetH)
 	}
 	if ext == ".cr2" || ext == ".cr3" {
 		return decodeCR2File(path, targetW, targetH)
@@ -23847,13 +23853,13 @@ func testDiscovery() error {
 	if err != nil {
 		return err
 	}
-	want := []string{filepath.Join(dir, "a.jpeg"), filepath.Join(dir, "b.JPG")}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	want := []string{filepath.Join(dir, "a.jpeg"), filepath.Join(dir, "b.JPG"), filepath.Join(dir, "c.tif")}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		return fmt.Errorf("discovery: got %v, want %v", got, want)
 	}
 
 	// PNG is now a first-class input (see discoverFiles); a .png file
-	// must be discovered alongside JPGs, while .tif remains excluded.
+	// must be discovered alongside JPGs and TIFF files.
 	if err := must(filepath.Join(dir, "starfield.png")); err != nil {
 		return err
 	}

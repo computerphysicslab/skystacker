@@ -18,6 +18,12 @@ are never gamma-encoded.
   and `CD1_1..CD2_2` (degrees).
 - `--bigtiff`: BigTIFF float32 with 64-bit offsets for stacks >4 GiB.
 
+The first-party `goTiff` module additionally reads TIFF inputs with 8/16-bit
+integer or 32/64-bit float samples, grayscale/RGB photometry, classic/BigTIFF
+containers, PackBits/LZW/Deflate compression, horizontal prediction, multipage
+IFDs and Astro-TIFF/CFA tags; those capabilities are library-level for now,
+while the writer CLI remains unchanged.
+
 `--xisf` writes a monolithic XISF 1.0 file with planar float32 samples;
 `--xisf-rev2` adds SHA-256/512 or verified SHA-3 checksums and strict
 sample-mapping validation.

@@ -2,6 +2,7 @@ package gotiff
 
 import (
 	"encoding/binary"
+	"image"
 	"io"
 )
 
@@ -24,7 +25,11 @@ const (
 type Compression uint16
 
 const (
-	CompressionNone Compression = 1
+	CompressionNone       Compression = 1
+	CompressionLZW        Compression = 5
+	CompressionDeflate    Compression = 8
+	CompressionPackBits   Compression = 32773
+	CompressionDeflateOld Compression = 32946
 )
 
 type FormatError string
@@ -55,6 +60,9 @@ const (
 	tagDateTime            = 306
 	tagArtist              = 315
 	tagSampleFormat        = 339
+	tagPredictor           = 317
+	tagCFARepeatPatternDim = 33421
+	tagCFAPattern          = 33422
 
 	typeByte      = 1
 	typeASCII     = 2
@@ -62,8 +70,12 @@ const (
 	typeLong      = 4
 	typeRational  = 5
 	typeUndefined = 7
+	typeLong8     = 16
+	typeSLong8    = 17
+	typeIFD8      = 18
 
 	classicMagic = 42
+	bigMagic     = 43
 )
 
 var (
@@ -81,15 +93,49 @@ type Image struct {
 	Photometric Photometric
 	Pixels      []float32
 	Metadata    map[string]string
+	CFAPattern  string
+	CFARepeatX  int
+	CFARepeatY  int
 }
 
 type Options struct {
 	ByteOrder   binary.ByteOrder
 	Compression Compression
+	Predictor   bool
+	BigTIFF     bool
 	Metadata    map[string]string
 }
 
+func DecodeConfig(r io.Reader) (image.Config, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxReadSize+1))
+	if err != nil {
+		return image.Config{}, err
+	}
+	order, magic, offset, err := readHeader(data)
+	if err != nil {
+		return image.Config{}, err
+	}
+	entries, _, err := readIFD(data, order, offset, magic == bigMagic)
+	if err != nil {
+		return image.Config{}, err
+	}
+	w, okW := firstValue(entries, tagImageWidth)
+	h, okH := firstValue(entries, tagImageLength)
+	if !okW || !okH || w == 0 || h == 0 {
+		return image.Config{}, errBadIFD
+	}
+	return image.Config{Width: int(w), Height: int(h)}, nil
+}
+
 func Decode(r io.Reader) (*Image, error) {
+	images, err := DecodeAll(r)
+	if err != nil {
+		return nil, err
+	}
+	return images[0], nil
+}
+
+func DecodeAll(r io.Reader) ([]*Image, error) {
 	data, err := io.ReadAll(io.LimitReader(r, maxReadSize+1))
 	if err != nil {
 		return nil, err
@@ -101,10 +147,14 @@ func Decode(r io.Reader) (*Image, error) {
 }
 
 func Encode(w io.Writer, img *Image, opt *Options) error {
+	return EncodeAll(w, []*Image{img}, opt)
+}
+
+func EncodeAll(w io.Writer, images []*Image, opt *Options) error {
 	if opt == nil {
 		opt = &Options{}
 	}
-	data, err := encodeBytes(img, opt)
+	data, err := encodeAllBytes(images, opt)
 	if err != nil {
 		return err
 	}

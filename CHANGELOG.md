@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Delivered items 98–102: `goTiff` now supports PackBits/LZW/Deflate with horizontal prediction, BigTIFF and multipage IFDs, Astro-TIFF tag 270 plus CFA tags, and SkyStacker TIFF ingestion (`.tif/.tiff/.btf/.bigtiff`) with new root and module tests.
 - Started item 98: added the first-party `goTiff/` module with typed 8/16-bit uint and 32/64-bit float TIFF decode/encode, classic LE/BE headers, IFD parsing, grayscale/RGB, metadata tags and roundtrip tests; wired root module and CI.
 - Prioritized the first-party `goTiff` module: roadmap items 98–103 cover the typed TIFF foundation, lossless compression, BigTIFF/multipage, Astro-TIFF/CFA, SkyStacker ingestion and the test/CI rollout.
 - Fixed item 97: saturated/bright stars are no longer dropped by the 200-px connected-component cap; compact-core flux, aspect and HFR metrics survive spikes, with three regression tests and a 14-image corpus comparison.

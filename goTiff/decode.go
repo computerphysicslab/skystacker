@@ -6,15 +6,32 @@ import (
 	"math"
 )
 
-func decodeBytes(data []byte) (*Image, error) {
-	order, ifdOffset, err := readHeader(data)
+func decodeBytes(data []byte) ([]*Image, error) {
+	order, magic, ifdOffset, err := readHeader(data)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := readIFD(data, order, ifdOffset)
-	if err != nil {
-		return nil, err
+	big := magic == bigMagic
+	var images []*Image
+	for ifdOffset != 0 {
+		entries, next, err := readIFD(data, order, ifdOffset, big)
+		if err != nil {
+			return nil, err
+		}
+		img, err := decodeIFD(data, order, entries)
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, img)
+		ifdOffset = next
 	}
+	if len(images) == 0 {
+		return nil, errBadIFD
+	}
+	return images, nil
+}
+
+func decodeIFD(data []byte, order binary.ByteOrder, entries map[uint16]ifdEntry) (*Image, error) {
 	w64, ok := firstValue(entries, tagImageWidth)
 	if !ok {
 		return nil, errBadIFD
@@ -49,8 +66,18 @@ func decodeBytes(data []byte) (*Image, error) {
 		return nil, UnsupportedError("planar configuration")
 	}
 	comp, _ := firstValue(entries, tagCompression)
-	if comp != uint64(CompressionNone) {
+	compression := Compression(comp)
+	switch compression {
+	case CompressionNone, CompressionLZW, CompressionDeflate, CompressionDeflateOld, CompressionPackBits, 0:
+	default:
 		return nil, UnsupportedError(fmt.Sprintf("compression %d", comp))
+	}
+	predictor, _ := firstValue(entries, tagPredictor)
+	if predictor == 0 {
+		predictor = predictorNone
+	}
+	if predictor != predictorNone && predictor != predictorHorizontal {
+		return nil, UnsupportedError(fmt.Sprintf("predictor %d", predictor))
 	}
 	bitsVals, ok := values(entries, tagBitsPerSample)
 	if !ok || len(bitsVals) != channels {
@@ -109,17 +136,36 @@ func decodeBytes(data []byte) (*Image, error) {
 		Pixels:      make([]float32, w*h*channels),
 		Metadata:    metadataFromIFD(entries),
 	}
+	if repeat, ok := values(entries, tagCFARepeatPatternDim); ok && len(repeat) >= 2 {
+		img.CFARepeatX, img.CFARepeatY = int(repeat[0]), int(repeat[1])
+	}
+	if pattern, ok := values(entries, tagCFAPattern); ok {
+		b := make([]byte, len(pattern))
+		for i, v := range pattern {
+			b[i] = byte(v)
+		}
+		img.CFAPattern = string(b)
+	}
 	rowBytes := int64(w) * int64(channels) * int64(bytesPerSample)
+	bpp := channels * bytesPerSample
 	for s := 0; s < strips; s++ {
 		y0 := s * rows
 		y1 := min(y0+rows, h)
 		need := int64(y1-y0) * rowBytes
 		off := int64(offsets[s])
 		cnt := int64(counts[s])
-		if off < 0 || cnt < need || off+cnt > int64(len(data)) {
+		if off < 0 || cnt <= 0 || off+cnt > int64(len(data)) {
 			return nil, errNoPixels
 		}
-		strip := data[off : off+need]
+		strip, err := decompressStrip(data[off:off+cnt], compression, need)
+		if err != nil {
+			return nil, err
+		}
+		if predictor == predictorHorizontal {
+			if err := applyPredictor(strip, int(rowBytes), bpp, false); err != nil {
+				return nil, err
+			}
+		}
 		for y := y0; y < y1; y++ {
 			row := strip[int64(y-y0)*rowBytes : int64(y-y0+1)*rowBytes]
 			for x := 0; x < w; x++ {

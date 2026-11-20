@@ -745,7 +745,7 @@ The following capabilities have been implemented through `0.6.1`:
 - **Star catalog export**: `--export-stars FILE` emits a flux-sorted JSON/CSV list of detected stars for a single `--process-image` input, with 0-based centroids, flux, size, eccentricity and HFR. Test: `TestExportStarsFluxSorted`.
 - **Diffuse-object classification**: `--classify-objects FILE` writes a report-only JSON catalogue of star-masked components with CAS/Gini/M20 morphology and IVOA `object-type`/`src.class` labels; pipeline pixels are never modified. Test: `TestDiffuseObjectClassification`.
 - **Saturation-aware star detection**: bright stars with large saturated halos are retained via compact-core flux/compactness checks instead of the old 200-pixel cap; diffraction spikes no longer displace centroids. Tests: `TestSaturatedStarDetection`, `TestSaturatedStarWithSpikesDetection`, `TestBrightStarSurvivesFluxTruncation`.
-- **goTiff foundation**: new first-party `goTiff/` module with a typed API for 8/16-bit uint and 32/64-bit float samples, grayscale/RGB, little/big-endian classic TIFF, IFD parsing and uncompressed strips. Tests: `go test ./...` inside `goTiff/`.
+- **goTiff TIFF engine**: first-party `goTiff/` module with a typed API for 8/16-bit uint and 32/64-bit float samples, grayscale/RGB, classic and BigTIFF, PackBits/LZW/Deflate with horizontal prediction, multipage IFDs, Astro-TIFF tag 270 and CFA tags. SkyStacker now discovers and ingests `.tif/.tiff/.btf/.bigtiff` inputs without precision loss. Tests: `go test ./...` in `goTiff/` and `TestTIFFInputIntegration`.
 
 ---
 

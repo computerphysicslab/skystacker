@@ -6,6 +6,11 @@ the positional input directory. The default input directory is `.`.
 This page mirrors `skystacker --help`; use that command for the authoritative,
 build-specific text. See the linked pages for the semantics of each subsystem.
 
+Discovered inputs include `.tif/.tiff/.btf/.bigtiff` files, decoded by the
+first-party `goTiff` module: 8/16-bit uint or 32/64-bit float samples,
+grayscale/RGB, classic and BigTIFF, uncompressed/PackBits/LZW/Deflate, plus
+Astro-TIFF tag 270 and CFA metadata.
+
 ## Input and output
 
 | Flag | Default | Description |
