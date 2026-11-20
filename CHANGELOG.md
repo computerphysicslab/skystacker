@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Prioritized the first-party `goTiff` module: roadmap items 98–103 cover the typed TIFF foundation, lossless compression, BigTIFF/multipage, Astro-TIFF/CFA, SkyStacker ingestion and the test/CI rollout.
 - Fixed item 97: saturated/bright stars are no longer dropped by the 200-px connected-component cap; compact-core flux, aspect and HFR metrics survive spikes, with three regression tests and a 14-image corpus comparison.
 - Merged the all-scope goCrawler corpus (115 URLs) into `research/08` §12 and `research/02` §21, with VOTable/DQ mask notes in `research/01`; promoted items 93–96 and synced docs for items 88–92.
 - Merged the additional-sources corpus into `research/02` §20 (solve-field options, Astro-TIFF tag 270, drizzle/weighting practice, Gaia ADQL, GraXpert and AAVSO photometry); promoted items 90–92; roadmap extended to 92 items.
