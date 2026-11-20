@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Merged the all-scope goCrawler corpus (115 URLs) into `research/08` §12 and `research/02` §21, with VOTable/DQ mask notes in `research/01`; promoted items 93–96 and synced docs for items 88–92.
 - Merged the additional-sources corpus into `research/02` §20 (solve-field options, Astro-TIFF tag 270, drizzle/weighting practice, Gaia ADQL, GraXpert and AAVSO photometry); promoted items 90–92; roadmap extended to 92 items.
 - Delivered item 89: `--classify-objects FILE` writes a report-only JSON catalogue of diffuse components with CAS/Gini/M20 morphology and IVOA `object-type`/`src.class` labels, star masking and a synthetic star/galaxy/nebula selftest.
 - Added `--export-stars FILE` (item 88): flux-sorted JSON/CSV star catalog for a single image, with a synthetic test and documentation in `docs/`.

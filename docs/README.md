@@ -41,6 +41,7 @@ All documents are written in English.
 
 Documentation reflects SkyStacker **v0.6.1** on **Go 1.27.4**. The authoritative
 roadmap and status counts live in `ROADMAP.md`; algorithms and source evidence
-live in `research/`. When code changes, update the affected page in this folder
-and the self-test count in `prompt-ai.txt`, `PROJECT_CONTEXT.md` and
-`TECHNICAL_SPEC.md`.
+live in `research/`, including §19–§21 of `research/02` for star-catalog export,
+diffuse-object classification, VO services and WCS refinement. When code
+changes, update the affected page in this folder and the self-test count in
+`prompt-ai.txt`, `PROJECT_CONTEXT.md` and `TECHNICAL_SPEC.md`.

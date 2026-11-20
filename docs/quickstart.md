@@ -64,7 +64,20 @@ with 0-based pixel centroids, integrated flux, component size, eccentricity and
 HFR. Use a `.csv` path for a spreadsheet-friendly version. No stacking or
 plate solving is needed.
 
-## 4. Re-run post-processing on an existing stack
+## 4. Classify diffuse objects
+
+```bash
+skystacker --process-image \
+  "assets/M42-2017-11-18-Leciñena-50mm/0_skystacker_results/stacked_mean.jpg" \
+  --classify-objects /tmp/objects.json
+```
+
+`/tmp/objects.json` is report-only: it masks detected stars, measures
+concentration/asymmetry/smoothness/Gini/M20/ellipticity on the remaining
+components and labels them with IVOA `object-type` terms plus `src.class` UCDs.
+The scientific stack pixels are never modified.
+
+## 5. Re-run post-processing on an existing stack
 
 ```bash
 skystacker --post-only --resume \

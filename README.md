@@ -618,6 +618,8 @@ frames unless `--external-allow-nonlinear` is given.
 | `--png` | Write lossless `stacked_mean.png` alongside JPEGs (same gamma `0.5` LUT) | `false` |
 | `--bmp` | Write uncompressed 24-bit `stacked_mean.bmp` alongside JPEGs (BGR, bottom-up) | `false` |
 | `--test-gaia RA,DEC` | One-shot Gaia DR3 tile query diagnostic; prints `nside`, `ipix`, first 5 stars, and exits | — |
+| `--export-stars FILE` | Export detected stars of `--process-image` as flux-sorted JSON/CSV; no `--image-op` required | — |
+| `--classify-objects FILE` | Report-only diffuse-object morphology (CAS/Gini/M20) and IVOA object-type JSON; no `--image-op` required | — |
 | `--test-debayer PATH` | One-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg` | — |
 | `--selftest` | Run embedded self-tests and exit | — |
 | `--version` | Print version and exit | — |
@@ -740,6 +742,8 @@ The following capabilities have been implemented through `0.6.1`:
 - **Catalog annotation (offline, basic)**: `--annotate` projects cached Gaia stars through `plate_solution.json` into `stacked_annotated.jpg` and lists unmatched detections in `anomalies.json`. Test: `testCatalogAnnotationSkip`.
 - **Star/starless layers (basic)**: `--starless` writes `stacked_starless`/`stacked_stars` float32 + JPEG from the post-processing star-removal step. Test: `testPipelineStarless`.
 - **Extended controls**: `--comet-ephem-strict-exif`, `--plate-solve` in `--post-only`, `--hfr-quality`, `--sigma-clip-low/high`, and SIP order-2 in WCS forward/inverse helpers. Tests: `testCometEphemerisParse`, `testPlateSolvePostOnlyNoStars`, `testHFRQuality`, `testSigmaClipAsymmetric`, `testWCSSIP`.
+- **Star catalog export**: `--export-stars FILE` emits a flux-sorted JSON/CSV list of detected stars for a single `--process-image` input, with 0-based centroids, flux, size, eccentricity and HFR. Test: `TestExportStarsFluxSorted`.
+- **Diffuse-object classification**: `--classify-objects FILE` writes a report-only JSON catalogue of star-masked components with CAS/Gini/M20 morphology and IVOA `object-type`/`src.class` labels; pipeline pixels are never modified. Test: `TestDiffuseObjectClassification`.
 
 ---
 
@@ -756,6 +760,7 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 - **PSF modelling & HFR**: flux-weighted HFR is now recorded per star (`starHFR`, `testStarHFR`); Gaussian/Moffat profile fits and elliptical Gaussian fitting for tracking errors/tilt/coma remain. Test: `testPSFFit` (synthetic Moffat, recover FWHM within tolerance).
 - **Frame quality weighting (advanced)**: `computeAdvancedQuality` applies `Q_i = w₁·SNR − w₂·FWHM − w₃·E − w₄·B`; `--hfr-quality` opts into HFR-derived FWHM. Remaining work: PSF-derived FWHM/eccentricity.
 - **Adaptive rejection & maps (extended)**: MAD sigma-clipping, per-pixel rejection/weight maps, coverage map, and `--sigma-clip-low/high` asymmetric thresholds are shipped; richer per-pixel metadata remains.
+- **VO services and catalog expansion (items 90–96)**: external solver option tuning, Astro-TIFF WCS ingest/export, AAVSO-style transformation reports, VOTable `BINARY2` export, async TAP jobs, iterative WCS refinement, and MAST/ESASky/IRSA MOST adapters are tracked as Open in `ROADMAP.md`; evidence is in `research/02` §20–§21.
 
 ### Tier 3 — Large, multi-day (`L`)
 
