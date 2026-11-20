@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Merged the 779 KB full-corpus export into `research/02` §18 (Pan-STARRS WCS caveats, ImageSolver convergence/matching numbers, AnnotateImage XEPH details, Siril SPCC/SEP/pyvo/APP/LSST facts), promoted items 82–87 and split `ROADMAP.md` into a not-achieved table followed by an achieved table.
 - Implemented the engineering deliverables of items 78–81 in `blind_engine.go`/`blind_index.go`: detrended+HFD-filtered extraction, default multi-tile Gaia gathering, Bayesian log-odds with scale-consistent pruning, SBI1 binary density-uniform index with exponential keys, and sub-degree/DR4 tooling with proper-motion records; seven Go tests added. Corpus acceptance criteria remain unmet (0/14), so the items are marked executed/not accepted.
 - Consolidated the 75 KB efficient-blind-solving corpus into `research/02` §17 (five defect classes for the 0/14 result, four-phase blueprint, Gaia DR4/v3.15 index constraints and a deduplicated source index), removed the processed file and promoted items 78–81; roadmap extended to 81 items.
 - Raised blind-solve diagnostics on the real corpus: `--gaia-multitile`, `--gaia-loose-match`, nearest-neighbour scale estimation, focal-hint override, RMS/seed-centre sanity gates and `SKYSTACKER_DEBUG_MATCH`; false seeded solutions are now rejected instead of reported.
