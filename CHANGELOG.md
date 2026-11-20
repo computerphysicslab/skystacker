@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.1 (2026-11-16)
+- Merged the additional-sources corpus into `research/02` §20 (solve-field options, Astro-TIFF tag 270, drizzle/weighting practice, Gaia ADQL, GraXpert and AAVSO photometry); promoted items 90–92; roadmap extended to 92 items.
 - Delivered item 89: `--classify-objects FILE` writes a report-only JSON catalogue of diffuse components with CAS/Gini/M20 morphology and IVOA `object-type`/`src.class` labels, star masking and a synthetic star/galaxy/nebula selftest.
 - Added `--export-stars FILE` (item 88): flux-sorted JSON/CSV star catalog for a single image, with a synthetic test and documentation in `docs/`.
 - Researched object-classification standards (SExtractor CLASS_STAR/SPREAD_MODEL, SDSS DR17, CAS/Gini/M20, IVOA UCD/object-type) into `research/02` §19; promoted item 89 for report-only diffuse-object classification.
