@@ -33,6 +33,16 @@ func filterStarsForMatching(stars []star) []star {
 // Processed JPEG/PNG frames contain compression noise and nebular structure;
 // detection therefore runs on a downsampled, background-equalised scratch copy
 // and centroids are mapped back to the original pixel frame.
+func blindDownsampleScale(width, height int) int {
+	if max(width, height) > 3000 {
+		return 4
+	}
+	if width > 1280 || height > 960 {
+		return 2
+	}
+	return 1
+}
+
 func detrendedBlindStars(f *frame, maxStars int) []star {
 	if f == nil || f.Width < 16 || f.Height < 16 || len(f.Pix) < f.Width*f.Height*3 {
 		return nil
@@ -42,12 +52,7 @@ func detrendedBlindStars(f *frame, maxStars int) []star {
 	}
 	// Downsampling suppresses JPEG noise and improves star SNR before
 	// detection; large frames additionally bound peak memory.
-	scale := 1
-	if min(f.Width, f.Height) > 3000 {
-		scale = 4
-	} else if min(f.Width, f.Height) > 1280 {
-		scale = 2
-	}
+	scale := blindDownsampleScale(f.Width, f.Height)
 	work := f
 	if scale > 1 {
 		work = resizeFrame(f, f.Width/scale, f.Height/scale)
@@ -109,7 +114,7 @@ func scaleConsistentMatches(matches []matchPair, frameStars []star, catalog []ga
 		return matches
 	}
 	if maxDeviation <= 0 || maxDeviation > 1 {
-		maxDeviation = 0.2
+		maxDeviation = 0.35
 	}
 	// Every pair of correspondences implies a pixel scale: angular separation
 	// of the catalogue stars divided by their pixel separation. The median of
@@ -141,8 +146,6 @@ func scaleConsistentMatches(matches []matchPair, frameStars []star, catalog []ga
 	if len(scales) < 3 {
 		return matches
 	}
-	// The lower quartile is robust even when almost half of the quads are
-	// collisions with inflated scale estimates.
 	sort.Float64s(scales)
 	median := scales[len(scales)/4]
 	out := make([]matchPair, 0, len(matches))
@@ -164,6 +167,7 @@ func scaleConsistentMatches(matches []matchPair, frameStars []star, catalog []ga
 			out = append(out, m)
 		}
 	}
+
 	return out
 }
 

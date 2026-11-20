@@ -94,3 +94,26 @@ Set `SKYSTACKER_DEBUG_MATCH=1` to print matcher diagnostics
 
 See [plate-solving.md](plate-solving.md) for the solver architecture and
 `research/02` §15–§16 for the algorithm background.
+
+## Second-pass diagnostics (2026-11-20)
+
+Items 78 and 80 remain **executed, not accepted**. `scripts/bench-blind.sh` now
+passes `--blind-detrend`, and a new `scripts/bench-seeded.sh` provides the M42
+seeded control with the published centre so acceptance can be measured without
+`--gaia-loose-match`.
+
+Two structural defects were fixed in this pass:
+
+- the native verifier no longer uses a hard-coded `0.008 deg²` FOV; it derives
+  the FOV from the detection bounding box and the hypothesis/hint scale, making
+  the log-odds null model consistent with hundreds or thousands of Gaia
+  candidates;
+- the geometric tolerance is now pixel-based (`1.5 × arcsec-per-pixel`, floor
+  2 arcsec) and triangle sides below 2 px are no longer discarded; the detrend
+  path also downsamples whenever width > 1280 px or height > 960 px.
+
+After these fixes the corpus is still **0/14** with the native solver and no
+seeded Gaia tile cache is available in this environment, so the M42 control
+cannot be treated as accepted evidence. The remaining blocker is candidate
+supply/scale estimation on these processed JPEGs, not the log-odds threshold.
+Items 79 and 81 stay open until the corpus table actually flips.

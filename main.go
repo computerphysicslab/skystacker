@@ -3405,13 +3405,13 @@ func buildTriangles(stars []star) []triangle {
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			dij2 := dist2(stars[i], stars[j])
-			if dij2 < 25 { // reject very short sides
+			if dij2 < 4 { // reject very short sides
 				continue
 			}
 			for k := j + 1; k < n; k++ {
 				dik2 := dist2(stars[i], stars[k])
 				djk2 := dist2(stars[j], stars[k])
-				if dik2 < 25 || djk2 < 25 {
+				if dik2 < 4 || djk2 < 4 {
 					continue
 				}
 				// sides[] = (length, opposite-vertex-index)
@@ -16977,8 +16977,8 @@ func tangentXY(ra0, dec0, ra, dec float64) point2D {
 // nativeGeometricHypothesis turns a single matched quad into a full
 // similarity hypothesis and counts inlier stars in the candidate catalogue.
 // This rejects the many descriptor collisions that vote for the wrong tile.
-func nativeGeometricHypothesis(q nativeQuadSample, hit nativeIndexEntry, frameStars []star, catalog []gaiaStar) ([]matchPair, bool) {
-	if hit.Stars[0][0] == 0 || len(catalog) < 6 {
+func nativeGeometricHypothesis(q nativeQuadSample, hit nativeIndexEntry, frameStars []star, catalog []gaiaStar, tolArcsec float64) ([]matchPair, bool) {
+	if len(catalog) < 6 {
 		return nil, false
 	}
 	ra0, dec0 := hit.Stars[0][0], hit.Stars[0][1]
@@ -16990,7 +16990,7 @@ func nativeGeometricHypothesis(q nativeQuadSample, hit nativeIndexEntry, frameSt
 	for i, s := range catalog {
 		catalogXY[i] = tangentXY(ra0, dec0, s.RA, s.Dec)
 	}
-	tol := 5.0 * math.Pi / (180.0 * 3600.0)
+	tol := tolArcsec * math.Pi / (180.0 * 3600.0)
 	limit := min(len(frameStars), 100)
 	var best []matchPair
 	for mirror := 0; mirror < 2; mirror++ {
@@ -17086,6 +17086,32 @@ func printBlindIndexInfo(path string) error {
 	return nil
 }
 
+func blindFOVSqDeg(stars []star, arcsecPerPx float64) float64 {
+	if len(stars) == 0 || arcsecPerPx <= 0 {
+		return 0.008
+	}
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, s := range stars {
+		minX, maxX = math.Min(minX, s.X), math.Max(maxX, s.X)
+		minY, maxY = math.Min(minY, s.Y), math.Max(maxY, s.Y)
+	}
+	widthPx, heightPx := maxX-minX+1, maxY-minY+1
+	if widthPx <= 0 || heightPx <= 0 {
+		return 0.008
+	}
+	degPerPx := arcsecPerPx / 3600
+	fov := widthPx * heightPx * degPerPx * degPerPx
+	return math.Max(0.01, math.Min(100, fov))
+}
+
+func blindTolArcsec(arcsecPerPx float64) float64 {
+	if arcsecPerPx <= 0 {
+		return 5
+	}
+	return math.Max(2, 1.5*arcsecPerPx)
+}
+
 func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plateSolution, error) {
 	if len(stars) < 4 {
 		return nil, errors.New("native blind solve: need at least 4 detected stars")
@@ -17122,8 +17148,9 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 	}
 	imageQuads := nativeQuads(pts, nil, nil)
 	type hypothesis struct {
-		quad nativeQuadSample
-		hit  nativeIndexEntry
+		quad   nativeQuadSample
+		hit    nativeIndexEntry
+		arcsec float64
 	}
 	var hypotheses []hypothesis
 	votes := make(map[int]int)
@@ -17141,8 +17168,8 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 					continue
 				}
 				votes[hit.Ipix]++
-				if len(hypotheses) < 4096 && hit.Stars[0][0] != 0 {
-					hypotheses = append(hypotheses, hypothesis{q, hit})
+				if len(hypotheses) < 4096 {
+					hypotheses = append(hypotheses, hypothesis{quad: q, hit: hit, arcsec: arcsec})
 				}
 			}
 		}
@@ -17170,13 +17197,15 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 			lastErr = errors.New(label + ": too few catalogue stars")
 			return nil
 		}
-		matches, ok := matchStarsToGaia(ordered, catalog, 5.0)
+		tolArcsec := blindTolArcsec(hintArcsec)
+		fovSqDeg := blindFOVSqDeg(ordered, hintArcsec)
+		matches, ok := matchStarsToGaia(ordered, catalog, tolArcsec)
 		if !ok {
 			lastErr = fmt.Errorf("%s: no consistent transform", label)
 			return nil
 		}
 		odds := bayesianLogOdds(len(matches), len(ordered), len(catalog),
-			5.0*math.Pi/(180.0*3600.0), 0.008)
+			tolArcsec*math.Pi/(180.0*3600.0), fovSqDeg)
 		if odds < 10 {
 			lastErr = fmt.Errorf("%s: log-odds %.1f below threshold", label, odds)
 			return nil
@@ -17186,7 +17215,7 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 			lastErr = err
 			return nil
 		}
-		sol.Verify = verifySolution(ordered, catalog, matches, 5.0, 0.008)
+		sol.Verify = verifySolution(ordered, catalog, matches, tolArcsec, fovSqDeg)
 		sol.Verify.LogOdds = odds
 		logf("  plate: native blind solve %s", label)
 		return sol
@@ -17219,16 +17248,18 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 			catalog = nativeCandidateStars(idx, h.hit.Ipix)
 			geoCatalogs[h.hit.Ipix] = catalog
 		}
-		matches, ok := nativeGeometricHypothesis(h.quad, h.hit, ordered, catalog)
+		tolArcsec := blindTolArcsec(h.arcsec)
+		fovSqDeg := blindFOVSqDeg(ordered, h.arcsec)
+		matches, ok := nativeGeometricHypothesis(h.quad, h.hit, ordered, catalog, tolArcsec)
 		if !ok {
 			continue
 		}
-		pruned := scaleConsistentMatches(matches, ordered, catalog, 0.2)
+		pruned := scaleConsistentMatches(matches, ordered, catalog, 0.35)
 		if len(pruned) < 6 {
 			continue
 		}
 		odds := bayesianLogOdds(len(pruned), len(ordered), len(catalog),
-			5.0*math.Pi/(180.0*3600.0), 0.008)
+			tolArcsec*math.Pi/(180.0*3600.0), fovSqDeg)
 		if odds < logOddsThreshold {
 			continue
 		}
@@ -17237,7 +17268,7 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 			lastErr = err
 			continue
 		}
-		sol.Verify = verifySolution(ordered, catalog, pruned, 5.0, 0.008)
+		sol.Verify = verifySolution(ordered, catalog, pruned, tolArcsec, fovSqDeg)
 		sol.Verify.LogOdds = odds
 		if bestGeo == nil || odds > bestGeo.logOdds {
 			bestGeo = &geoCandidate{sol, odds, len(pruned)}

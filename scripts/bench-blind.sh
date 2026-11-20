@@ -19,7 +19,7 @@ while IFS= read -r -d '' image; do
   log=$(timeout 90 skystacker --process-image "$image" \
     --image-op plate-solve --image-output "$work" \
     --plate-solver native --blind-catalog "$catalog" \
-    --gaia-offline 2>&1)
+    --blind-detrend --gaia-offline 2>&1)
   elapsed=$(( $(date +%s) - start ))
   json="$work/${stem}_plate_solution.json"
   if [[ -f "$json" ]]; then
