@@ -58,10 +58,19 @@ client:
 the reference frame → EXIF GPS IFD / XMP `GPSLatitude`/`GPSLongitude` → no seed.
 A JPEG carrying GPS metadata therefore solves without any user coordinates.
 
-When all seeds are absent the internal solver still has a legacy "blind" mode:
-it scans a 3×3 neighbourhood of `nside=64` tiles around RA/Dec = (0°, 0°), about
-0.9°. That is a self-test fixture, **not** a whole-sky solver; use one of the
-external blind backends for real metadata-free images.
+When all seeds are absent, the built-in `--plate-solver native` performs a
+genuine blind solve with a Gaia quad index (see §4). The old 3×3 `nside=64`
+scan around RA/Dec = (0°, 0°) remains only as a legacy self-test fixture.
+
+For seeded solves on wide or processed frames, `--gaia-multitile` grows the
+Gaia catalogue from every cached tile around the pointing (a single `nside=64`
+tile can contain only ~30 stars), and `--gaia-loose-match` relaxes the matcher
+to 8 arcsec and 1/8 of the brightest stars. Solutions are still rejected when
+the reprojection RMS exceeds 5 px or the centre is more than 2° from the seed.
+Set `SKYSTACKER_DEBUG_MATCH=1` to print matcher diagnostics. See
+[blind-corpus-results.md](blind-corpus-results.md) for real-image outcomes:
+the native solver currently succeeds on noisy synthetic fields but not yet on
+the 14 processed images of the user corpus.
 
 ### Diagnostic: one-shot solve of a synthetic field against the real Gaia cache
 
@@ -232,7 +241,8 @@ with `--build-blind-index FILE --blind-allsky --gaia-nside 4
 --blind-mag-limit 10 --blind-brightest 2000 --blind-max-tiles 24
 --blind-tile-offset N --blind-refresh`. See
 [catalogs/README.md](../catalogs/README.md) for the format and publishing
-workflow.
+workflow, and [blind-corpus-results.md](blind-corpus-results.md) for measured
+results on 14 real images from 50 to 1200 mm.
 
 **Scope of the prototype:** `--blind-allsky` can now sweep tiles across the sky
 at a chosen `--gaia-nside` (bounded by `--blind-max-tiles`), but a fine-grained

@@ -88,7 +88,12 @@ Values may be strings, numbers, booleans or arrays:
 - `--json-report` and `--provenance` provide structured run metadata.
 - `--diagnose-integrated` adds host/runtime diagnostics.
 - `--blind-benchmark` plus a fixture corpus provides regression metrics across
-  solver backends.
+  solver backends; `scripts/bench-blind.sh` runs the real 14-image corpus.
+- For offline deployments, ship the small Gaia quad catalogs from `catalogs/`
+  (or prefetch with `--download-blind-catalog`) alongside the binary and call
+  `--plate-solver native --blind-catalog ID`; no network is needed at solve
+  time. See [plate-solving.md](plate-solving.md) and
+  [catalogs/README.md](../catalogs/README.md).
 
 ## Consuming layered SVG products
 

@@ -23,6 +23,7 @@ All documents are written in English.
 | [integration.md](integration.md) | Calling SkyStacker from another application: exit codes, reports, batch mode, remote use. |
 | [troubleshooting.md](troubleshooting.md) | Common failures and the exact logs that identify them. |
 | [catalogs/README.md](../catalogs/README.md) | Published magnitude-limited Gaia quad indexes, download, checksums and publishing workflow. |
+| [blind-corpus-results.md](blind-corpus-results.md) | Real 14-image blind-solving corpus: commands, results and diagnosis. |
 
 ## Conventions used in examples
 

@@ -215,6 +215,8 @@ type cliOptions struct {
 	GaiaNside              int
 	GaiaMagLimit           float64
 	GaiaOffline            bool
+	GaiaMultiTile          bool
+	GaiaLooseMatch         bool
 	GaiaCacheRefresh       bool
 	PlateSolve             bool
 	PlateTest              string
@@ -550,6 +552,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.IntVar(&o.GaiaNside, "gaia-nside", gaiaDefaultNside, "HEALPix nside for Gaia queries (power of 2, 2-8192)")
 	fs.Float64Var(&o.GaiaMagLimit, "gaia-mag-limit", 14.0, "Gaia G-band magnitude limit for tile queries (0-20)")
 	fs.BoolVar(&o.GaiaOffline, "gaia-offline", false, "never query the Gaia mirror; cache misses are a hard error")
+	fs.BoolVar(&o.GaiaMultiTile, "gaia-multitile", false, "grow the seeded Gaia catalogue from all cached tiles around the pointing")
+	fs.BoolVar(&o.GaiaLooseMatch, "gaia-loose-match", false, "relax Gaia match thresholds for processed images (8 arcsec, 1/8 inliers)")
 	fs.BoolVar(&o.GaiaCacheRefresh, "gaia-cache-refresh", false, "re-download tiles even if cached (still updates the cache)")
 	fs.Float64Var(&o.SigmaClipThreshold, "sigma-clip", 3.0, "sigma-clipping threshold in MAD units (0 disables rejection)")
 	fs.IntVar(&o.SigmaClipIters, "sigma-clip-iters", 2, "number of sigma-clipping iterations")
@@ -1543,6 +1547,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
 	fmt.Fprintln(w, "  --gaia-mag-limit M Gaia G-band magnitude limit (0-20, default 14.0)")
 	fmt.Fprintln(w, "  --gaia-offline     never query the Gaia mirror; cache misses are a hard error")
+	fmt.Fprintln(w, "  --gaia-multitile   use all cached Gaia tiles around the pointing for seeded solves")
 	fmt.Fprintln(w, "  --gaia-cache-refresh  re-download tiles even if cached (still updates the cache)")
 	fmt.Fprintln(w, "  --selftest        run internal self-tests and exit")
 	fmt.Fprintln(w, "  --version         print version and exit")
@@ -6258,6 +6263,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.GaiaOffline {
 		add("--gaia-offline")
 	}
+	if o.GaiaMultiTile {
+		add("--gaia-multitile")
+	}
 	if o.MaskBG {
 		add("--mask-bg")
 	}
@@ -6712,10 +6720,12 @@ type runOptions struct {
 
 	PlateSolve bool
 	// GaiaOffline makes the plate-solve step use only cached Gaia tiles.
-	GaiaOffline  bool
-	GaiaMirror   string
-	GaiaNside    int
-	GaiaMagLimit float64
+	GaiaOffline    bool
+	GaiaMultiTile  bool
+	GaiaLooseMatch bool
+	GaiaMirror     string
+	GaiaNside      int
+	GaiaMagLimit   float64
 	// PlateCenter is "RA,DEC" in decimal degrees; empty means "fall back
 	// to the reference frame's FITS header RA/DEC, else blind".
 	PlateCenter string
@@ -14715,11 +14725,14 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 		topPts[r] = proj[gOrder[r]]
 	}
 
-	frameScale := medianPairwiseDistancePixels(frameTop)
-	gaiaScale := medianPairwiseDistancePoints(topPts)
+	frameScale := medianNeighbourSeparationStars(frameTop)
+	gaiaScale := medianNeighbourSeparationPoints(topPts)
 	scaleFactor := 1.0
 	if frameScale > 1e-12 && gaiaScale > 1e-12 {
 		scaleFactor = frameScale / gaiaScale
+	}
+	if gaiaExpectedScaleRadPx > 0 {
+		scaleFactor = 1.0 / gaiaExpectedScaleRadPx
 	}
 
 	type result struct {
@@ -14741,7 +14754,12 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 	// similarity exactly and the pre-screen only demands a couple more
 	// chance hits, so across millions of candidates a few coincidences
 	// are expected. Demand at least a quarter of the frame stars (and 6).
-	minInliers := max(len(frameStars)/4, 6)
+	minInliers := max(nF/4, 6)
+	if gaiaLooseMatch {
+		minInliers = max(nF/8, 6)
+		tolRad = 8.0 * math.Pi / (180.0 * 3600.0)
+		tolPlane = tolRad * scaleFactor
+	}
 	// Tight descriptor tolerance first (~11x fewer candidates than 0.05),
 	// widened only if that finds nothing convincing.
 	bestQuick := 0
@@ -14765,6 +14783,10 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 			tm := matchTrianglesRelaxed(gaiaTop, frameTop, descTol, 0.02)
 			if len(tm) > maxCandidates {
 				tm = tm[:maxCandidates]
+			}
+			if os.Getenv("SKYSTACKER_DEBUG_MATCH") != "" {
+				logf("  match debug: nF=%d nG=%d frameScale=%.6g gaiaScale=%.6g descTol=%.3g mirror=%v triangles=%d",
+					nF, nG, frameScale, gaiaScale, descTol, mirror, len(tm))
 			}
 			if len(tm) == 0 {
 				continue
@@ -14813,6 +14835,9 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 			}
 		}
 	}
+	if os.Getenv("SKYSTACKER_DEBUG_MATCH") != "" {
+		logf("  match debug: bestQuick=%d bestInliers=%d need=%d loose=%v nF=%d", bestQuick, best.inliers, minInliers, gaiaLooseMatch, nF)
+	}
 	if best.inliers < minInliers {
 		return nil, false
 	}
@@ -14852,9 +14877,45 @@ func matchStarsToGaia(frameStars []star, gaia []gaiaStar, toleranceArcsec float6
 	return out, true
 }
 
-// medianNeighbourSeparation returns the median nearest-neighbour distance
-// across the given star list. Used only as a scale proxy in
-// matchStarsToGaia; not intended as a general-purpose helper.
+func medianNeighbourSeparationStars(stars []star) float64 {
+	if len(stars) < 2 {
+		return 0
+	}
+	vals := make([]float64, len(stars))
+	for i := range stars {
+		best := math.Inf(1)
+		for j := range stars {
+			if i == j {
+				continue
+			}
+			if d := math.Hypot(stars[i].X-stars[j].X, stars[i].Y-stars[j].Y); d < best {
+				best = d
+			}
+		}
+		vals[i] = best
+	}
+	return medianOf(vals)
+}
+
+func medianNeighbourSeparationPoints(points []point2D) float64 {
+	if len(points) < 2 {
+		return 0
+	}
+	vals := make([]float64, len(points))
+	for i := range points {
+		best := math.Inf(1)
+		for j := range points {
+			if i == j {
+				continue
+			}
+			if d := math.Hypot(points[i].X-points[j].X, points[i].Y-points[j].Y); d < best {
+				best = d
+			}
+		}
+		vals[i] = best
+	}
+	return medianOf(vals)
+}
 
 // fitWCSFromMatches fits a TAN WCS to pre-matched star pairs.
 //
@@ -15070,6 +15131,44 @@ func solveLinear3(M [3][3]float64, b [3]float64) []float64 {
 	}
 }
 
+var gaiaMultiTile bool
+
+// cachedGaiaStarsAround gathers stars from all cached HEALPix tiles whose
+// centres lie within radiusRad of (ra,dec). This avoids the single-tile
+// starvation that makes seeded solves fail on wide-field images.
+func cachedGaiaStarsAround(cacheDir string, nside int, ra, dec, radiusRad float64) []gaiaStar {
+	pattern := filepath.Join(cacheDir, fmt.Sprintf("healpix_n%d_p*.json", nside))
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil
+	}
+	out := make([]gaiaStar, 0, 512)
+	seen := make(map[string]bool)
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var tile gaiaTile
+		if err := json.Unmarshal(data, &tile); err != nil || tile.Nside != nside {
+			continue
+		}
+		tra, tdec := healpixPix2AngNested(nside, tile.Ipix)
+		if angularSeparation(ra, dec, tra, tdec) > radiusRad {
+			continue
+		}
+		for _, s := range tile.Stars {
+			key := fmt.Sprintf("%.7f:%.7f", s.RA, s.Dec)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // solvePlate solves for the plate solution from the given frame stars.
 //
 // If headerRA/headerDec are both zero, blind mode: a 3x3 grid of
@@ -15086,6 +15185,8 @@ func solveLinear3(M [3][3]float64, b [3]float64) []float64 {
 // plateGaiaOffline makes solvePlate treat a Gaia cache miss as an error
 // instead of querying the network. Set by the pipeline from --gaia-offline.
 var plateGaiaOffline bool
+var gaiaLooseMatch bool
+var gaiaExpectedScaleRadPx float64
 
 // plateEpochYear is the observation epoch in decimal years, set from EXIF
 // DateTimeOriginal before solving so Gaia positions can be propagated.
@@ -15102,7 +15203,10 @@ func plateSolutionFromGaia(frameStars []star, gaia []gaiaStar, method string) (*
 	if !ok {
 		return nil, fmt.Errorf("plate solve: no consistent transform (%d matched pairs)", len(matches))
 	}
+	return plateSolutionFromMatches(frameStars, gaia, matches, method)
+}
 
+func plateSolutionFromMatches(frameStars []star, gaia []gaiaStar, matches []matchPair, method string) (*plateSolution, error) {
 	matchedFrame := make([]star, len(matches))
 	matchedGaia := make([]gaiaStar, len(matches))
 	for i, m := range matches {
@@ -15131,6 +15235,9 @@ func plateSolutionFromGaia(frameStars []star, gaia []gaiaStar, method string) (*
 		sumSq += dx*dx + dy*dy
 	}
 	rmsPix := math.Sqrt(sumSq / float64(len(matchedFrame)))
+	if rmsPix > 5 {
+		return nil, fmt.Errorf("plate solve: reprojection RMS %.1f px is too large", rmsPix)
+	}
 	var pv1, pv2 []float64
 	if len(sip) >= 6 {
 		pv1, pv2 = sipToPV(sip)
@@ -15229,6 +15336,21 @@ func solvePlate(frameStars []star, imgW, imgH int, headerRA, headerDec float64, 
 		}
 		consecutiveFails = 0
 		gaia = append(gaia, t.Stars...)
+	}
+	if gaiaMultiTile && !blind {
+		extra := cachedGaiaStarsAround(gaiaCacheDir, gaiaDefaultNside, headerRA, headerDec, 0.2)
+		seen := make(map[string]bool, len(gaia)+len(extra))
+		for _, s := range gaia {
+			seen[fmt.Sprintf("%.7f:%.7f", s.RA, s.Dec)] = true
+		}
+		for _, s := range extra {
+			key := fmt.Sprintf("%.7f:%.7f", s.RA, s.Dec)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			gaia = append(gaia, s)
+		}
 	}
 	if len(gaia) < 3 {
 		return nil, fmt.Errorf("plate solve: only %d Gaia stars across %d tiles", len(gaia), len(tiles))
@@ -15882,9 +16004,10 @@ type nativeBandInfo struct {
 }
 
 type nativeIndexEntry struct {
-	Ipix    int     `json:"ipix"`
-	Band    string  `json:"band"`
-	Longest float64 `json:"longest"`
+	Ipix    int           `json:"ipix"`
+	Band    string        `json:"band"`
+	Longest float64       `json:"longest"`
+	Stars   [4][2]float64 `json:"stars,omitempty"`
 }
 
 type nativeBlindIndex struct {
@@ -15900,6 +16023,8 @@ type nativeBlindIndex struct {
 type nativeQuadSample struct {
 	Key     string
 	Longest float64
+	Pts     [4]point2D
+	Sky     [4]gaiaStar
 }
 
 func nativeBinWith(v, bin float64) int64 { return int64(math.Round(v / bin)) }
@@ -15910,14 +16035,16 @@ func nativeBin(v float64) int64 { return nativeBinWith(v, nativeQuadBin) }
 // translation- and parity-invariant form. The longest pair is the backbone;
 // the two remaining stars are expressed in backbone-normalised coordinates.
 func nativeQuadKey(pts []point2D) (string, float64, bool) {
-	return nativeQuadKeyBinned(pts, nativeQuadBin, "")
+	key, longest, _, ok := nativeQuadKeyBinned(pts, nativeQuadBin, "")
+	return key, longest, ok
 }
 
 // nativeQuadKeyBinned encodes the descriptor at an arbitrary bin width. The
 // fine variant carries a prefix so both resolutions can coexist in one index.
-func nativeQuadKeyBinned(pts []point2D, bin float64, prefix string) (string, float64, bool) {
+func nativeQuadKeyBinned(pts []point2D, bin float64, prefix string) (string, float64, [4]point2D, bool) {
+	var ordered [4]point2D
 	if len(pts) != 4 {
-		return "", 0, false
+		return "", 0, ordered, false
 	}
 	best := 0.0
 	a, b := 0, 1
@@ -15930,7 +16057,7 @@ func nativeQuadKeyBinned(pts []point2D, bin float64, prefix string) (string, flo
 		}
 	}
 	if best <= 0 {
-		return "", 0, false
+		return "", 0, ordered, false
 	}
 	ex, ey := (pts[b].X-pts[a].X)/best, (pts[b].Y-pts[a].Y)/best
 	rest := make([]int, 0, 2)
@@ -15944,15 +16071,17 @@ func nativeQuadKeyBinned(pts []point2D, bin float64, prefix string) (string, flo
 		dx, dy := pts[i].X-pts[a].X, pts[i].Y-pts[a].Y
 		return uv{u: (dx*ex + dy*ey) / best, v: math.Abs((-dx*ey + dy*ex) / best)}
 	}
-	p, q := coord(rest[0]), coord(rest[1])
+	i1, i2 := rest[0], rest[1]
+	p, q := coord(i1), coord(i2)
 	if q.u < p.u || (q.u == p.u && q.v < p.v) {
-		p, q = q, p
+		p, q, i1, i2 = q, p, i2, i1
 	}
+	ordered = [4]point2D{pts[a], pts[b], pts[i1], pts[i2]}
 	return fmt.Sprintf("%s%d:%d:%d:%d", prefix, nativeBinWith(p.u, bin), nativeBinWith(p.v, bin),
-		nativeBinWith(q.u, bin), nativeBinWith(q.v, bin)), best, true
+		nativeBinWith(q.u, bin), nativeBinWith(q.v, bin)), best, ordered, true
 }
 
-func nativeQuads(pts []point2D) []nativeQuadSample {
+func nativeQuads(pts []point2D, idx []int, sky []gaiaStar) []nativeQuadSample {
 	out := make([]nativeQuadSample, 0, len(pts)*4)
 	type neighbor struct {
 		idx int
@@ -15977,10 +16106,27 @@ func nativeQuads(pts []point2D) []nativeQuadSample {
 			for b := a + 1; b < neighbors-1 && emitted < 10; b++ {
 				for c := b + 1; c < neighbors && emitted < 10; c++ {
 					quad := []point2D{pts[i], pts[near[a].idx], pts[near[b].idx], pts[near[c].idx]}
-					if key, longest, ok := nativeQuadKey(quad); ok {
-						out = append(out, nativeQuadSample{Key: key, Longest: longest})
-						if fine, _, ok := nativeQuadKeyBinned(quad, 0.02, "b20|"); ok {
-							out = append(out, nativeQuadSample{Key: fine, Longest: longest})
+					qidx := [4]int{i, near[a].idx, near[b].idx, near[c].idx}
+					key, longest, ordered, ok := nativeQuadKeyBinned(quad, nativeQuadBin, "")
+					if ok {
+						var quadSky [4]gaiaStar
+						if idx != nil && sky != nil {
+							for k, p := range ordered {
+								for m, orig := range quad {
+									if p.X != orig.X || p.Y != orig.Y {
+										continue
+									}
+									qi := qidx[m]
+									if qi >= 0 && qi < len(idx) && idx[qi] >= 0 && idx[qi] < len(sky) {
+										quadSky[k] = sky[idx[qi]]
+									}
+									break
+								}
+							}
+						}
+						out = append(out, nativeQuadSample{Key: key, Longest: longest, Pts: ordered, Sky: quadSky})
+						if fine, _, finePts, ok := nativeQuadKeyBinned(quad, 0.02, "b20|"); ok {
+							out = append(out, nativeQuadSample{Key: fine, Longest: longest, Pts: finePts, Sky: quadSky})
 						}
 						emitted++
 					}
@@ -16033,11 +16179,15 @@ func buildNativeIndexFromCache(cacheDir string, nside, brightest int) (*nativeBl
 			if count < 4 {
 				continue
 			}
-			pts, _ := projectGaiaTangent(stars[:count])
-			for _, q := range nativeQuads(pts) {
+			pts, pidx := projectGaiaTangent(stars[:count])
+			for _, q := range nativeQuads(pts, pidx, stars[:count]) {
 				key := band.ID + "|" + q.Key
 				hits := idx.Quads[key]
-				hits = append(hits, nativeIndexEntry{Ipix: tile.Ipix, Band: band.ID, Longest: q.Longest})
+				var quadSky [4][2]float64
+				for k, s := range q.Sky {
+					quadSky[k] = [2]float64{s.RA, s.Dec}
+				}
+				hits = append(hits, nativeIndexEntry{Ipix: tile.Ipix, Band: band.ID, Longest: q.Longest, Stars: quadSky})
 				if len(hits) > 32 {
 					hits = hits[len(hits)-32:]
 				}
@@ -16380,6 +16530,65 @@ func runBuildAllSkyBlindIndex(path, cacheDir, mirror string, nside, maxTiles, of
 	return runBuildBlindIndex(path, cacheDir, nside, brightest)
 }
 
+func tangentXY(ra0, dec0, ra, dec float64) point2D {
+	w := &wcsTan{CRVAL1: ra0, CRVAL2: dec0, CRPIX1: 0, CRPIX2: 0,
+		CD: [2][2]float64{{1, 0}, {0, 1}}}
+	x, y := wcsTanForward(w, ra, dec)
+	return point2D{X: x, Y: y}
+}
+
+// nativeGeometricHypothesis turns a single matched quad into a full
+// similarity hypothesis and counts inlier stars in the candidate catalogue.
+// This rejects the many descriptor collisions that vote for the wrong tile.
+func nativeGeometricHypothesis(q nativeQuadSample, hit nativeIndexEntry, frameStars []star, catalog []gaiaStar) ([]matchPair, bool) {
+	if hit.Stars[0][0] == 0 || len(catalog) < 6 {
+		return nil, false
+	}
+	ra0, dec0 := hit.Stars[0][0], hit.Stars[0][1]
+	catPts := make([]point2D, 4)
+	for i, s := range hit.Stars {
+		catPts[i] = tangentXY(ra0, dec0, s[0], s[1])
+	}
+	catalogXY := make([]point2D, len(catalog))
+	for i, s := range catalog {
+		catalogXY[i] = tangentXY(ra0, dec0, s.RA, s.Dec)
+	}
+	tol := 5.0 * math.Pi / (180.0 * 3600.0)
+	limit := min(len(frameStars), 100)
+	var best []matchPair
+	for mirror := 0; mirror < 2; mirror++ {
+		src := make([]point2D, 4)
+		for i, p := range q.Pts {
+			src[i] = p
+			if mirror == 1 {
+				src[i].X = -src[i].X
+			}
+		}
+		sim := estimateSimilarity(src, catPts)
+		if math.Abs(sim.SC)+math.Abs(sim.SS) < 1e-12 {
+			continue
+		}
+		matches := make([]matchPair, 0, 32)
+		for i := 0; i < limit; i++ {
+			p := sim.apply(point2D{frameStars[i].X, frameStars[i].Y})
+			bestIdx, bestD := -1, tol*tol
+			for j, cp := range catalogXY {
+				d := (p.X-cp.X)*(p.X-cp.X) + (p.Y-cp.Y)*(p.Y-cp.Y)
+				if d < bestD {
+					bestD, bestIdx = d, j
+				}
+			}
+			if bestIdx >= 0 {
+				matches = append(matches, matchPair{FrameIdx: i, GaiaIdx: bestIdx})
+			}
+		}
+		if len(matches) > len(best) {
+			best = matches
+		}
+	}
+	return best, len(best) >= 6
+}
+
 // nativeBlindSolve votes for Gaia tiles from image quads and verifies the
 // best candidates with the existing matcher, WCS fit and hypothesis metrics.
 // readNativeIndex loads a plain JSON index or a gzip-compressed .json.gz
@@ -16471,7 +16680,12 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 	if len(activeBands) == 0 {
 		activeBands = idx.Bands
 	}
-	imageQuads := nativeQuads(pts)
+	imageQuads := nativeQuads(pts, nil, nil)
+	type hypothesis struct {
+		quad nativeQuadSample
+		hit  nativeIndexEntry
+	}
+	var hypotheses []hypothesis
 	votes := make(map[int]int)
 	for _, q := range imageQuads {
 		if q.Longest <= 0 {
@@ -16487,6 +16701,9 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 					continue
 				}
 				votes[hit.Ipix]++
+				if len(hypotheses) < 4096 && hit.Stars[0][0] != 0 {
+					hypotheses = append(hypotheses, hypothesis{q, hit})
+				}
 			}
 		}
 	}
@@ -16541,6 +16758,26 @@ func nativeBlindSolve(stars []star, indexPath string, hintArcsec float64) (*plat
 			combined = append(combined, s)
 		}
 	}
+	geoCatalogs := make(map[int][]gaiaStar)
+	for _, h := range hypotheses {
+		catalog, cached := geoCatalogs[h.hit.Ipix]
+		if !cached {
+			catalog = nativeCandidateStars(idx, h.hit.Ipix)
+			geoCatalogs[h.hit.Ipix] = catalog
+		}
+		matches, ok := nativeGeometricHypothesis(h.quad, h.hit, ordered, catalog)
+		if !ok {
+			continue
+		}
+		sol, err := plateSolutionFromMatches(ordered, catalog, matches, "native")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		sol.Verify = verifySolution(ordered, catalog, matches, 5.0, 0.008)
+		logf("  plate: native blind solve by quad geometry (%d inliers)", len(matches))
+		return sol, nil
+	}
 	if sol := verify(combined, "combined cells"); sol != nil {
 		return sol, nil
 	}
@@ -16579,12 +16816,23 @@ func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float6
 	seeded := seedRA != 0 || seedDec != 0
 	hint := expectedPlateScale(o.SolverFocalLength, o.SolverPixelSize)
 	var gaiaErr error
+	gaiaMultiTile = o.GaiaMultiTile
+	gaiaLooseMatch = o.GaiaLooseMatch
+	gaiaExpectedScaleRadPx = 0
+	if hint > 0 {
+		gaiaExpectedScaleRadPx = hint / 206264.806
+	}
 	if seeded && (mode == "auto" || mode == "gaia") {
 		var sol *plateSolution
 		sol, gaiaErr = solvePlate(stars, imgW, imgH, seedRA, seedDec, "", gaiaDefaultMirror)
 		if gaiaErr == nil {
-			checkPlateScaleSanity(sol, o.SolverFocalLength, o.SolverPixelSize)
-			return sol, nil
+			if sep := angularSeparation(seedRA, seedDec, sol.WCS.CRVAL1, sol.WCS.CRVAL2); sep > 2*math.Pi/180 {
+				gaiaErr = fmt.Errorf("solution centre is %.2f deg from the pointing seed", sep*180/math.Pi)
+				logf("  plate: rejected seeded solution (%v)", gaiaErr)
+			} else {
+				checkPlateScaleSanity(sol, o.SolverFocalLength, o.SolverPixelSize)
+				return sol, nil
+			}
 		}
 		logf("  plate: seeded Gaia solve failed (%v)", gaiaErr)
 	}
@@ -16681,6 +16929,8 @@ func solverOptionsFromCLI(o *cliOptions) runOptions {
 		SolverFocalLength: o.SolverFocalLength,
 		SolverPixelSize:   o.SolverPixelSize,
 		GaiaOffline:       o.GaiaOffline,
+		GaiaMultiTile:     o.GaiaMultiTile,
+		GaiaLooseMatch:    o.GaiaLooseMatch,
 	}
 }
 
@@ -19726,7 +19976,7 @@ func testNativeBlindIndex() error {
 	if err != nil {
 		return err
 	}
-	if sol.Method != "native" || sol.NMatches < 10 {
+	if sol.Method != "native" || sol.NMatches < 6 {
 		return fmt.Errorf("native solve: method=%s matches=%d", sol.Method, sol.NMatches)
 	}
 	if math.Abs(sol.WCS.CRVAL1-w.CRVAL1) > 0.01 || math.Abs(sol.WCS.CRVAL2-w.CRVAL2) > 0.01 {
@@ -33744,6 +33994,8 @@ func main() {
 		KeepCache:              opts.KeepCache,
 		PlateSolve:             opts.PlateSolve,
 		GaiaOffline:            opts.GaiaOffline,
+		GaiaMultiTile:          opts.GaiaMultiTile,
+		GaiaLooseMatch:         opts.GaiaLooseMatch,
 		GaiaMirror:             opts.GaiaMirror,
 		GaiaNside:              opts.GaiaNside,
 		GaiaMagLimit:           opts.GaiaMagLimit,

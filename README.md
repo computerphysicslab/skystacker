@@ -179,7 +179,7 @@ Additional optional stages can be toggled via CLI flags: chromatic-aberration re
 
 ### Astrometric Plate Solving & Gaia DR3 Layer
 
-- **WCS solver (`--plate-solve`)**: Solves a TAN WCS astrometric solution after stacking using star pattern matching against Gaia DR3, writing `plate_solution.json` (including fitted SIP order-2 distortion coefficients). Supply `--plate-center RA,DEC` in decimal degrees or rely on the reference frame's FITS `RA`/`DEC` header keywords; otherwise `--plate-solver auto` tries a blind solve through local astrometry.net (`--astrometry-cmd`, needs installed indexes) and then the nova web API (`--astrometry-api-key` or `AN_API_KEY`). External WCS results are re-fitted against Gaia at the solved centre. With `--post-only`, the solver runs on stars detected in `_work/stacked_mean.f32raw`; a temporary JPEG is generated for the blind backend.
+- **WCS solver (`--plate-solve`)**: Solves a TAN WCS astrometric solution after stacking using star pattern matching against Gaia DR3, writing `plate_solution.json` (including fitted SIP order-2 distortion coefficients). Supply `--plate-center RA,DEC` in decimal degrees or rely on the reference frame's FITS `RA`/`DEC` header keywords; otherwise `--plate-solver auto` tries the native Gaia quad-index solver (`--blind-catalog`), then local astrometry.net (`--astrometry-cmd`), ASTAP (`--astap-cmd`) and the nova web API (`--astrometry-api-key` or `AN_API_KEY`). External WCS results are re-fitted against Gaia at the solved centre. With `--post-only`, the solver runs on stars detected in `_work/stacked_mean.f32raw`; a temporary JPEG is generated for the blind backend.
 - **HEALPix & TAP client**: Implements the HEALPix nested scheme (`nside` power of 2 from `2` to `8192`, default `64` at ~0.84 deg² per tile) and queries ESA's Gaia TAP `/sync` endpoint with a 180 s per-attempt timeout, 5 s progress heartbeat, automatic retries (`2 s` / `4 s` backoff on 5xx/network errors), and 1 req/sec rate limiting.
 - **Persistent tile cache**: Since Gaia DR3 is a frozen catalogue, downloaded tiles are cached permanently in your OS user cache directory (`~/.cache/skystacker/gaia_cache/` on Linux, `~/Library/Caches/skystacker/gaia_cache/` on macOS), enabling offline operation with `--gaia-offline`.
 
@@ -591,7 +591,8 @@ frames unless `--external-allow-nonlinear` is given.
 | --- | --- | --- |
 | `--plate-solve` | Run TAN WCS plate solve after stacking or on the existing stack with `--post-only`; writes `plate_solution.json` | `false` |
 | `--plate-center RA,DEC` | Optional pointing seed in decimal degrees (falls back to FITS `RA`/`DEC`) | — |
-| `--plate-solver MODE` | `auto` (seeded Gaia, then astrometry.net/ASTAP), `gaia`, `astrometry-local`, `astap`, `astrometry-web` | `auto` |
+| `--plate-solver MODE` | `auto` (seeded Gaia, then native quad index/astrometry.net/ASTAP/web), `gaia`, `astrometry-local`, `astap`, `native`, `astrometry-web` | `auto` |
+| `--blind-catalog ID` | published Gaia quad catalog (`mag07`, `mag10`, `mag10deep`); see `catalogs/` and `docs/plate-solving.md` | — |
 | `--astap-cmd CMD` | local ASTAP blind-solver command (needs D05–D80 database) | `astap` |
 | `--cone-catalog NAME` / `--cone-radius N` | external VOTable cone search added to annotations (sdss, irsa, vizier; arcsec) | — / `60` |
 | `--blind-benchmark DIR` / `--benchmark-solvers LIST` | head-to-head blind-solve CSV over a corpus | — |
