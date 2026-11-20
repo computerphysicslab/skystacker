@@ -18,10 +18,14 @@ type writeEntry struct {
 }
 
 type encodePage struct {
-	payload     []byte
-	entries     []writeEntry
-	ifdSize     int64
-	stripOffset uint64
+	blocks  [][]byte
+	offsets []uint64
+	counts  []uint64
+	entries []writeEntry
+	ifdSize int64
+	tiled   bool
+	tileW   int
+	tileH   int
 }
 
 func encodeAllBytes(images []*Image, opt *Options) ([]byte, error) {
@@ -59,8 +63,11 @@ func encodeAllBytes(images []*Image, opt *Options) ([]byte, error) {
 	}
 	offset := uint64(headerSize)
 	for _, page := range pages {
-		page.stripOffset = offset
-		offset += uint64(len(page.payload))
+		page.offsets = make([]uint64, len(page.blocks))
+		for i, block := range page.blocks {
+			page.offsets[i] = offset
+			offset += uint64(len(block))
+		}
 	}
 	ifdOffsets := make([]uint64, len(pages))
 	for i, page := range pages {
@@ -68,7 +75,7 @@ func encodeAllBytes(images []*Image, opt *Options) ([]byte, error) {
 		offset += uint64(page.ifdSize)
 	}
 	for i, page := range pages {
-		setStripEntries(page.entries, page.stripOffset, uint64(len(page.payload)), big, order)
+		setBlockEntries(page.entries, page.offsets, page.counts, big, order)
 		assignPointers(page.entries, ifdOffsets[i], big)
 	}
 	buf := make([]byte, 0, offset)
@@ -87,7 +94,9 @@ func encodeAllBytes(images []*Image, opt *Options) ([]byte, error) {
 		buf = append(buf, uint32Bytes(order, uint32(ifdOffsets[0]))...)
 	}
 	for _, page := range pages {
-		buf = append(buf, page.payload...)
+		for _, block := range page.blocks {
+			buf = append(buf, block...)
+		}
 	}
 	for i, page := range pages {
 		buf = append(buf, encodeIFD(page.entries, ifdOffsets[i], nextOffset(ifdOffsets, i, big), big, order)...)
@@ -132,16 +141,57 @@ func preparePage(img *Image, order binary.ByteOrder, opt *Options, compression C
 	if err != nil {
 		return nil, err
 	}
-	if opt.Predictor {
-		if err := applyPredictor(pixels, img.Width*img.Channels*bytesPerSample, img.Channels*bytesPerSample, true); err != nil {
+	page := &encodePage{}
+	if opt.Tiled {
+		page.tiled = true
+		page.tileW, page.tileH = 256, 256
+		if opt.TileWidth > 0 {
+			page.tileW = opt.TileWidth
+		}
+		if opt.TileHeight > 0 {
+			page.tileH = opt.TileHeight
+		}
+		across := (img.Width + page.tileW - 1) / page.tileW
+		down := (img.Height + page.tileH - 1) / page.tileH
+		tileRowBytes := page.tileW * img.Channels * bytesPerSample
+		for ty := 0; ty < down; ty++ {
+			for tx := 0; tx < across; tx++ {
+				tile := make([]byte, tileRowBytes*page.tileH)
+				for y := 0; y < page.tileH; y++ {
+					gy := ty*page.tileH + y
+					if gy >= img.Height {
+						break
+					}
+					src := (gy*img.Width + tx*page.tileW) * img.Channels * bytesPerSample
+					copy(tile[y*tileRowBytes:], pixels[src:src+min(img.Width-tx*page.tileW, page.tileW)*img.Channels*bytesPerSample])
+				}
+				if opt.Predictor {
+					if err := applyPredictor(tile, tileRowBytes, img.Channels*bytesPerSample, true); err != nil {
+						return nil, err
+					}
+				}
+				block, err := compressStrip(tile, compression)
+				if err != nil {
+					return nil, err
+				}
+				page.blocks = append(page.blocks, block)
+				page.counts = append(page.counts, uint64(len(block)))
+			}
+		}
+	} else {
+		if opt.Predictor {
+			if err := applyPredictor(pixels, img.Width*img.Channels*bytesPerSample, img.Channels*bytesPerSample, true); err != nil {
+				return nil, err
+			}
+		}
+		block, err := compressStrip(pixels, compression)
+		if err != nil {
 			return nil, err
 		}
+		page.blocks = [][]byte{block}
+		page.counts = []uint64{uint64(len(block))}
 	}
-	payload, err := compressStrip(pixels, compression)
-	if err != nil {
-		return nil, err
-	}
-	entries := buildEntries(img, order, opt, compression, uint64(len(payload)), big)
+	entries := buildEntries(img, order, opt, compression, page, big)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].tag < entries[j].tag })
 	limit := 4
 	if big {
@@ -154,11 +204,12 @@ func preparePage(img *Image, order binary.ByteOrder, opt *Options, compression C
 	if big {
 		countSize, entrySize, nextSize = 8, 20, 8
 	}
-	ifdSize := int64(countSize + len(entries)*entrySize + nextSize + pointerAreaSize(entries, big))
-	return &encodePage{payload: payload, entries: entries, ifdSize: ifdSize}, nil
+	page.entries = entries
+	page.ifdSize = int64(countSize + len(entries)*entrySize + nextSize + pointerAreaSize(entries, big))
+	return page, nil
 }
 
-func buildEntries(img *Image, order binary.ByteOrder, opt *Options, compression Compression, payloadLen uint64, big bool) []writeEntry {
+func buildEntries(img *Image, order binary.ByteOrder, opt *Options, compression Compression, page *encodePage, big bool) []writeEntry {
 	dimData := func(v int) []byte {
 		if big {
 			return uint64Bytes(order, uint64(v))
@@ -176,7 +227,6 @@ func buildEntries(img *Image, order binary.ByteOrder, opt *Options, compression 
 		{tag: tagCompression, dataType: typeShort, count: 1, data: shortBytes(order, uint16(compression))},
 		{tag: tagPhotometric, dataType: typeShort, count: 1, data: shortBytes(order, uint16(img.Photometric))},
 		{tag: tagSamplesPerPixel, dataType: typeShort, count: 1, data: shortBytes(order, uint16(img.Channels))},
-		{tag: tagRowsPerStrip, dataType: dimType, count: 1, data: dimData(img.Height)},
 		{tag: tagPlanarConfiguration, dataType: typeShort, count: 1, data: shortBytes(order, 1)},
 		{tag: tagResolutionUnit, dataType: typeShort, count: 1, data: shortBytes(order, 2)},
 		{tag: tagSampleFormat, dataType: typeShort, count: uint32(img.Channels), data: repeatedShort(order, uint16(img.Format), img.Channels)},
@@ -190,16 +240,20 @@ func buildEntries(img *Image, order binary.ByteOrder, opt *Options, compression 
 	if big {
 		countType = typeLong8
 	}
-	countData := func(v uint64) []byte {
-		if big {
-			return uint64Bytes(order, v)
-		}
-		return uint32Bytes(order, uint32(v))
+	if page.tiled {
+		entries = append(entries,
+			writeEntry{tag: tagTileWidth, dataType: dimType, count: 1, data: dimData(page.tileW)},
+			writeEntry{tag: tagTileLength, dataType: dimType, count: 1, data: dimData(page.tileH)},
+			writeEntry{tag: tagTileOffsets, dataType: countType, count: uint32(len(page.counts)), data: make([]byte, len(page.counts)*typeSizeUnchecked(countType))},
+			writeEntry{tag: tagTileByteCounts, dataType: countType, count: uint32(len(page.counts)), data: encodeCounts(order, big, page.counts)},
+		)
+	} else {
+		entries = append(entries,
+			writeEntry{tag: tagRowsPerStrip, dataType: dimType, count: 1, data: dimData(img.Height)},
+			writeEntry{tag: tagStripOffsets, dataType: countType, count: 1, data: make([]byte, typeSizeUnchecked(countType))},
+			writeEntry{tag: tagStripByteCounts, dataType: countType, count: 1, data: encodeCounts(order, big, page.counts)},
+		)
 	}
-	entries = append(entries,
-		writeEntry{tag: tagStripOffsets, dataType: countType, count: 1, data: countData(0)},
-		writeEntry{tag: tagStripByteCounts, dataType: countType, count: 1, data: countData(payloadLen)},
-	)
 	if opt.Predictor {
 		entries = append(entries, writeEntry{tag: tagPredictor, dataType: typeShort, count: 1, data: shortBytes(order, predictorHorizontal)})
 	}
@@ -235,21 +289,36 @@ func buildEntries(img *Image, order binary.ByteOrder, opt *Options, compression 
 	return entries
 }
 
-func setStripEntries(entries []writeEntry, offset, length uint64, big bool, order binary.ByteOrder) {
+func typeSizeUnchecked(t uint16) int {
+	if t == typeLong8 {
+		return 8
+	}
+	return 4
+}
+
+func encodeCounts(order binary.ByteOrder, big bool, values []uint64) []byte {
+	width := 4
+	if big {
+		width = 8
+	}
+	out := make([]byte, len(values)*width)
+	for i, v := range values {
+		if big {
+			order.PutUint64(out[i*8:], v)
+		} else {
+			order.PutUint32(out[i*4:], uint32(v))
+		}
+	}
+	return out
+}
+
+func setBlockEntries(entries []writeEntry, offsets, counts []uint64, big bool, order binary.ByteOrder) {
 	for i := range entries {
 		switch entries[i].tag {
-		case tagStripOffsets:
-			if big {
-				entries[i].data = uint64Bytes(order, offset)
-			} else {
-				entries[i].data = uint32Bytes(order, uint32(offset))
-			}
-		case tagStripByteCounts:
-			if big {
-				entries[i].data = uint64Bytes(order, length)
-			} else {
-				entries[i].data = uint32Bytes(order, uint32(length))
-			}
+		case tagStripOffsets, tagTileOffsets:
+			entries[i].data = encodeCounts(order, big, offsets)
+		case tagStripByteCounts, tagTileByteCounts:
+			entries[i].data = encodeCounts(order, big, counts)
 		}
 	}
 }

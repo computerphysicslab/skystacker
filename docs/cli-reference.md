@@ -114,6 +114,10 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | Flag | Default | Description |
 |---|---|---|
 | `--fits` / `--xisf` / `--bigtiff` | off | Additional scientific writers. |
+| `--tiff-compression none\|packbits\|lzw\|deflate` | `none` | Compression for the goTiff writer path. |
+| `--tiff-depth 8\|16\|32f\|64f` | `32f` | Sample depth for the goTiff writer path. |
+| `--tiff-astro` | off | FITS WCS in Astro-TIFF tag 270. |
+| `--tiff-tiles` / `--tiff-predictor` | off | Tiled TIFF / horizontal predictor for LZW-Deflate. |
 | `--xisf-rev2` | off | XISF checksum + strict sample validation. |
 | `--png` / `--bmp` | off | Extra display previews. |
 | `--json-report` / `--provenance` | off | Structured report / IVOA-style provenance. |

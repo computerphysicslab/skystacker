@@ -195,13 +195,18 @@ type cliOptions struct {
 	SelfFlatLinearSRGB   bool
 	ReferenceCrop        string
 
-	CreateTIFF  bool
-	PostCA      bool
-	PostColor   bool
-	PostFlatten bool
-	PostSharpen bool
-	PostHDR     bool
-	PostStretch bool
+	CreateTIFF      bool
+	TiffCompression string
+	TiffDepth       string
+	TiffAstro       bool
+	TiffTiled       bool
+	TiffPredictor   bool
+	PostCA          bool
+	PostColor       bool
+	PostFlatten     bool
+	PostSharpen     bool
+	PostHDR         bool
+	PostStretch     bool
 
 	NoCache          bool
 	CacheDir         string
@@ -585,6 +590,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.BPMAuto, "bpm-auto", false, "derive a bad-pixel map from the master dark (or bias): pixels > median + N*sigma*MAD")
 	fs.Float64Var(&o.BPMAutoSigma, "bpm-auto-sigma", 5.0, "sigma threshold for --bpm-auto (default 5.0)")
 	fs.BoolVar(&o.CreateTIFF, "tiff", false, "write TIFF/stacked_sum.tif")
+	fs.StringVar(&o.TiffCompression, "tiff-compression", "none", "TIFF compression for --tiff/--bigtiff: none|packbits|lzw|deflate")
+	fs.StringVar(&o.TiffDepth, "tiff-depth", "32f", "TIFF sample depth: 8|16|32f|64f")
+	fs.BoolVar(&o.TiffAstro, "tiff-astro", false, "write FITS WCS into Astro-TIFF tag 270")
+	fs.BoolVar(&o.TiffTiled, "tiff-tiles", false, "write tiled TIFF instead of a single strip")
+	fs.BoolVar(&o.TiffPredictor, "tiff-predictor", false, "horizontal predictor for LZW/Deflate TIFF")
 	fs.BoolVar(&o.NoNativeCR2, "no-native-cr2", false, "disable the built-in pure-Go CR2 decoder (use dcraw/ImageMagick)")
 	fs.BoolVar(&o.CreateFITS, "fits", false, "write stacked_sum.fits (big-endian BITPIX=-32, NAXIS=3)")
 	fs.BoolVar(&o.CreateXISF, "xisf", false, "write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
@@ -1484,6 +1494,10 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --xisf             write stacked_sum.xisf (monolithic XISF 1.0, planar Float32)")
 	fmt.Fprintln(w, "  --xisf-rev2        with --xisf: SHA3-256 block checksum + strict sample validation")
 	fmt.Fprintln(w, "  --bigtiff          write stacked_sum/mean.bigtif with 64-bit offsets")
+	fmt.Fprintln(w, "  --tiff-compression MODE  goTiff writer: none|packbits|lzw|deflate (default: none)")
+	fmt.Fprintln(w, "  --tiff-depth DEPTH       goTiff writer: 8|16|32f|64f (default: 32f)")
+	fmt.Fprintln(w, "  --tiff-astro             write FITS WCS into Astro-TIFF tag 270")
+	fmt.Fprintln(w, "  --tiff-tiles / --tiff-predictor  tiled TIFF / horizontal predictor for LZW-Deflate")
 	fmt.Fprintln(w, "  --hfr-quality      use star HFR (not blob size) as FWHM proxy for frame quality weights")
 	fmt.Fprintln(w, "  --matched-filter   matched-filter star detection (T = alpha C^-1 S, opt-in)")
 	fmt.Fprintln(w, "  --psf-scale-snr    PSF quality weights x XNML relative scale; frames without .xnml get zero weight")
@@ -6690,6 +6704,11 @@ type runOptions struct {
 	ReferenceCrop string
 
 	CreateTIFF             bool
+	TiffCompression        string
+	TiffDepth              string
+	TiffAstro              bool
+	TiffTiled              bool
+	TiffPredictor          bool
 	CreateFITS             bool
 	CreateXISF             bool
 	XISFRev2               bool
@@ -12515,9 +12534,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 		if opts.CreateTIFF {
 			logf("Writing registered sum TIFF")
-			if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
-				return writeFloat32RGBScaled(w, outW, outH, sumPix, sumDivisor)
-			}); err != nil {
+			if err := writeStackTIFF(sumTiff, outW, outH, sumPix, sumDivisor, false, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
 			}
 		}
@@ -12538,9 +12555,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeFileAtomic(sumBigTiff, func(w io.Writer) error {
-				return writeFloat32RGBBigTIFF(w, outW, outH, sumPix)
-			}); err != nil {
+			if err := writeStackTIFF(sumBigTiff, outW, outH, sumPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum bigtiff: %w", err)
 			}
 		}
@@ -12581,9 +12596,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeFileAtomic(meanBigTiff, func(w io.Writer) error {
-				return writeFloat32RGBBigTIFF(w, outW, outH, meanPix)
-			}); err != nil {
+			if err := writeStackTIFF(meanBigTiff, outW, outH, meanPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write mean bigtiff: %w", err)
 			}
 		}
@@ -12680,9 +12693,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 
 		if opts.CreateTIFF {
 			logf("Writing sum TIFF")
-			if err := writeFileAtomic(sumTiff, func(w io.Writer) error {
-				return writeFloat32RGBScaled(w, outW, outH, sumPix, sumDivisor)
-			}); err != nil {
+			if err := writeStackTIFF(sumTiff, outW, outH, sumPix, sumDivisor, false, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum tiff: %w", err)
 			}
 		}
@@ -12703,9 +12714,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeFileAtomic(sumBigTiff, func(w io.Writer) error {
-				return writeFloat32RGBBigTIFF(w, outW, outH, sumPix)
-			}); err != nil {
+			if err := writeStackTIFF(sumBigTiff, outW, outH, sumPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write sum bigtiff: %w", err)
 			}
 		}
@@ -12746,9 +12755,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			}
 		}
 		if opts.CreateBigTIFF {
-			if err := writeFileAtomic(meanBigTiff, func(w io.Writer) error {
-				return writeFloat32RGBBigTIFF(w, outW, outH, meanPix)
-			}); err != nil {
+			if err := writeStackTIFF(meanBigTiff, outW, outH, meanPix, 1, true, tiffWriteConfig{compression: opts.TiffCompression, depth: opts.TiffDepth, astro: opts.TiffAstro, tiled: opts.TiffTiled, predictor: opts.TiffPredictor}, fitsWCS(plateSolutionOut)); err != nil {
 				return fmt.Errorf("write mean bigtiff: %w", err)
 			}
 		}
@@ -34070,6 +34077,11 @@ func main() {
 		SelfFlatLinearSRGB:     opts.SelfFlatLinearSRGB,
 		ReferenceCrop:          opts.ReferenceCrop,
 		CreateTIFF:             opts.CreateTIFF,
+		TiffCompression:        opts.TiffCompression,
+		TiffDepth:              opts.TiffDepth,
+		TiffAstro:              opts.TiffAstro,
+		TiffTiled:              opts.TiffTiled,
+		TiffPredictor:          opts.TiffPredictor,
 		CreateFITS:             opts.CreateFITS,
 		CreateXISF:             opts.CreateXISF,
 		XISFRev2:               opts.XISFRev2,

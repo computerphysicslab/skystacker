@@ -21,8 +21,10 @@ are never gamma-encoded.
 The first-party `goTiff` module additionally reads TIFF inputs with 8/16-bit
 integer or 32/64-bit float samples, grayscale/RGB photometry, classic/BigTIFF
 containers, PackBits/LZW/Deflate compression, horizontal prediction, multipage
-IFDs and Astro-TIFF/CFA tags; those capabilities are library-level for now,
-while the writer CLI remains unchanged.
+IFDs and Astro-TIFF/CFA tags. Passing any of `--tiff-compression`,
+`--tiff-depth`, `--tiff-astro`, `--tiff-tiles` or `--tiff-predictor` switches
+`--tiff`/`--bigtiff` to the goTiff writer so those features are written;
+without them the legacy uncompressed float32 layout is preserved.
 
 `--xisf` writes a monolithic XISF 1.0 file with planar float32 samples;
 `--xisf-rev2` adds SHA-256/512 or verified SHA-3 checksums and strict

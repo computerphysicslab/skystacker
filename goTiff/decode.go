@@ -92,6 +92,9 @@ func decodeIFD(data []byte, order binary.ByteOrder, entries map[uint16]ifdEntry)
 	formatVals, ok := values(entries, tagSampleFormat)
 	if !ok {
 		formatVals = make([]uint64, channels)
+		for i := range formatVals {
+			formatVals[i] = uint64(SampleUint)
+		}
 	}
 	if len(formatVals) != channels {
 		return nil, errBadIFD
@@ -105,26 +108,6 @@ func decodeIFD(data []byte, order binary.ByteOrder, entries map[uint16]ifdEntry)
 	bytesPerSample, err := sampleBytes(bits, format)
 	if err != nil {
 		return nil, err
-	}
-	rows64, ok := firstValue(entries, tagRowsPerStrip)
-	if !ok || rows64 == 0 {
-		rows64 = uint64(h)
-	}
-	rows := int(rows64)
-	if rows > h {
-		rows = h
-	}
-	offsets, ok := values(entries, tagStripOffsets)
-	if !ok {
-		return nil, errBadIFD
-	}
-	counts, ok := values(entries, tagStripByteCounts)
-	if !ok {
-		return nil, errBadIFD
-	}
-	strips := (h + rows - 1) / rows
-	if len(offsets) < strips || len(counts) < strips {
-		return nil, errBadIFD
 	}
 	img := &Image{
 		Width:       w,
@@ -146,14 +129,78 @@ func decodeIFD(data []byte, order binary.ByteOrder, entries map[uint16]ifdEntry)
 		}
 		img.CFAPattern = string(b)
 	}
-	rowBytes := int64(w) * int64(channels) * int64(bytesPerSample)
 	bpp := channels * bytesPerSample
+	tileW64, tileOKW := firstValue(entries, tagTileWidth)
+	tileH64, tileOKH := firstValue(entries, tagTileLength)
+	if tileOKW && tileOKH {
+		tileW, tileH := int(tileW64), int(tileH64)
+		if tileW < 8 || tileH < 8 || tileW > 8192 || tileH > 8192 {
+			return nil, errBadIFD
+		}
+		offsets, ok := values(entries, tagTileOffsets)
+		if !ok {
+			return nil, errBadIFD
+		}
+		counts, ok := values(entries, tagTileByteCounts)
+		if !ok {
+			return nil, errBadIFD
+		}
+		across, down := (w+tileW-1)/tileW, (h+tileH-1)/tileH
+		if len(offsets) < across*down || len(counts) < across*down {
+			return nil, errBadIFD
+		}
+		blockRowBytes := int64(tileW) * int64(channels) * int64(bytesPerSample)
+		need := blockRowBytes * int64(tileH)
+		for ty := 0; ty < down; ty++ {
+			for tx := 0; tx < across; tx++ {
+				i := ty*across + tx
+				off, cnt := int64(offsets[i]), int64(counts[i])
+				if off < 0 || cnt <= 0 || off+cnt > int64(len(data)) {
+					return nil, errNoPixels
+				}
+				block, err := decompressStrip(data[off:off+cnt], compression, need)
+				if err != nil {
+					return nil, err
+				}
+				if predictor == predictorHorizontal {
+					if err := applyPredictor(block, int(blockRowBytes), bpp, false); err != nil {
+						return nil, err
+					}
+				}
+				x1, y1 := min((tx+1)*tileW, w), min((ty+1)*tileH, h)
+				if err := decodeBlock(img, block, order, tx*tileW, ty*tileH, x1, y1, tileW, bpp, bytesPerSample, bits, format, photo); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return img, nil
+	}
+	rows64, ok := firstValue(entries, tagRowsPerStrip)
+	if !ok || rows64 == 0 {
+		rows64 = uint64(h)
+	}
+	rows := int(rows64)
+	if rows > h {
+		rows = h
+	}
+	offsets, ok := values(entries, tagStripOffsets)
+	if !ok {
+		return nil, errBadIFD
+	}
+	counts, ok := values(entries, tagStripByteCounts)
+	if !ok {
+		return nil, errBadIFD
+	}
+	strips := (h + rows - 1) / rows
+	if len(offsets) < strips || len(counts) < strips {
+		return nil, errBadIFD
+	}
+	rowBytes := int64(w) * int64(channels) * int64(bytesPerSample)
 	for s := 0; s < strips; s++ {
 		y0 := s * rows
 		y1 := min(y0+rows, h)
 		need := int64(y1-y0) * rowBytes
-		off := int64(offsets[s])
-		cnt := int64(counts[s])
+		off, cnt := int64(offsets[s]), int64(counts[s])
 		if off < 0 || cnt <= 0 || off+cnt > int64(len(data)) {
 			return nil, errNoPixels
 		}
@@ -166,24 +213,32 @@ func decodeIFD(data []byte, order binary.ByteOrder, entries map[uint16]ifdEntry)
 				return nil, err
 			}
 		}
-		for y := y0; y < y1; y++ {
-			row := strip[int64(y-y0)*rowBytes : int64(y-y0+1)*rowBytes]
-			for x := 0; x < w; x++ {
-				for c := 0; c < channels; c++ {
-					pos := (x*channels + c) * bytesPerSample
-					v, err := readSample(row[pos:pos+bytesPerSample], order, bits, format)
-					if err != nil {
-						return nil, err
-					}
-					if photo == PhotoWhiteIsZero && format != SampleFloat {
-						v = 1 - v
-					}
-					img.Pixels[(y*w+x)*channels+c] = float32(v)
-				}
-			}
+		if err := decodeBlock(img, strip, order, 0, y0, w, y1, w, bpp, bytesPerSample, bits, format, photo); err != nil {
+			return nil, err
 		}
 	}
 	return img, nil
+}
+
+func decodeBlock(img *Image, block []byte, order binary.ByteOrder, x0, y0, x1, y1, blockW, bpp, bytesPerSample, bits int, format SampleFormat, photo Photometric) error {
+	blockRowBytes := int64(blockW) * int64(img.Channels) * int64(bytesPerSample)
+	for y := y0; y < y1; y++ {
+		row := block[int64(y-y0)*blockRowBytes : int64(y-y0+1)*blockRowBytes]
+		for x := x0; x < x1; x++ {
+			for c := 0; c < img.Channels; c++ {
+				pos := (x-x0)*img.Channels*bytesPerSample + c*bytesPerSample
+				v, err := readSample(row[pos:pos+bytesPerSample], order, bits, format)
+				if err != nil {
+					return err
+				}
+				if photo == PhotoWhiteIsZero && format != SampleFloat {
+					v = 1 - v
+				}
+				img.Pixels[(y*img.Width+x)*img.Channels+c] = float32(v)
+			}
+		}
+	}
+	return nil
 }
 
 func readSample(p []byte, order binary.ByteOrder, bits int, format SampleFormat) (float64, error) {

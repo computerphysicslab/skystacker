@@ -63,6 +63,10 @@ const (
 	tagPredictor           = 317
 	tagCFARepeatPatternDim = 33421
 	tagCFAPattern          = 33422
+	tagTileWidth           = 322
+	tagTileLength          = 323
+	tagTileOffsets         = 324
+	tagTileByteCounts      = 325
 
 	typeByte      = 1
 	typeASCII     = 2
@@ -103,6 +107,9 @@ type Options struct {
 	Compression Compression
 	Predictor   bool
 	BigTIFF     bool
+	Tiled       bool
+	TileWidth   int
+	TileHeight  int
 	Metadata    map[string]string
 }
 

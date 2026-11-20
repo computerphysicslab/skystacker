@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
+	"os"
 	"strings"
 	"testing"
 )
@@ -205,6 +206,87 @@ func TestMultiPageRoundTrip(t *testing.T) {
 		if pages[0].Width != 3 || pages[1].Channels != 3 {
 			t.Fatalf("big=%v wrong page geometry: %+v %+v", big, pages[0], pages[1])
 		}
+	}
+}
+
+func TestTiledRoundTrip(t *testing.T) {
+	img := &Image{
+		Width: 300, Height: 200, Channels: 3, Bits: 8,
+		Format: SampleUint, Photometric: PhotoRGB,
+		Pixels: make([]float32, 300*200*3),
+	}
+	for i := range img.Pixels {
+		img.Pixels[i] = float32(i%257) / 257
+	}
+	for _, big := range []bool{false, true} {
+		var buf bytes.Buffer
+		if err := Encode(&buf, img, &Options{Tiled: true, TileWidth: 128, TileHeight: 128, Compression: CompressionDeflate, BigTIFF: big}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Decode(bytes.NewReader(buf.Bytes()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range img.Pixels {
+			if math.Abs(float64(got.Pixels[i]-img.Pixels[i])) > 1.0/255 {
+				t.Fatalf("big=%v pixel %d got %.6f want %.6f", big, i, got.Pixels[i], img.Pixels[i])
+			}
+		}
+	}
+}
+
+func TestDecodeImageMagickFixtures(t *testing.T) {
+	cases := []struct {
+		file     string
+		channels int
+		bits     int
+	}{
+		{"testdata/gray8_none.tif", 1, 8},
+		{"testdata/gray16_lzw.tif", 1, 16},
+		{"testdata/rgb8_zip.tif", 3, 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			f, err := os.Open(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			img, err := Decode(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if img.Width != 16 || img.Height != 12 || img.Channels != tc.channels || img.Bits != tc.bits {
+				t.Fatalf("unexpected fixture geometry: %dx%d ch=%d bits=%d", img.Width, img.Height, img.Channels, img.Bits)
+			}
+			if len(img.Pixels) != img.Width*img.Height*img.Channels {
+				t.Fatalf("pixel buffer length %d", len(img.Pixels))
+			}
+		})
+	}
+}
+
+func TestBigTIFFLONG8OffsetParsing(t *testing.T) {
+	order := binary.LittleEndian
+	data := make([]byte, 16+8+20+8+16)
+	data[0], data[1] = 'I', 'I'
+	order.PutUint16(data[2:4], bigMagic)
+	order.PutUint16(data[4:6], 8)
+	order.PutUint64(data[8:16], 16)
+	order.PutUint64(data[16:24], 1)
+	p := data[24:44]
+	order.PutUint16(p[0:2], tagStripOffsets)
+	order.PutUint16(p[2:4], typeLong8)
+	order.PutUint64(p[4:12], 1)
+	order.PutUint64(p[12:20], uint64(1)<<32+16)
+	order.PutUint64(data[44:52], 0)
+	entries, _, err := readIFD(data, order, 16, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := firstValue(entries, tagStripOffsets)
+	if !ok || got != uint64(1)<<32+16 {
+		t.Fatalf("LONG8 offset got %d", got)
 	}
 }
 

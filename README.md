@@ -611,6 +611,10 @@ frames unless `--external-allow-nonlinear` is given.
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
+| `--tiff-compression none\|packbits\|lzw\|deflate` | Compression for the new goTiff writer path | `none` |
+| `--tiff-depth 8\|16\|32f\|64f` | Sample depth for the new goTiff writer path | `32f` |
+| `--tiff-astro` | Write FITS WCS into Astro-TIFF tag 270 | `false` |
+| `--tiff-tiles` / `--tiff-predictor` | Tiled TIFF / horizontal predictor for LZW-Deflate | `false` |
 | `--fits` | Write `stacked_sum.fits` + `stacked_mean.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3; TAN WCS when plate-solved) | `false` |
 | `--xisf` | Write `stacked_sum.xisf` + `stacked_mean.xisf` (monolithic XISF 1.0, planar Float32) | `false` |
 | `--xisf-rev2` | With `--xisf`: SHA3-256 block checksum, strict sample-mapping checks, corrupt-block rejection | `false` |
