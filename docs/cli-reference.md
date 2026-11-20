@@ -142,6 +142,7 @@ See [post-processing.md](post-processing.md).
 | `--image-op OP` | — | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve`. |
 | `--image-output DIR` | `image_processing` | Output directory. |
 | `--export-stars FILE` | — | Export detected stars of `--process-image` as flux-sorted JSON/CSV; no `--image-op` required. |
+| `--classify-objects FILE` | — | Report-only diffuse-object morphology (CAS/Gini/M20) and IVOA object-type JSON; no `--image-op` required. |
 
 ## Diagnostics and control
 

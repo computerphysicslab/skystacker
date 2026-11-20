@@ -333,6 +333,17 @@ func runImageCommand(o *cliOptions) error {
 		}
 		return writeStarCatalog(o.ExportStars, paths[0], f, 500)
 	}
+	if o.ClassifyObjects != "" {
+		f, err := decodeImageFile(paths[0], 0, 0)
+		if err != nil {
+			return err
+		}
+		rep, err := classifyObjects(paths[0], f, 3)
+		if err != nil {
+			return err
+		}
+		return writeObjectClassification(o.ClassifyObjects, rep)
+	}
 	dir := o.ImageOutput
 	if dir == "" {
 		dir = "image_processing"

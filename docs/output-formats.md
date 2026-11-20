@@ -61,6 +61,16 @@ path writes the same columns as CSV with the header
 and `flux` is the background-subtracted integrated intensity from the high-pass
 detector. Run with `--process-image` and no `--image-op`.
 
+### Diffuse-object classification (`--classify-objects`)
+
+`--classify-objects FILE` writes a report-only JSON object with `image`,
+`width`, `height`, `standards` (`class_ucd: src.class`, `morph_ucd:
+src.morph.param`, IVOA `object-type` vocabulary), `threshold_sigma`,
+`star_mask_pixels`, `count` and `objects[]`. Each object carries `x_px`,
+`y_px`, `area_px`, `flux`, `concentration`, `asymmetry`, `smoothness`, `gini`,
+`m20`, `ellipticity`, `object_type` and `class_ucd`. Stars are masked before
+component detection; the pipeline pixels are never modified.
+
 ### `photometry.csv` / `photometry.json`
 
 Produced by `--photometry`: x/y, RA/Dec, flux, instrumental and calibrated
