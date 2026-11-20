@@ -744,6 +744,7 @@ The following capabilities have been implemented through `0.6.1`:
 - **Extended controls**: `--comet-ephem-strict-exif`, `--plate-solve` in `--post-only`, `--hfr-quality`, `--sigma-clip-low/high`, and SIP order-2 in WCS forward/inverse helpers. Tests: `testCometEphemerisParse`, `testPlateSolvePostOnlyNoStars`, `testHFRQuality`, `testSigmaClipAsymmetric`, `testWCSSIP`.
 - **Star catalog export**: `--export-stars FILE` emits a flux-sorted JSON/CSV list of detected stars for a single `--process-image` input, with 0-based centroids, flux, size, eccentricity and HFR. Test: `TestExportStarsFluxSorted`.
 - **Diffuse-object classification**: `--classify-objects FILE` writes a report-only JSON catalogue of star-masked components with CAS/Gini/M20 morphology and IVOA `object-type`/`src.class` labels; pipeline pixels are never modified. Test: `TestDiffuseObjectClassification`.
+- **Saturation-aware star detection**: bright stars with large saturated halos are retained via compact-core flux/compactness checks instead of the old 200-pixel cap; diffraction spikes no longer displace centroids. Tests: `TestSaturatedStarDetection`, `TestSaturatedStarWithSpikesDetection`, `TestBrightStarSurvivesFluxTruncation`.
 
 ---
 

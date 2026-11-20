@@ -2897,24 +2897,32 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 	visited := make([]bool, w*h)
 	type comp struct {
 		pixels []int
+		peak   float32
+		bright bool
 	}
 	var comps []comp
 
-	// Iterative flood fill for 8-connectivity
+	const maxNormalComponentPixels = 200
+	const maxBrightComponentPixels = 2000
+	const maxBrightCorePixels = 2000
+
 	for y := range h {
 		for x := range w {
 			i := y*w + x
 			if visited[i] || residual[i] <= threshold {
 				continue
 			}
-			// BFS
 			stack := []int{i}
 			visited[i] = true
 			var pixels []int
+			peak := float32(0)
 			for len(stack) > 0 {
 				p := stack[len(stack)-1]
 				stack = stack[:len(stack)-1]
 				pixels = append(pixels, p)
+				if residual[p] > peak {
+					peak = residual[p]
+				}
 				py, px := p/w, p%w
 				for dy := -1; dy <= 1; dy++ {
 					for dx := -1; dx <= 1; dx++ {
@@ -2934,8 +2942,23 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 					}
 				}
 			}
-			if len(pixels) >= 1 && len(pixels) <= 200 {
-				comps = append(comps, comp{pixels: pixels})
+			accept := len(pixels) >= 1 && len(pixels) <= maxNormalComponentPixels
+			bright := false
+			if !accept && len(pixels) <= maxBrightComponentPixels && peak >= 4*threshold {
+				core := 0
+				var coreFlux, totalFlux float64
+				for _, p := range pixels {
+					totalFlux += float64(residual[p])
+					if residual[p] >= 0.5*peak {
+						core++
+						coreFlux += float64(residual[p])
+					}
+				}
+				accept = core >= 4 && core <= maxBrightCorePixels && len(pixels) <= 6*core && coreFlux >= 0.5*totalFlux
+				bright = accept
+			}
+			if accept {
+				comps = append(comps, comp{pixels: pixels, peak: peak, bright: bright})
 			}
 		}
 	}
@@ -2943,9 +2966,28 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 	stars := make([]star, 0, len(comps))
 	const margin = 3
 	for _, c := range comps {
+		core := c.pixels
+		if c.bright {
+			core = make([]int, 0, len(c.pixels))
+			for _, p := range c.pixels {
+				if residual[p] >= 0.5*c.peak {
+					core = append(core, p)
+				}
+			}
+			if len(core) < 4 {
+				core = c.pixels
+			}
+		}
 		var sumW, sumX, sumY, sumFlux float64
 		minX, minY, maxX, maxY := w, h, -1, -1
 		for _, p := range c.pixels {
+			val := float64(residual[p])
+			if val < 0 {
+				val = 0
+			}
+			sumFlux += val
+		}
+		for _, p := range core {
 			py, px := p/w, p%w
 			val := float64(residual[p])
 			if val < 0 {
@@ -2954,7 +2996,6 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 			sumW += val
 			sumX += float64(px) * val
 			sumY += float64(py) * val
-			sumFlux += val
 			if px < minX {
 				minX = px
 			}
@@ -2976,17 +3017,13 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 		if cx < margin || cy < margin || cx > float64(w-margin) || cy > float64(h-margin) {
 			continue
 		}
-		// Shape filter: reject very elongated blobs
 		bw, bh := maxX-minX+1, maxY-minY+1
 		aspect := float64(bw) / float64(bh)
 		if aspect < 0.33 || aspect > 3.0 {
 			continue
 		}
-		// Second central moments of the intensity-weighted pixel
-		// distribution, used for eccentricity. ecc=0 means circular;
-		// ecc->1 means line-shaped.
 		var cxx, cyy, cxy float64
-		for _, p := range c.pixels {
+		for _, p := range core {
 			py, px := p/w, p%w
 			val := float64(residual[p])
 			if val < 0 {
@@ -3011,7 +3048,7 @@ func detectStarsSigma(f *frame, maxStars int, sigma float64) []star {
 			}
 		}
 		stars = append(stars, star{X: cx, Y: cy, Flux: sumFlux, Size: len(c.pixels), Ecc: ecc,
-			HFR: starHFR(c.pixels, w, cx, cy, residual)})
+			HFR: starHFR(core, w, cx, cy, residual)})
 	}
 	sort.Slice(stars, func(i, j int) bool { return stars[i].Flux > stars[j].Flux })
 	if len(stars) > maxStars {

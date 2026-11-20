@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-20):** 64 Done · 14 Open · 6 Blocked · 5 Executed/not accepted
+**Summary (2026-11-20):** 65 Done · 14 Open · 6 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18
 (the portable diagnostic module) was delivered afterwards. Items 19–28 were
 promoted from the feature comparison of mature stacking tools and delivered
@@ -20,10 +20,10 @@ user request, and items 48–49 came from the HiPS-cutout/SVG-map analysis in
 from the cycle-7 corpus in [08](research/08-crawler-source-discovery.md) §10,
 and items 58–62 add a standalone multi-image processing mode analysed in
 [01](research/01-architecture-and-core-engine.md); items 63–71 come from the
-goCrawler full export in [08](research/08-crawler-source-discovery.md) §11; items 72–74 were added when item 68 was implemented and are analysed in [02](research/02-astrometry-and-identification.md) §14; items 75–77 come from the calibrationless invariant-matching corpus consolidated in [02](research/02-astrometry-and-identification.md) §15; items 78–81 are the four-phase efficient blind-solver blueprint from [02](research/02-astrometry-and-identification.md) §17, gated against the 14-image corpus; items 88–89 come from [02](research/02-astrometry-and-identification.md) §19, item 90–92 from §20, and items 93–96 from the all-scope corpus in [08](research/08-crawler-source-discovery.md) §12. The status column below is
+goCrawler full export in [08](research/08-crawler-source-discovery.md) §11; items 72–74 were added when item 68 was implemented and are analysed in [02](research/02-astrometry-and-identification.md) §14; items 75–77 come from the calibrationless invariant-matching corpus consolidated in [02](research/02-astrometry-and-identification.md) §15; items 78–81 are the four-phase efficient blind-solver blueprint from [02](research/02-astrometry-and-identification.md) §17, gated against the 14-image corpus; items 88–89 come from [02](research/02-astrometry-and-identification.md) §19, item 90–92 from §20, and items 93–96 from the all-scope corpus in [08](research/08-crawler-source-discovery.md) §12; item 97 documents the saturation-aware detector fix. The status column below is
 the authoritative view.
 
-## Issue tracker — 96 items (ordered by effort)
+## Issue tracker — 97 items (ordered by effort)
 
 The tracker is split into **not achieved** (Open, Blocked and Executed/not accepted) and **achieved** (Done) items. Deferred and explicitly rejected work is listed in its own section below. Within each table, rows are ordered by ascending effort.
 
@@ -85,6 +85,7 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 59 | **Multi-image arithmetic operations** | S–M (~1–2 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) "Standalone image-processing mode" | `--image-op sum|subtract|average|median|min|max` over equal-size inputs with valid-pixel masks and dimension/normalisation diagnostics; reuse `accumulator`/`reduceTilesStack`; selftest on synthetic frames. |
 | 74 | **ASTAP blind-solver adapter** | S–M (~2 h) | **Done** 2026-11-19 | [02](research/02-astrometry-and-identification.md) §14 | `--astap-cmd` adds an offline ASTAP backend using `-f -fov 0 -z 0 -r 30`; the image is copied to a temp dir (user files untouched) and the returned `<base>.wcs` is parsed into `plate_solution.json` with `Method=astap`; auto-chain falls through to astrometry.net; `testASTAPAdapter` with a mock CLI. |
 | 39 | **Sidecar FITS transport: 16-bit and monochrome outputs** | S–M (~1–2 h) | **Done** 2026-11-18 | [06](research/06-external-ai-sidecars.md) §5 | Extend the strict sidecar reader to accept BITPIX=16 and NAXIS=2 and convert to the planar float32 RGB contract; keep corrupt-block rejection. |
+| 97 | **Saturation-aware bright-star detection** | S–M (~1–2 h) | **Done** 2026-11-20 | [01](research/01-architecture-and-core-engine.md) | Large high-pass components with a strong compact core are retained instead of being dropped by the 200-px cap; core flux/compactness rejects nebulous blobs and spike-contaminated shapes no longer displace the centroid. Tests: `TestSaturatedStarDetection`, `TestSaturatedStarWithSpikesDetection`, `TestBrightStarSurvivesFluxTruncation`. |
 | 5 | **BigTIFF float32 export (`--bigtiff`)** | M (~2–3 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §10, [05](research/05-toolchain-and-modularity.md) §11 | 64-bit `LONG8` offsets/byte counts for stacks > 4 GiB; round-trip selftest reads the written file back. |
 | 6 | **Validate gamma-aware self-flat** | M (~2 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §15 | `--self-flat-linear-srgb` exists but is unvalidated; compare encoded vs EOTF-corrected division on a real dataset, keep default unchanged, document the result. |
 | 7 | **Catalog annotation / anomaly extension** | M (~3–4 h) | **Done** 2026-11-18 | [02](research/02-astrometry-and-identification.md) §4 | Complete the existing `--annotate` baseline: elliptical apertures, multi-catalog cross-match, `SNR > 5` unassociated-source flag; register `testWCSCatalogOverlay` and `testUnassociatedSourceFlagging` (round-trip ≤ 0.05 px). |

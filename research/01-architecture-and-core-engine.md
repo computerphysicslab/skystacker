@@ -781,3 +781,11 @@ A full goCrawler export with DrizzlePac metrology and APP workflow numbers is in
 ## VOTable masks and DQ semantics (2026-11-20, append-only)
 
 The all-scope corpus ([08](08-crawler-source-discovery.md) §12) adds two file-format facts not previously indexed. VOTable 1.3 `BINARY2` supports masked integer and bit-field columns that legacy `BINARY` cannot; a writer that preserves `PARAM`/`INFO` must serialise an existing VOTable tree instead of re-deriving one from a plain table. HST-style DQ arrays are bit fields: a pixel is bad only after the chosen ignore flags are applied to `bitfield_to_boolean_mask`. SkyStacker's consumer is the cone-search/VOTable client (item 69) and the 32-bit contributor mask from item 85. Item 93 will add a stdlib VOTable 1.3 writer with `BINARY2` masks and a masked-column round-trip test; no Python dependency is introduced.
+
+## Saturation-aware star detection (2026-11-20, append-only)
+
+The detector was tuned for faint recovery and silently discarded bright stars. `detectStarsSigma` accepted only connected components of 1–200 residual pixels (`main.go:2937`), while a saturated plateau plus halo easily exceeds 200 px; lowering σ in the fallback ladder only enlarges components. The aspect gate and full-component HFR/eccentricity then rejected spikes and blooming, and flux ranking used high-pass residual flux, further demoting clipped cores.
+
+Item 97 replaces the hard cap with a bright-component path: a component above 200 px is retained when its peak is ≥4σ, it contains a compact core of ≥4 and ≤2000 pixels at ≥½ peak, the core holds at least half the total residual flux, the whole component is ≤2000 px and ≤6× the core. Centroid, eccentricity, aspect and HFR use that core for bright components, so spikes no longer displace the measurement, while ordinary small stars keep the previous all-pixel behaviour. `TestSaturatedStarDetection`, `TestSaturatedStarWithSpikesDetection` and `TestBrightStarSurvivesFluxTruncation` cover the regression.
+
+Corpus check: on the 14 `assets/Blind-Plate-Solving/` frames the exporter recovered 113 additional bright components (M51: +79), with top flux rising from 91.7 to 217.5; the native blind solve remains 0/14, so the change is a detector improvement, not a plate-solving acceptance. The 274 embedded self-tests and `go test ./...` stay green.
