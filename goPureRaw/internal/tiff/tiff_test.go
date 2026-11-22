@@ -160,3 +160,12 @@ func TestTagName(t *testing.T) {
 		t.Fatalf("fallback = %q", got)
 	}
 }
+
+func TestReadIFDRejectsHugeEntryCount(t *testing.T) {
+	// Two bytes 0xFFFF as the entry count must not allocate 12*65535 bytes.
+	data := []byte{'I', 'I', 42, 0, 8, 0, 0, 0, 0xFF, 0xFF, 0, 0}
+	_, err := readIFD(bytes.NewReader(data), binary.LittleEndian, 8)
+	if err == nil {
+		t.Fatal("huge IFD entry count accepted")
+	}
+}

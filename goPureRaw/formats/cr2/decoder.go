@@ -78,6 +78,31 @@ func findLosslessJPEG(r io.ReaderAt, size int64) ([]byte, error) {
 					continue
 				}
 				start := off + int64(soi) - int64(carry)
+				// Read only enough to identify a genuine SOF3 raw stream before
+				// allocating the whole tail. Thumbnail SOF0 markers and stray
+				// FFC3 byte pairs must not trigger a full-file read.
+				probeLen := int64(4096)
+				if remain := size - start; remain < probeLen {
+					probeLen = remain
+				}
+				if probeLen <= 0 {
+					continue
+				}
+				probe := make([]byte, probeLen)
+				if _, err := r.ReadAt(probe, start); err != nil && !errors.Is(err, io.EOF) {
+					return nil, err
+				}
+				idx := indexSOF3(probe)
+				if idx < 0 || idx+10 > len(probe) {
+					continue
+				}
+				p := probe[idx+4 : idx+10]
+				precision, height := int(p[0]), int(p[1])<<8|int(p[2])
+				width := int(p[3])<<8 | int(p[4])
+				components := int(p[5])
+				if precision < 8 || precision > 16 || height <= 0 || width <= 0 || components < 1 || components > 4 {
+					continue
+				}
 				rest := make([]byte, size-start)
 				if _, err := r.ReadAt(rest, start); err != nil && !errors.Is(err, io.EOF) {
 					return nil, err

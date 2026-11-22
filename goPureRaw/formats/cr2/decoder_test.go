@@ -89,3 +89,16 @@ func TestConfigOracle(t *testing.T) {
 		t.Fatalf("Config = %dx%d @ %d bits, want 3944x2622 @ 14", w, h, bits)
 	}
 }
+
+// TestFindLosslessJPEGSkipsStrayFFC3 ensures a stray FFC3 byte pair without a
+// valid SOF3 payload does not trigger a full-file read / bogus stream.
+func TestFindLosslessJPEGSkipsStrayFFC3(t *testing.T) {
+	data := []byte{
+		'I', 'I', 0x2A, 0, 0x10, 0, 0, 0, 'C', 'R', 2, 0,
+		0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x01, 0x00, // stray SOF3
+		0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x0B, 0x08, 0x00, 0x02, 0x00, 0x02, 0x01, 0x01, 0x11, 0x00,
+	}
+	if _, err := findLosslessJPEG(bytes.NewReader(data), int64(len(data))); err != nil {
+		t.Fatalf("valid stream after stray FFC3 not found: %v", err)
+	}
+}

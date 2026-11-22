@@ -58,10 +58,11 @@ type compInfo struct {
 }
 
 type bitReader struct {
-	data []byte
-	pos  int
-	bits uint32
-	n    int
+	data    []byte
+	pos     int
+	bits    uint32
+	n       int
+	restart bool // a restart marker was consumed; predictors must reset
 }
 
 func (br *bitReader) bit() (int, error) {
@@ -78,6 +79,16 @@ func (br *bitReader) bit() (int, error) {
 			next := br.data[br.pos]
 			if next == 0x00 { // byte stuffing
 				br.pos++
+			} else if next >= 0xD0 && next <= 0xD7 {
+				// Restart marker: RSTn are byte-aligned and reset the bit
+				// stream. Drop any remaining bits in the current byte.
+				br.pos++
+				br.bits, br.n = 0, 0
+				br.restart = true
+				continue
+			} else if next == 0x01 { // TEM: standalone, no state change
+				br.pos++
+				continue
 			} else {
 				return 0, fmt.Errorf("%w: marker FF%02X in entropy data", ErrCorrupt, next)
 			}
@@ -235,6 +246,19 @@ func Decode(data []byte) (*Image, error) {
 		prev[i] = initPred
 	}
 	for p := 0; p < width*height; p++ {
+		if br.restart {
+			// JPEG restarts reset the entropy bit stream and the DC
+			// predictors; already decoded samples are preserved.
+			br.restart = false
+			for c := range prev {
+				prev[c] = initPred
+			}
+			for c := range comps {
+				for k := range comps[c].pred {
+					comps[c].pred[k] = initPred
+				}
+			}
+		}
 		left := p % width
 		for c := 0; c < ncomp; c++ {
 			ht := tables[comps[c].table]

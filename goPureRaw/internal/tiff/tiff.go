@@ -16,6 +16,11 @@ var (
 	ErrBadType   = errors.New("tiff: unsupported field type")
 )
 
+// maxIFDEntries bounds the allocation derived from the on-disk entry count.
+// A hostile file may claim up to 65535 entries; real RAW containers stay
+// well below this cap.
+const maxIFDEntries = 4096
+
 // Entry is one IFD directory entry. Raw is the value bytes (inline or
 // fetched from the referenced offset), already decoded in file byte order.
 type Entry struct {
@@ -122,6 +127,9 @@ func readIFD(r io.ReaderAt, order binary.ByteOrder, off int64) (*IFD, error) {
 		return nil, ErrTruncated
 	}
 	n := int(order.Uint16(cntBytes))
+	if n == 0 || n > maxIFDEntries {
+		return nil, ErrTruncated
+	}
 	ifd := &IFD{Entries: make(map[uint16]Entry, n)}
 	base := off + 2
 	entryBytes := make([]byte, 12*n+4)

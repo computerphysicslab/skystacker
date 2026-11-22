@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-21):** 89 Done · 4 Open · 6 Blocked · 5 Executed/not accepted
+**Summary (2026-11-22):** 91 Done · 2 Open · 6 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
 items 104 and 105 were investigated the same day and **closed as false
@@ -17,7 +17,11 @@ positives** after adding regression tests (`goTiff/tiff_multistrip_test.go`).
 The TIFF backlog items P1-6 (IFD count cap), P4-6 (local `min` shadow),
 P3-2 (PackBits bounds), item 110 (all TIFF I/O via goTiff, including
 Astro-TIFF WCS/CFA propagation on input; subsumes P1-2, P4-5 and P3-6) were
-applied directly. Items 2–8
+applied directly. On 2026-11-22 the CR2 items were handled: 107/P0-2 was
+**closed as a false positive** (the 2× SOF3 width is the correct Bayer width,
+corroborated by `Config()` and a real EOS 40D decode); 108/P3-4 (ljpeg RST
+markers), P3-1 (goPureRaw IFD cap), P3-3 (full-file read per FFC3) and P4-7
+(stale bitreader doc) were applied with tests. Items 2–8
 and 11 were delivered in commit `8b99533`; item 18
 (the portable diagnostic module) was delivered afterwards. Items 19–28 were
 promoted from the feature comparison of mature stacking tools and delivered
@@ -40,8 +44,6 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
 | 106 | **goDiagnostics Linux collector robustness** | S (~1 h) | **Open** | [05](research/05-toolchain-and-modularity.md) | `collect_linux.go` process scan ignores `ctx` and can block on `ReadDir /proc/<pid>/fd`; cap the scan, check `ctx.Err()` every N PIDs, rename `Updates` to `Packages` (it lists installed dpkg packages), and honour `--diagnose-timeout`. |
-| 107 | **goPureRaw CR2 width/demosaic validation** | M (~2 h) | **Open** | [07](research/07-native-cr2-decoding.md) §6 | `goPureRaw/formats/cr2/decoder.go` inflates the sensor width by 2× when assembling the Bayer buffer; validate against `dcraw -D -4 -t 1` margins cropped, or mark the decoder unsupported until proven. |
-| 108 | **ljpeg restart-marker handling** | M (~3 h) | **Open** | [07](research/07-native-cr2-decoding.md) | `goPureRaw/internal/ljpeg` treats `FF D0..D7` restart markers as corrupt; honour DRI, reset predictors and add a synthetic RST stream test. |
 | 109 | **Flag-value parsing without hardcoded list** | M (~2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) | `parseArgs` manually enumerates every flag that consumes a value (main.go:721-741); build the set from `flag.Visit` after registration so new value-flags cannot break positional parsing. |
 | 1 | **ASTAP interoperability hardening** | S (~45 min) | **Blocked** — no ASTAP adapter in code | [02](research/02-astrometry-and-identification.md) §ASTAP audit | Correct the `%errorlevel%` HFD scale in docs, add a decoding unit test, prefer textual `HFD_MEDIAN`/`STARS`, clamp HFD > 21.46 px, verify `-ra` units. No plate-solver code changes. |
 | 78 | **Detrended extraction and seeded blind baseline** | S–M (~2 h) | **Executed, not accepted** 2026-11-20 | [02](research/02-astrometry-and-identification.md) §17 | `--blind-detrend` (downsample, asymmetric background, HFD/eccentricity gating) and default `--gaia-multitile` shipped; `detrendedBlindStars` and `filterStarsForMatching` have Go tests. Acceptance (seeded solves on most of the 14 corpus frames without loose matching) is **not met**: processed JPEG centroids and the matcher scale estimate still fail. Second pass added measured seeded harness, FOV-aware odds, pixel-scale tolerance and wider detrend downsampling; corpus remains 0/14. |
@@ -66,6 +68,11 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | P4-6 | **Remove local `min` shadow in goTiff** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Deleted the local `min` helper in `goTiff/decode.go`; Go 1.27 builtin is used. |
 | P3-2 | **Bound goTiff PackBits output** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | `decodePackBits` now rejects `expected > maxReadSize`, rejects literal runs that would exceed `expected`, and clamps run-length repeats. Added three tests in `tiff_robust_test.go`. |
 | 110 | **Route all TIFF I/O through goTiff** | M | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Removed the ~500 lines of in-tree TIFF constants/IFD writers/readers from `main.go`; `writeStackTIFF` and the embedded TIFF self-test helpers now delegate to `goTiff`. Astro-TIFF WCS and CFA (tag 270 / tags 33421-33422) now propagate into `frame.WCS`/`BayerPattern`; added `TestTIFFInputAstroMetadataPropagation` and `TestAstroTIFFDescriptionRoundTrip`. Subsumes backlog P1-2, P4-5 and P3-6. |
+| 107 | **goPureRaw CR2 width — false positive** | M | **Done** 2026-11-22 | [07](research/07-native-cr2-decoding.md) §6 | Investigation with a real EOS 40D CR2 (`IMG_7005.CR2`) confirmed the SOF3 width 1972 is per-component; ×2 produces the correct 3944-pixel Bayer width (`Config()` = 3944x2622, decode = 3944x2622, samples = w·h). The 2× is intentional, not a bug. Geometric/bit-exact agreement with dcraw remains unresolved and stays in blocked item 10 (NCC ~0.05 on the real corpus; spatial correspondence is a separate open problem). |
+| 108 | **ljpeg restart-marker handling** | M | **Done** 2026-11-22 | [07](research/07-native-cr2-decoding.md) | `bitReader` now accepts `FF D0..D7` restart markers (byte-aligned, flush bits) and TEM (`FF 01`), resets the DC predictors on restart, and adds `TestRestartMarkers` with a synthetic RST stream. Real CR2 decode still passes the oracle test. |
+| P3-1 | **Cap goPureRaw IFD entry count** | S | **Done** 2026-11-22 | [05](research/05-toolchain-and-modularity.md) | `goPureRaw/internal/tiff.readIFD` now rejects entry counts of 0 or >4096 before allocation; added `TestReadIFDRejectsHugeEntryCount`. |
+| P3-3 | **Avoid full-file read per FFC3 candidate** | S | **Done** 2026-11-22 | [07](research/07-native-cr2-decoding.md) | `findLosslessJPEG` now probes the SOF3 payload geometry before reading the whole tail, skipping stray `FFC3` pairs; added `TestFindLosslessJPEGSkipsStrayFFC3`. |
+| P4-7 | **Fix stale bitreader doc comment** | S | **Done** 2026-11-22 | [07](research/07-native-cr2-decoding.md) | Updated the package comment to say the LSB-first variant is planned, not promised. |
 | 2 | **Encoded-space self-flat warning** | S (~30 min) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §15 | When the grid self-flat is applied in sRGB-encoded space and no linear-light option is active, `report.txt`/`report.json` state the approximation; no numerical change. |
 | 29 | **Dither-magnitude diagnostic and small-dither warning** | S (~1 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §6.8/§7 | Estimate median frame-to-frame translation and warn when dithering is too small for a valid self-flat; report-only, no hard gate without evidence. |
 | 30 | **Rejection-method heuristic by stack size** | S (~1 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §5.3, [03](research/03-reference-and-literature.md) §6.6 | Dispatch Min/Max (3-4), Percentile (5-9), Averaged Sigma (9-15), Winsorized (15-25) and Linear Fit (>25) over the existing estimators; opt-in flag. |
@@ -191,7 +198,7 @@ P4 maintainability.
 | ID | Location | Effort | One-line description |
 |---|---|---|---|
 | P0-1 | `goTiff/decode.go:194-219` | S | Multi-strip TIFF decode writes strip 1 into the wrong destination rows. |
-| P0-2 | `goPureRaw/formats/cr2/decoder.go:107-114` | M | CR2 Bayer assembly doubles the sensor width, corrupting the native demosaic. |
+| P0-2 | `goPureRaw/formats/cr2/decoder.go:107-114` | M | ~~CR2 Bayer assembly doubles the sensor width, corrupting the native demosaic.~~ **Closed 2026-11-22 as false positive** via item 107 (×2 is the correct Bayer width). |
 
 ### P1 — Fragile patterns / code smells
 
@@ -218,10 +225,10 @@ P4 maintainability.
 
 | ID | Location | Effort | One-line description |
 |---|---|---|---|
-| P3-1 | `goPureRaw/internal/tiff/tiff.go:127` | S | IFD entry count is read from file with no cap before allocation. |
+| P3-1 | `goPureRaw/internal/tiff/tiff.go:127` | S | ~~IFD entry count is read from file with no cap before allocation.~~ **Applied 2026-11-22** (see Achieved). |
 | P3-2 | `goTiff/compress.go:139-142` | S | ~~PackBits output has no absolute upper bound on crafted streams.~~ **Applied 2026-11-21** (see Achieved). |
-| P3-3 | `goPureRaw/formats/cr2/decoder.go:80-85` | S | `findLosslessJPEG` reads the whole file after every candidate `FFC3`. |
-| P3-4 | `goPureRaw/internal/ljpeg/ljpeg.go:74-84,209` | M | JPEG RST restart markers are treated as corrupt data. |
+| P3-3 | `goPureRaw/formats/cr2/decoder.go:80-85` | S | ~~`findLosslessJPEG` reads the whole file after every candidate `FFC3`.~~ **Applied 2026-11-22** (see Achieved). |
+| P3-4 | `goPureRaw/internal/ljpeg/ljpeg.go:74-84,209` | M | ~~JPEG RST restart markers are treated as corrupt data.~~ **Applied 2026-11-22** via item 108 (see Achieved). |
 | P3-5 | `main.go:11725-11883` | S | Plate solve is silently skipped when the reference has <5 stars; no log line. |
 | P3-6 | `tiff_input.go:30-46` | S | ~~Astro-TIFF `CFAPattern`/WCS metadata is dropped when reading input TIFFs.~~ **Applied 2026-11-21** via item 110. |
 
@@ -235,7 +242,7 @@ P4 maintainability.
 | P4-4 | `goPureRaw/raw/registry.go:16-25` | S | `Register` panics on duplicate formats; a duplicate registration kills the binary. |
 | P4-5 | `main.go:5066` | M | ~~`readFloat32RGB` is a third TIFF reader coexisting with `gotiff.Decode` and in-tree writers.~~ **Applied 2026-11-21** via item 110 (thin goTiff-backed wrappers). |
 | P4-6 | `goTiff/decode.go:291` | S | ~~Local `min` shadows the Go builtin.~~ **Applied 2026-11-21** (see Achieved). |
-| P4-7 | `goPureRaw/internal/bitreader/bitreader.go:1` | S | Stale doc comment promises an LSB-first variant that does not exist. |
+| P4-7 | `goPureRaw/internal/bitreader/bitreader.go:1` | S | ~~Stale doc comment promises an LSB-first variant that does not exist.~~ **Applied 2026-11-22** (see Achieved). |
 
 **Suggested promotion order (ascending effort):** P0-1, P1-3, P1-4, P1-5,
 P1-6, P3-1, P3-2, P3-3, P3-5, P3-6, P4-2, P4-3, P4-4, P4-6, P4-7, P0-2,
@@ -246,6 +253,15 @@ were investigated and closed as false positives with regression tests; P1-6,
 P4-6 and P3-2 were applied directly; item 110 moved all TIFF I/O to goTiff
 and propagated Astro-TIFF WCS/CFA metadata, subsuming deep-review P1-2, P4-5
 and P3-6. No TIFF items remain open in this backlog.
+
+**CR2 backlog handled 2026-11-22:** 107/P0-2 closed as a false positive
+(the ×2 SOF3 width is the correct Bayer width, verified on a real EOS 40D
+file); 108/P3-4 added RST/TEM marker support in ljpeg with a synthetic
+test; P3-1 capped the goPureRaw IFD entry count; P3-3 avoided full-file
+reads on stray `FFC3`; P4-7 corrected the stale bitreader comment. Real
+CR2 decode still passes `TestDecodeOracle`/`TestConfigOracle` with
+`PURERAW_CR2` set. Bit-exact geometric agreement with dcraw is still
+blocked in item 10 (needs raw-Bayer oracle dumps; NCC ~0.05 on the corpus).
 
 ## Maintenance
 

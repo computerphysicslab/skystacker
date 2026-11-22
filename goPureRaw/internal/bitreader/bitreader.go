@@ -1,5 +1,6 @@
 // Package bitreader provides an MSB-first bit reader used by RAW
-// decompressors. A LSB-first variant will be added when ARW/CR3 need it.
+// decompressors. An LSB-first variant is planned for formats that need it
+// (for example ARW/CR3); it is not implemented yet.
 package bitreader
 
 import "io"
