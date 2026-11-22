@@ -280,6 +280,9 @@ type cliOptions struct {
 	XNMLDir                string
 	Annotate               bool
 	AnnotationCatalogs     string
+	AnnotationLayers       string
+	AnnotationVO           string
+	AnnotationCache        string
 	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
@@ -627,6 +630,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.XNMLDir, "xnml-dir", "", "fallback folder for .xnml sidecars when they are not next to the light frames")
 	fs.BoolVar(&o.Annotate, "annotate", false, "project cached Gaia catalog through the plate solution and flag unmatched sources (offline)")
 	fs.StringVar(&o.AnnotationCatalogs, "annotation-catalogs", "", "comma-separated JSON catalogs (ra/dec degrees, optional name/type/mag/major/minor/pa) for multi-catalog cross-match")
+	fs.StringVar(&o.AnnotationLayers, "annotation-layers", "", "comma-separated SVG 2 annotation layers: grid-radec,grid-galactic,grid-ecliptic,constellations,scale-bar,finder-chart (default: all)")
+	fs.StringVar(&o.AnnotationVO, "annotation-vo", "", "comma-separated VO catalogs for layered annotations: simbad,vizier (offline by default)")
+	fs.StringVar(&o.AnnotationCache, "annotation-cache", "", "disk cache directory for VO annotation queries (default: Gaia cache dir)")
 	fs.StringVar(&o.SsoEphemeris, "sso-ephemeris", "", "MPC-style SSO ephemeris with site header and DATE-OBS for velocity-vector annotation layers")
 	fs.StringVar(&o.RejectionMode, "rejection", "", "rejection heuristic: auto, mean, median or sigma (auto maps Min/Max/Percentile/Sigma/Winsorized/Linear-Fit bands onto shipped reducers)")
 	fs.StringVar(&o.PostPreset, "post-preset", "default", "post-processing order: default or detail-last (detail enhancement after denoise)")
@@ -731,7 +737,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--archive-adapters" || arg == "--mast-token" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--annotation-layers" || arg == "--annotation-vo" || arg == "--annotation-cache" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--archive-adapters" || arg == "--mast-token" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -1541,6 +1547,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --xnml-dir PATH    fallback folder for .xnml sidecars (default: same folder as each light)")
 	fmt.Fprintln(w, "  --annotate         project cached Gaia catalog through plate solution; flag unmatched sources (offline)")
 	fmt.Fprintln(w, "  --annotation-catalogs LIST  extra JSON catalogs for cross-match (RA/Dec in degrees)")
+	fmt.Fprintln(w, "  --annotation-layers LIST  SVG 2 layers: grid-radec,grid-galactic,grid-ecliptic,constellations,scale-bar,finder-chart (default: all)")
+	fmt.Fprintln(w, "  --annotation-vo LIST       optional VO services: simbad,vizier (offline by default)")
+	fmt.Fprintln(w, "  --annotation-cache DIR     disk cache for VO annotation queries (default: Gaia cache dir)")
 	fmt.Fprintln(w, "  --sso-ephemeris FILE        MPC-style SSO ephemeris (a:/c:/p:/dp:/s: IDs), site header and DATE-OBS")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
@@ -5764,6 +5773,15 @@ func resolvedFlagLines(o runOptions) []string {
 		if o.AnnotationCatalogs != "" {
 			add("--annotation-catalogs " + quoteReportArg(o.AnnotationCatalogs))
 		}
+		if o.AnnotationLayers != "" {
+			add("--annotation-layers " + quoteReportArg(o.AnnotationLayers))
+		}
+		if o.AnnotationVO != "" {
+			add("--annotation-vo " + quoteReportArg(o.AnnotationVO))
+		}
+		if o.AnnotationCache != "" {
+			add("--annotation-cache " + quoteReportArg(o.AnnotationCache))
+		}
 		if o.SsoEphemeris != "" {
 			add("--sso-ephemeris " + quoteReportArg(o.SsoEphemeris))
 		}
@@ -6426,6 +6444,9 @@ type runOptions struct {
 	XNMLDir                string
 	Annotate               bool
 	AnnotationCatalogs     string
+	AnnotationLayers       string
+	AnnotationVO           string
+	AnnotationCache        string
 	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
@@ -10502,6 +10523,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				logf("WARNING: sky map: %v", err)
 			}
 		}
+		if opts.Annotate && opts.SkyMap {
+			if err := runLayeredAnnotation(outputDir, opts); err != nil {
+				logf("WARNING: layered annotation: %v", err)
+			}
+		}
 		if opts.SurveyCutout {
 			if err := runSurveyCutout(outputDir, opts); err != nil {
 				logf("WARNING: survey cutout: %v", err)
@@ -13054,6 +13080,11 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	if opts.SkyMap {
 		if err := runSkyMapSVG(outputDir, opts); err != nil {
 			logf("WARNING: sky map: %v", err)
+		}
+	}
+	if opts.Annotate && opts.SkyMap {
+		if err := runLayeredAnnotation(outputDir, opts); err != nil {
+			logf("WARNING: layered annotation: %v", err)
 		}
 	}
 	if opts.SurveyCutout {
@@ -22188,6 +22219,13 @@ func runSelfTests() int {
 		{"comet ephemeris parse", testCometEphemerisParse},
 		{"reference crop alignment", testReferenceCropAlignment},
 		{"calibration master export", testExportCalibrationMasters},
+		{"annotation bundle and golden field", testAnnotationBundle},
+		{"annotation VO cache provenance", testAnnotationVO},
+		{"annotation deterministic placement", testAnnotationPlacement},
+		{"annotation layered SVG 2", testAnnotationSVG},
+		{"annotation multi-tile coverage", testAnnotationMultiTileCoverage},
+		{"annotation SVG raster parity", testAnnotationRasterParity},
+		{"layered annotation end to end", testLayeredAnnotationEndToEnd},
 	}
 	failures := 0
 	for _, c := range cases {
@@ -34124,6 +34162,9 @@ func main() {
 		XNMLDir:                opts.XNMLDir,
 		Annotate:               opts.Annotate,
 		AnnotationCatalogs:     opts.AnnotationCatalogs,
+		AnnotationLayers:       opts.AnnotationLayers,
+		AnnotationVO:           opts.AnnotationVO,
+		AnnotationCache:        opts.AnnotationCache,
 		SsoEphemeris:           opts.SsoEphemeris,
 		Starless:               opts.Starless,
 		JSONReport:             opts.JSONReport,

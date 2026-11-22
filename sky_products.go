@@ -325,18 +325,16 @@ func runSkyMapSVG(outputDir string, opts runOptions) error {
 	}
 	ww := sol.WCS
 	ww.SIP = sol.SIP
-	nside := gaiaDefaultNside
-	ipix := healpixAng2PixNested(nside, ww.CRVAL1, ww.CRVAL2)
-	tile, ok := gaiaLoadTileCache(gaiaDefaultCacheDir(), nside, ipix)
-	if !ok {
-		logf("Sky map: no cached Gaia tile for nside=%d ipix=%d, skipping", nside, ipix)
+	gaia := cachedGaiaStarsForField(gaiaDefaultCacheDir(), gaiaDefaultNside, &ww, w, h)
+	if len(gaia) == 0 {
+		logf("Sky map: no cached Gaia tiles covering the field, skipping")
 		return nil
 	}
 	extra, err := loadAnnotationCatalogs(opts.AnnotationCatalogs)
 	if err != nil {
 		return err
 	}
-	sources := skySourcesForImage(w, h, &ww, tile.Stars, extra)
+	sources := skySourcesForImage(w, h, &ww, gaia, extra)
 	vectors := skyMapVectors(&ww, opts.SsoEphemeris)
 	path := filepath.Join(outputDir, "stacked_sky_map.svg")
 	if err := writeFileAtomic(path, func(out io.Writer) error {

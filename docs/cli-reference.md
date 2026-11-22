@@ -94,9 +94,12 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--resample-sip` | off | Apply stored SIP in the stacking resampler. |
 | `--annotate` | off | Gaia projection + anomaly flags. |
 | `--annotation-catalogs LIST` | — | Extra JSON catalogues. |
+| `--annotation-layers LIST` | all | Comma-separated SVG 2 layers (`grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, plus aliases). |
+| `--annotation-vo LIST` | — | Optional SIMBAD/VizieR cone queries for layered annotations; offline bundle by default. |
+| `--annotation-cache DIR` | Gaia cache dir | Disk cache for VO annotation queries. |
 | `--sso-ephemeris FILE` | — | MPC-style SSO ephemeris with site header and mandatory `DATE-OBS`; velocity-vector layer. |
 | `--cone-catalog NAME` / `--cone-radius N` | — / `60` | SDSS/IRSA/VizieR cone search (arcsec). |
-| `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. |
+| `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. With `--annotate`, also emits layered SVG + raster + provenance. |
 | `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | Survey selection and timeout. |
 | `--photometry` | off | Ensemble Gaia aperture photometry. |
 | `--aperture-photometry` | off | Local annulus sky, Kron/FLUX_RADIUS and neighbour masking in `--photometry`. |

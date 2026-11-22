@@ -1,0 +1,700 @@
+{
+  "version": "synthetic-golden-1",
+  "center_ra_deg": 10.0,
+  "center_dec_deg": 41.0,
+  "frame": {
+    "width": 512,
+    "height": 512,
+    "arcsec_per_pixel": 60
+  },
+  "sources": [
+    {
+      "id": "golden-00",
+      "name": "SYN-00",
+      "type": "star",
+      "ra": 11.221364930408988,
+      "dec": 41.0,
+      "mag": 5.0,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-01",
+      "name": "SYN-01",
+      "type": "galaxy",
+      "ra": 8.888242759787548,
+      "dec": 41.76864204902094,
+      "mag": 5.18,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 33,
+      "minor_arcsec": 17,
+      "pa_deg": 17,
+      "extended": true
+    },
+    {
+      "id": "golden-02",
+      "name": "SYN-02",
+      "type": "nebula",
+      "ra": 10.151025787142878,
+      "dec": 39.70124975579921,
+      "mag": 5.36,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 36,
+      "minor_arcsec": 19,
+      "pa_deg": 34,
+      "extended": true
+    },
+    {
+      "id": "golden-03",
+      "name": "SYN-03",
+      "type": "cluster",
+      "ra": 11.163776015613006,
+      "dec": 42.14560365639453,
+      "mag": 5.54,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 39,
+      "minor_arcsec": 21,
+      "pa_deg": 51,
+      "extended": true
+    },
+    {
+      "id": "golden-04",
+      "name": "SYN-04",
+      "type": "planetary",
+      "ra": 7.955801216133752,
+      "dec": 40.72710457669698,
+      "mag": 5.72,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 42,
+      "minor_arcsec": 23,
+      "pa_deg": 68,
+      "extended": true
+    },
+    {
+      "id": "golden-05",
+      "name": "SYN-05",
+      "type": "star",
+      "ra": 11.876076205610543,
+      "dec": 40.09932497189232,
+      "mag": 5.9,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-06",
+      "name": "SYN-06",
+      "type": "galaxy",
+      "ra": 9.387549021891171,
+      "dec": 42.71944510934044,
+      "mag": 6.08,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 48,
+      "minor_arcsec": 27,
+      "pa_deg": 102,
+      "extended": true
+    },
+    {
+      "id": "golden-07",
+      "name": "SYN-07",
+      "type": "nebula",
+      "ra": 8.854431344194829,
+      "dec": 39.33531991885215,
+      "mag": 6.26,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 51,
+      "minor_arcsec": 29,
+      "pa_deg": 119,
+      "extended": true
+    },
+    {
+      "id": "golden-08",
+      "name": "SYN-08",
+      "type": "cluster",
+      "ra": 12.446071931102797,
+      "dec": 41.67418323484866,
+      "mag": 6.4399999999999995,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 54,
+      "minor_arcsec": 31,
+      "pa_deg": 136,
+      "extended": true
+    },
+    {
+      "id": "golden-09",
+      "name": "SYN-09",
+      "type": "planetary",
+      "ra": 7.48922176193501,
+      "dec": 41.78219063737362,
+      "mag": 6.62,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 57,
+      "minor_arcsec": 33,
+      "pa_deg": 153,
+      "extended": true
+    },
+    {
+      "id": "golden-10",
+      "name": "SYN-10",
+      "type": "star",
+      "ra": 11.196511321658818,
+      "dec": 39.07030179438474,
+      "mag": 6.8,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-11",
+      "name": "SYN-11",
+      "type": "galaxy",
+      "ra": 10.875389012075871,
+      "dec": 43.106302448563696,
+      "mag": 6.98,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 63,
+      "minor_arcsec": 37,
+      "pa_deg": 7,
+      "extended": true
+    },
+    {
+      "id": "golden-12",
+      "name": "SYN-12",
+      "type": "nebula",
+      "ra": 7.384693055741778,
+      "dec": 39.856144174075666,
+      "mag": 7.16,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 66,
+      "minor_arcsec": 39,
+      "pa_deg": 24,
+      "extended": true
+    },
+    {
+      "id": "golden-13",
+      "name": "SYN-13",
+      "type": "cluster",
+      "ra": 13.044138650584923,
+      "dec": 40.4949141282309,
+      "mag": 7.34,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 69,
+      "minor_arcsec": 41,
+      "pa_deg": 41,
+      "extended": true
+    },
+    {
+      "id": "golden-14",
+      "name": "SYN-14",
+      "type": "planetary",
+      "ra": 8.155197629607912,
+      "dec": 42.98038928580656,
+      "mag": 7.52,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 72,
+      "minor_arcsec": 43,
+      "pa_deg": 58,
+      "extended": true
+    },
+    {
+      "id": "golden-15",
+      "name": "SYN-15",
+      "type": "star",
+      "ra": 9.576500201708829,
+      "dec": 38.53351949683706,
+      "mag": 7.699999999999999,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-16",
+      "name": "SYN-16",
+      "type": "galaxy",
+      "ra": 12.584937527637846,
+      "dec": 42.64420129903133,
+      "mag": 7.88,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 78,
+      "minor_arcsec": 47,
+      "pa_deg": 92,
+      "extended": true
+    },
+    {
+      "id": "golden-17",
+      "name": "SYN-17",
+      "type": "nebula",
+      "ra": 6.539761252161503,
+      "dec": 41.1079927038582,
+      "mag": 8.06,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 81,
+      "minor_arcsec": 49,
+      "pa_deg": 109,
+      "extended": true
+    },
+    {
+      "id": "golden-18",
+      "name": "SYN-18",
+      "type": "cluster",
+      "ra": 12.511788354095083,
+      "dec": 39.11355442636424,
+      "mag": 8.24,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 84,
+      "minor_arcsec": 51,
+      "pa_deg": 126,
+      "extended": true
+    },
+    {
+      "id": "golden-19",
+      "name": "SYN-19",
+      "type": "planetary",
+      "ra": 9.832701053420076,
+      "dec": 43.73053470586898,
+      "mag": 8.42,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 87,
+      "minor_arcsec": 53,
+      "pa_deg": 143,
+      "extended": true
+    },
+    {
+      "id": "golden-20",
+      "name": "SYN-20",
+      "type": "star",
+      "ra": 7.630520786309276,
+      "dec": 38.85705648220434,
+      "mag": 8.6,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-21",
+      "name": "SYN-21",
+      "type": "galaxy",
+      "ra": 13.739076735232901,
+      "dec": 41.37968494563673,
+      "mag": 8.78,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 93,
+      "minor_arcsec": 57,
+      "pa_deg": 177,
+      "extended": true
+    },
+    {
+      "id": "golden-22",
+      "name": "SYN-22",
+      "type": "nebula",
+      "ra": 6.843266137150515,
+      "dec": 42.657623896020034,
+      "mag": 8.96,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 96,
+      "minor_arcsec": 59,
+      "pa_deg": 14,
+      "extended": true
+    },
+    {
+      "id": "golden-23",
+      "name": "SYN-23",
+      "type": "cluster",
+      "ra": 10.85970025916075,
+      "dec": 38.115912172687636,
+      "mag": 9.14,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 99,
+      "minor_arcsec": 61,
+      "pa_deg": 31,
+      "extended": true
+    },
+    {
+      "id": "golden-24",
+      "name": "SYN-24",
+      "type": "planetary",
+      "ra": 11.982162632765663,
+      "dec": 43.61064465704885,
+      "mag": 9.32,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 102,
+      "minor_arcsec": 63,
+      "pa_deg": 48,
+      "extended": true
+    },
+    {
+      "id": "golden-25",
+      "name": "SYN-25",
+      "type": "star",
+      "ra": 6.136581214233823,
+      "dec": 40.0697932982747,
+      "mag": 9.5,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-26",
+      "name": "SYN-26",
+      "type": "galaxy",
+      "ra": 13.742292466154328,
+      "dec": 39.695081446292164,
+      "mag": 9.68,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 108,
+      "minor_arcsec": 67,
+      "pa_deg": 82,
+      "extended": true
+    },
+    {
+      "id": "golden-27",
+      "name": "SYN-27",
+      "type": "nebula",
+      "ra": 8.383046070584259,
+      "dec": 43.91591763339532,
+      "mag": 9.86,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 111,
+      "minor_arcsec": 69,
+      "pa_deg": 99,
+      "extended": true
+    },
+    {
+      "id": "golden-28",
+      "name": "SYN-28",
+      "type": "cluster",
+      "ra": 8.560531554384092,
+      "dec": 37.97958510548188,
+      "mag": 10.04,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 114,
+      "minor_arcsec": 71,
+      "pa_deg": 116,
+      "extended": true
+    },
+    {
+      "id": "golden-29",
+      "name": "SYN-29",
+      "type": "planetary",
+      "ra": 13.821131243563151,
+      "dec": 42.515667770888804,
+      "mag": 10.219999999999999,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 117,
+      "minor_arcsec": 73,
+      "pa_deg": 133,
+      "extended": true
+    },
+    {
+      "id": "golden-30",
+      "name": "SYN-30",
+      "type": "star",
+      "ra": 5.765316074415478,
+      "dec": 41.84244388406961,
+      "mag": 10.399999999999999,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-31",
+      "name": "SYN-31",
+      "type": "galaxy",
+      "ra": 12.401820612716868,
+      "dec": 38.180870740419415,
+      "mag": 10.58,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 123,
+      "minor_arcsec": 77,
+      "pa_deg": 167,
+      "extended": true
+    },
+    {
+      "id": "golden-32",
+      "name": "SYN-32",
+      "type": "nebula",
+      "ra": 10.762457764484916,
+      "dec": 44.34828681352952,
+      "mag": 10.76,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 126,
+      "minor_arcsec": 79,
+      "pa_deg": 4,
+      "extended": true
+    },
+    {
+      "id": "golden-33",
+      "name": "SYN-33",
+      "type": "cluster",
+      "ra": 6.3937379891355235,
+      "dec": 38.89217765079053,
+      "mag": 10.94,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 129,
+      "minor_arcsec": 81,
+      "pa_deg": 21,
+      "extended": true
+    },
+    {
+      "id": "golden-34",
+      "name": "SYN-34",
+      "type": "planetary",
+      "ra": 14.604369859586662,
+      "dec": 40.71210649782802,
+      "mag": 11.120000000000001,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 132,
+      "minor_arcsec": 83,
+      "pa_deg": 38,
+      "extended": true
+    },
+    {
+      "id": "golden-35",
+      "name": "SYN-35",
+      "type": "star",
+      "ra": 6.823155722794576,
+      "dec": 43.591729737005984,
+      "mag": 11.3,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      }
+    },
+    {
+      "id": "golden-36",
+      "name": "SYN-36",
+      "type": "galaxy",
+      "ra": 10.023100507220176,
+      "dec": 37.42620415444393,
+      "mag": 11.48,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 138,
+      "minor_arcsec": 87,
+      "pa_deg": 72,
+      "extended": true
+    },
+    {
+      "id": "golden-37",
+      "name": "SYN-37",
+      "type": "nebula",
+      "ra": 13.219561392148284,
+      "dec": 43.678537153245294,
+      "mag": 11.66,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 141,
+      "minor_arcsec": 89,
+      "pa_deg": 89,
+      "extended": true
+    },
+    {
+      "id": "golden-38",
+      "name": "SYN-38",
+      "type": "cluster",
+      "ra": 5.173140580604457,
+      "dec": 40.66237897414957,
+      "mag": 11.84,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 144,
+      "minor_arcsec": 91,
+      "pa_deg": 106,
+      "extended": true
+    },
+    {
+      "id": "golden-39",
+      "name": "SYN-39",
+      "type": "planetary",
+      "ra": 13.905170958058685,
+      "dec": 38.76312719774686,
+      "mag": 12.02,
+      "priority": 70,
+      "provenance": {
+        "catalog": "synthetic-golden-1",
+        "service": "fixture",
+        "offline": true
+      },
+      "major_arcsec": 147,
+      "minor_arcsec": 93,
+      "pa_deg": 123,
+      "extended": true
+    }
+  ]
+}

@@ -84,4 +84,8 @@ go.work.sum
 assets/M42-2017-11-18-Leciñena-50mm/
 
 # Vendor annotation screenshots (local reference only, copyrighted)
-/assets/annotation-examples/
+/assets/annotation-examples/*
+!/assets/annotation-examples/README.md
+!/assets/annotation-examples/synthetic-field.json
+!/assets/annotation-examples/synthetic-field.svg
+!/assets/annotation-examples/synthetic-field.png

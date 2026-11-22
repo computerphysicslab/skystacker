@@ -1,7 +1,7 @@
-# SkyStacker — project context (last updated 2026-11-17)
+# SkyStacker — project context (last updated 2026-11-22)
 
 ## Version
-v0.6.1 (single-file Go program, `main.go`)
+v0.6.1 (Go module: `main.go` plus first-party files such as `annotation_layers.go` and the `goTiff/` module)
 
 ## Build, test, install
 ```
@@ -9,7 +9,7 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 274 passing.** Update this number after any test change.
+**Self-test count: 281 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -1785,3 +1785,11 @@ rejection and disk spill. `--scale N` downsamples.
 - `parseAstrometryWCS` converts the returned FITS WCS (CD/CDELT+PC, 1-based CRPIX, quadratic SIP) into the internal 0-based `wcsTan`; `refineAstrometrySolution` then queries Gaia at the solved centre and reuses `plateSolutionFromGaia`, so external solves carry the same `plate_solution.json` schema, RMS and SIP as internal ones.
 - Optional `--solver-focal-length MM`/`--solver-pixel-size UM` provide an arcsec/px hint (`f[mm]=(pixel[µm]/scale[″/px])×206.26`) and a post-solve sanity warning. API keys are redacted from the report command line.
 - Wired into the stacking pipeline, `--post-only` (temporary JPEG from the stored stack) and standalone image mode; `--process-image … --image-op plate-solve` now solves a single JPEG/FITS with no metadata. Four new selftests cover WCS parsing, the local CLI mock, a mock nova API (login/upload/poll/WCS download) and the fallback chain.
+
+### Layered annotation subsystem — roadmap items 137–141 and 143 (2026-11-22)
+
+- New `annotation_layers.go` introduces one `annotationSource` model shared by the SVG 2 and raster renderers. It carries RA/Dec in radians, band/magnitude, axes/PA, epoch/proper motion, priority, label text and per-source provenance. An offline bundle (<2 MB) supplies bright stars, Messier/NGC/IC objects, LDN/Sh2 regions and constellation lines.
+- `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **281**.
+- `--annotation-layers`, `--annotation-vo` and `--annotation-cache` were added to `cliOptions`, `runOptions`, `parseArgs`, `resolvedFlagLines` and the main `runOptions` literal. With `--annotate --sky-map` the pipeline now also writes `stacked_annotated.svg`, `stacked_annotated.png` and `annotation_provenance.json`.
+- Label placement uses a dense spatial grid with cell-local collision queries and a deterministic priority/magnitude/ID order; 10 000 labels are placed in ~45 ms and 20 fixtures have zero overlaps. A bug in `annotationGridStep` (ascending step order) and the rad→arcsec conversion in `annotationArcsecPerPixel` were fixed, reducing a 10k-source SVG from 11 MB to ~1.8 MB (<2 MiB budget).
+- Roadmap: 137–141 and 143 are Done; item 142 (per-tile WCS + distortion-aware projection) remains Blocked by item 13, so goal 144 stays Open. Examples and visual references are documented in `assets/annotation-examples/README.md`.

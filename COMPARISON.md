@@ -140,7 +140,7 @@ reference frame in memory. Source files are never modified.
   star removal, STF auto-stretch, guided denoise (incl. chroma), curves,
   HDR blend, four weighted mixes, diffraction spikes.
 - Transparent `report.txt` with per-frame diagnostics.
-- Scientific/metadata outputs: TIFF/BigTIFF (via the unified `goTiff` engine, Astro-TIFF WCS/CFA propagated), FITS (`BITPIX=-32`, TAN WCS), XISF 1.0, `report.json`, VOTable `BINARY2`, structured bad-pixel maps, catalog annotation (`--annotate`) and anomaly manifests.
+- Scientific/metadata outputs: TIFF/BigTIFF (via the unified `goTiff` engine, Astro-TIFF WCS/CFA propagated), FITS (`BITPIX=-32`, TAN WCS), XISF 1.0, `report.json`, VOTable `BINARY2`, structured bad-pixel maps, catalog annotation (`--annotate`) and anomaly manifests, plus layered SVG 2 + anti-aliased raster annotation with provenance, grids, constellations, scale bar, finder chart, magnitude-encoded renderer-safe colours and multi-tile Gaia coverage (`--annotate --sky-map`).
 - Post-processing extras: Richardson–Lucy and Wiener deconvolution (`--deconvolve`, `--deconvolve-wiener`, grid PSF variant), multi-scale detail enhancement (`--wavesharp`), narrowband HOO/SHO mapping, star/starless layers, and config/checkpoint-style control (`--config`, `--resume`).
 - Automatic reference-frame crop (`--reference-crop`): every light is
   star-matched to an external reference image and warped into its pixel
