@@ -784,3 +784,60 @@ already owned by items 13, 27, 50, 55 and 69.
 
 **Sources absorbed:** `research/pendingToAnalyse/*.jpg` (13 files), the URL stub, and
 <https://welcome.astrobin.com/features/astrometry-tools> (accessed 2026-11-22).
+
+## 31. Next-generation annotated-image and layered-SVG subsystem — research basis (2026-11-22, append-only)
+
+**Goal.** Establish the evidence base for a new roadmap goal: given an astronomical image with a
+plate solution, produce a **layered SVG overlay and a raster annotated image at state-of-the-art
+quality** (PixInsight AnnotateImage / Siril annotations / AstroBin Ultimate / Aladin class).
+
+**Method.** (1) Source audit of `sky_products.go` and `runCatalogAnnotation`: `buildSkyMapSVGLayers`
+already emits 6 stable `<g>` layers (background, gaia-stars, extended-objects, sso-vectors, labels,
+footer) with `data-layer` metadata; `placeLabels` uses 8 fields, 16 anchors, 20 collision passes;
+`--annotate` draws green catalog glyphs and red anomaly crosses on `stacked_annotated.jpg` and
+writes `anomalies.json`/`catalog_matches.json`; WCS projection is SIP-aware via `wcsTanForward`/
+`wcsTanInverseSIP`. (2) Targeted goCrawler run with a new `annotation-svg` profile over curated
+domains: 12 pages processed, 2 accepted; FTS queries over the existing corpus returned the Siril
+annotations page, PixInsight `AnnotateImage.html`, ASTAP manual and Siril plate-solving docs.
+(3) Direct fetch of the Siril 1.3 annotations documentation and the curated vendor page.
+(4) Four AI providers (gemini, groq, openrouter; grok out of credits) answered a structured design
+prompt; the most detailed design was groq's (25 KB), cross-checked against the smaller ones.
+
+**Vendor/SOTA requirements extracted.** Annotations require a plate-solved image with WCS in the
+header (FITS or Astro-TIFF). Siril ships offline catalogs (Messier, NGC, IC, Lynds LDN, Sharpless
+Sh2, 3,661 bright stars, IAU constellation lines/names) plus 2 user catalogs, with per-layer
+enable/disable; online `conesearch` adds Tycho-2, NOMAD, Gaia DR3/localgaia, PPMXL, BSC, APASS,
+GCVS, VSX, SIMBAD, AAVSO, PGC, exoplanets and solar-system objects (red = online, green = offline);
+IAU observatory codes improve SSO positions. AstroBin Ultimate adds ecliptic/galactic grids, quasars,
+planets, asteroids, a "Space Cursor" and a finding-chart inset; it explicitly warns that asteroids
+cannot be annotated on stacked images without a single DATE-OBS, and that wide fields need a
+distortion-aware solve (PixInsight solver) — matching SkyStacker's blocked item 13.
+
+**Design consensus from the provider designs (all constrained to stdlib-only Go):**
+- A single `AnnotationSource` data model with provenance, type, RA/Dec + uncertainty, band/mag,
+  CFA/axes/PA, epoch + proper motion, label priority and metadata; all downstream renderers consume it.
+- Catalog acquisition in two tiers: small offline bundles (bright stars, constellations, Messier/
+  NGC/IC/LDN/Sh2/PGC) and online VO services (SIMBAD/TAP, VizieR, MPC), with an on-disk cache,
+  deterministic offline fallback and redacted errors.
+- Projection must use the stored TAN + SIP (order 2) solution, handle mirror parity and field
+  rotation (already done in `correctedPA`), and later accept per-tile WCS for mosaics (item 27).
+- SVG 2 layer taxonomy with `<title>/<desc>`, CSS custom properties, stable IDs, grid/constellation
+  layers, scale bar and finding-chart inset; keep ≤2 MiB for 10k sources.
+- Raster output must be generated from the same source list and placement decisions as the SVG
+  (SVG↔raster parity), with anti-aliasing, halos and colour-blind-safe palettes.
+- Label placement: greedy priority pass with a spatial index, then force-directed/annealing
+  relaxation; deterministic seeding; zero overlaps in fixtures; ≤200 ms for 10k labels.
+- Validation: synthetic WCS + catalog fixtures, golden SVG/JPEG comparisons, alignment error
+  <0.5 px, round-trip <0.001 px, and benchmarks at 10k sources / 60 MP.
+
+**Relation to the tracker.** Existing overlaps: item 13 (per-frame WCS reprojection, BLOCKED),
+27 (mosaic), 50 (SSO vectors), 55 (layered SVG), 69 (cone cross-match), 89 (diffuse-object
+classification). The new goal and its phased sub-items are promoted in `ROADMAP.md` as items
+137–143; none of the above items is reopened. Research owners for the new work are C2 (this file)
+and C5 (modularity) for any first-party module extraction.
+
+**Sources absorbed:** `research/pendingToAnalyse/*.jpg` (corpus §30), goCrawler `annotation-svg`
+profile run (2026-11-22), <https://siril.readthedocs.io/en/stable/astrometry/annotations.html>,
+<https://www.hnsky.org/astap.htm>, <https://pixinsight.com/doc/scripts/AnnotateImage/AnnotateImage.html>
+(vendor docs), and the four provider design files in `/tmp/opencode/annotation-research-*.md`
+(ephemeral; conclusions folded here).

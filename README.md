@@ -776,6 +776,8 @@ Five AI providers audited the serialized codebase with strict, non-rotating call
 - `audits/benchmarks.md` — grok scored highest for depth (9/10), gemini fastest (8.8 s); provider context/TPM limits required tiered bundles.
 - `audits/roadmap-update.md` — 26 consolidated candidate items, promoted to `ROADMAP.md` as Open items 111–136 with falsifiable acceptance criteria. Audit claims remain hypotheses until reproduced.
 
+A new roadmap goal (item 144, with ordered sub-items 137–143) targets a state-of-the-art layered SVG overlay and matching annotated raster image from any plate-solved image; the research basis is in `research/02` §31.
+
 ### Tier 1 — Small, self-contained (`S`)
 
 Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm-auto`) are listed under Recently Implemented.
