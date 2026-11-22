@@ -602,7 +602,7 @@ Seven roadmap items linked to plate solving were closed in one pass. **72** adds
 
 ## 17. Efficient blind solving — second corpus (2026-11-20, append-only)
 
-**Provenance.** `research/pendingToAnalyse/Blind Plate Solving Eficiente.md` (75 KB, 23 references) was a deep-research report on fast native blind solving. It was deduplicated against §15, §16 and `docs/blind-corpus-results.md`; the processed file was removed and `research/pendingToAnalyse/` kept with `.gitkeep`. The mathematical foundations (2n−4 invariants, quad optimality, parity handling, SIP/epoch effects) and the architecture comparison (Astrometry.net k-d trees, TETRA exponential hashing, ASTAP dynamic hash, Pyramid) are **already recorded in §15** and are not repeated here.
+**Provenance.** `research/pendingToAnalyse/Blind Plate Solving Eficiente.md` (75 KB, 23 references) was a deep-research report on fast native blind solving. It was deduplicated against §15, §16 and `docs/blind-corpus-results.md`; the processed file was removed and `research/pendingToAnalyse/` kept with `.gitkeep`. The mathematical foundations (2n−4 invariants, quad optimality, parity handling, SIP/epoch effects) and the architecture comparison (Astrometry.net k-d trees, TETRA exponential hashing, ASTAP dynamic hash, Pyramid) are **already recorded in §15** and are not repeated here. On 2026-11-21 an untracked copy of this file reappeared in `research/pendingToAnalyse/`; it was verified to be a duplicate of the already-consolidated report and removed again, keeping the folder with `.gitkeep`.
 
 ### 17.1 Root-cause diagnosis of the 0/14 corpus result
 
@@ -732,3 +732,7 @@ A second engineering pass addressed the two structural defects identified in §1
 ## 28. Third blind-solver engineering pass (2026-11-20, append-only)
 
 Items 79 and 81 remain "executed, not accepted". The quad-index lookup now votes by **distinct image quads per tile** rather than raw descriptor-hit counts, de-duplicates hypotheses by tile/quad/sky anchor, and widens the top-tile cut from 5 to 8 (a 20-tile trial hit the 90 s benchmark budget). `nativeExpKeyFromFine` and fine-descriptor generation share a single `nativeFineQuadBin = 0.02` constant, removing the spec deviation noted in §17. When no focal-length hint exists, `estimateArcsecPerPixel` derives a coarse scale from frame and catalogue nearest-neighbour spacing; regional builds include tiles whose centres lie within the cone radius plus half a tile, so boundary stars are no longer lost. `SKYSTACKER_DEBUG_QUADS=1` exposes image-quad, voted-tile and hypothesis counts. The native corpus is still 0/14; these changes improve candidate ranking and diagnosability but not yet recall on the processed JPEGs.
+
+## 29. Duplicate pendingToAnalyse file cleaned up (2026-11-21, append-only)
+
+On 2026-11-21 an untracked copy of `research/pendingToAnalyse/Blind Plate Solving Eficiente.md` was found in the tree. Its content had already been consolidated in §17 on 2026-11-20, so no new research facts were extracted. The file was removed and `research/pendingToAnalyse/` was kept with `.gitkeep`, per the pendingToAnalyse protocol (process the document, fold new material into the canonical files, then delete the processed source while keeping the folder). No roadmap changes resulted.

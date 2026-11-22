@@ -28,6 +28,14 @@ func decodeTIFFInput(path string, targetW, targetH int) (*frame, error) {
 		return nil, fmt.Errorf("decode TIFF %s: %w", path, err)
 	}
 	frm := &frame{Width: img.Width, Height: img.Height, Pix: make([]float32, img.Width*img.Height*3)}
+	if wcs, bayer := parseAstroTIFFDescription(img.Metadata["ImageDescription"]); wcs != nil {
+		frm.WCS = wcs
+	} else if bayer != "" {
+		frm.BayerPattern = bayer
+	}
+	if img.CFAPattern != "" {
+		frm.BayerPattern = img.CFAPattern
+	}
 	for y := 0; y < img.Height; y++ {
 		for x := 0; x < img.Width; x++ {
 			src := (y*img.Width + x) * img.Channels

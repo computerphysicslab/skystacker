@@ -76,6 +76,7 @@ Thumbs.db
 *.code-workspace
 NEXT_SESSION_PROMPT.md
 prompt-ai.txt
+ai-context.md
 
 # Go workspace (local multi-module development)
 go.work

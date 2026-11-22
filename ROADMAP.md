@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-20 · **Current state:** v0.6.1, 274 registered self-tests,
+**Updated:** 2026-11-21 · **Current state:** v0.6.1, 274 registered self-tests,
 Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
@@ -9,8 +9,16 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-20):** 84 Done · 1 Open · 6 Blocked · 5 Executed/not accepted
-· 7 Deferred. Items 2–8 and 11 were delivered in commit `8b99533`; item 18
+**Summary (2026-11-21):** 89 Done · 4 Open · 6 Blocked · 5 Executed/not accepted
+· 7 Deferred. Items 104–110 were added on 2026-11-21 from a deep code review
+(correctness, fragility, performance, robustness and maintainability);
+items 104 and 105 were investigated the same day and **closed as false
+positives** after adding regression tests (`goTiff/tiff_multistrip_test.go`).
+The TIFF backlog items P1-6 (IFD count cap), P4-6 (local `min` shadow),
+P3-2 (PackBits bounds), item 110 (all TIFF I/O via goTiff, including
+Astro-TIFF WCS/CFA propagation on input; subsumes P1-2, P4-5 and P3-6) were
+applied directly. Items 2–8
+and 11 were delivered in commit `8b99533`; item 18
 (the portable diagnostic module) was delivered afterwards. Items 19–28 were
 promoted from the feature comparison of mature stacking tools and delivered
 except item 27, which remains blocked by item 13. Items 29–46 were
@@ -23,7 +31,7 @@ and items 58–62 add a standalone multi-image processing mode analysed in
 goCrawler full export in [08](research/08-crawler-source-discovery.md) §11; items 72–74 were added when item 68 was implemented and are analysed in [02](research/02-astrometry-and-identification.md) §14; items 75–77 come from the calibrationless invariant-matching corpus consolidated in [02](research/02-astrometry-and-identification.md) §15; items 78–81 are the four-phase efficient blind-solver blueprint from [02](research/02-astrometry-and-identification.md) §17, gated against the 14-image corpus; items 88–89 come from [02](research/02-astrometry-and-identification.md) §19, item 90–92 from §20, and items 93–96 from the all-scope corpus in [08](research/08-crawler-source-discovery.md) §12; item 97 documents the saturation-aware detector fix. The status column below is
 the authoritative view.
 
-## Issue tracker — 103 items (ordered by effort)
+## Issue tracker — 110 items (ordered by effort)
 
 The tracker is split into **not achieved** (Open, Blocked and Executed/not accepted) and **achieved** (Done) items. Deferred and explicitly rejected work is listed in its own section below. Within each table, rows are ordered by ascending effort.
 
@@ -31,6 +39,10 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
+| 106 | **goDiagnostics Linux collector robustness** | S (~1 h) | **Open** | [05](research/05-toolchain-and-modularity.md) | `collect_linux.go` process scan ignores `ctx` and can block on `ReadDir /proc/<pid>/fd`; cap the scan, check `ctx.Err()` every N PIDs, rename `Updates` to `Packages` (it lists installed dpkg packages), and honour `--diagnose-timeout`. |
+| 107 | **goPureRaw CR2 width/demosaic validation** | M (~2 h) | **Open** | [07](research/07-native-cr2-decoding.md) §6 | `goPureRaw/formats/cr2/decoder.go` inflates the sensor width by 2× when assembling the Bayer buffer; validate against `dcraw -D -4 -t 1` margins cropped, or mark the decoder unsupported until proven. |
+| 108 | **ljpeg restart-marker handling** | M (~3 h) | **Open** | [07](research/07-native-cr2-decoding.md) | `goPureRaw/internal/ljpeg` treats `FF D0..D7` restart markers as corrupt; honour DRI, reset predictors and add a synthetic RST stream test. |
+| 109 | **Flag-value parsing without hardcoded list** | M (~2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) | `parseArgs` manually enumerates every flag that consumes a value (main.go:721-741); build the set from `flag.Visit` after registration so new value-flags cannot break positional parsing. |
 | 1 | **ASTAP interoperability hardening** | S (~45 min) | **Blocked** — no ASTAP adapter in code | [02](research/02-astrometry-and-identification.md) §ASTAP audit | Correct the `%errorlevel%` HFD scale in docs, add a decoding unit test, prefer textual `HFD_MEDIAN`/`STARS`, clamp HFD > 21.46 px, verify `-ra` units. No plate-solver code changes. |
 | 78 | **Detrended extraction and seeded blind baseline** | S–M (~2 h) | **Executed, not accepted** 2026-11-20 | [02](research/02-astrometry-and-identification.md) §17 | `--blind-detrend` (downsample, asymmetric background, HFD/eccentricity gating) and default `--gaia-multitile` shipped; `detrendedBlindStars` and `filterStarsForMatching` have Go tests. Acceptance (seeded solves on most of the 14 corpus frames without loose matching) is **not met**: processed JPEG centroids and the matcher scale estimate still fail. Second pass added measured seeded harness, FOV-aware odds, pixel-scale tolerance and wider detrend downsampling; corpus remains 0/14. |
 | 53 | **CFA-aware pre-drizzle background extraction** | S–M (~1–2 h) | **Blocked** — needs item 14 | [01](research/01-architecture-and-core-engine.md) §10.2 | Treat Bayer CFA as four interleaved subchannels, fit order-1 polynomial per subchannel and recombine before Bayer Drizzle (X-Trans unsupported); blocked until raw Bayer planes are available. |
@@ -48,6 +60,12 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
+| 104 | **goTiff multi-strip decode — false positive** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Investigation showed `decode.go` already writes each strip into `y0 = s*rows`; the reported row shift was wrong. Added `goTiff/tiff_multistrip_test.go` with 4 geometry cases; all pass. |
+| 105 | **goTiff encode pointer-area sizing — false positive** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Investigation showed `setBlockEntries` overwrites `data` with the same-length final offsets before `assignPointers`; no undersized pointer area. Added multi-tile/multi-strip encode tests in `tiff_multistrip_test.go`; all pass. |
+| P1-6 | **Relax goTiff IFD value-count cap** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Removed the arbitrary `maxIFDEntries*1024` count cap in `goTiff/header.go`; now bounded by `math.MaxUint32` and `maxReadSize/size`. Added `TestReadIFDLargeValueArray` and `TestReadIFDRejectsHugeCount`. |
+| P4-6 | **Remove local `min` shadow in goTiff** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Deleted the local `min` helper in `goTiff/decode.go`; Go 1.27 builtin is used. |
+| P3-2 | **Bound goTiff PackBits output** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | `decodePackBits` now rejects `expected > maxReadSize`, rejects literal runs that would exceed `expected`, and clamps run-length repeats. Added three tests in `tiff_robust_test.go`. |
+| 110 | **Route all TIFF I/O through goTiff** | M | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Removed the ~500 lines of in-tree TIFF constants/IFD writers/readers from `main.go`; `writeStackTIFF` and the embedded TIFF self-test helpers now delegate to `goTiff`. Astro-TIFF WCS and CFA (tag 270 / tags 33421-33422) now propagate into `frame.WCS`/`BayerPattern`; added `TestTIFFInputAstroMetadataPropagation` and `TestAstroTIFFDescriptionRoundTrip`. Subsumes backlog P1-2, P4-5 and P3-6. |
 | 2 | **Encoded-space self-flat warning** | S (~30 min) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §15 | When the grid self-flat is applied in sRGB-encoded space and no linear-light option is active, `report.txt`/`report.json` state the approximation; no numerical change. |
 | 29 | **Dither-magnitude diagnostic and small-dither warning** | S (~1 h) | **Done** 2026-11-18 | [04](research/04-calibration-and-self-flat.md) §6.8/§7 | Estimate median frame-to-frame translation and warn when dithering is too small for a valid self-flat; report-only, no hard gate without evidence. |
 | 30 | **Rejection-method heuristic by stack size** | S (~1 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §5.3, [03](research/03-reference-and-literature.md) §6.6 | Dispatch Min/Max (3-4), Percentile (5-9), Averaged Sigma (9-15), Winsorized (15-25) and Linear Fit (>25) over the existing estimators; opt-in flag. |
@@ -159,6 +177,75 @@ Recorded so they are not reopened without new evidence:
 * Fully general multi-night mosaics and real-time observatory control are out
   of scope; per-frame reprojection (item 13) is the enabling research step,
   not a commitment to mosaicking.
+
+## Deep code review backlog (2026-11-21, append-only)
+
+The following items are **not yet numbered roadmap entries**. They were found
+by a deep read-only code review on 2026-11-21 and should be promoted into the
+issue tracker in ascending-effort order before implementation. P0 items are
+correctness defects; P1 fragile patterns; P2 performance; P3 robustness;
+P4 maintainability.
+
+### P0 — Correctness
+
+| ID | Location | Effort | One-line description |
+|---|---|---|---|
+| P0-1 | `goTiff/decode.go:194-219` | S | Multi-strip TIFF decode writes strip 1 into the wrong destination rows. |
+| P0-2 | `goPureRaw/formats/cr2/decoder.go:107-114` | M | CR2 Bayer assembly doubles the sensor width, corrupting the native demosaic. |
+
+### P1 — Fragile patterns / code smells
+
+| ID | Location | Effort | One-line description |
+|---|---|---|---|
+| P1-1 | `main.go:721-741` | M | ~200-line hardcoded list of flags that consume a value for positional reordering. |
+| P1-2 | `main.go:3975-4002` | M | ~~In-tree TIFF constants/writers duplicate the `goTiff` module.~~ **Applied 2026-11-21** via item 110. |
+| P1-3 | `goDiagnostics/collect_linux.go:179-244` | S | `/proc` scan ignores `ctx` and can block on `ReadDir /proc/<pid>/fd`. |
+| P1-4 | `goDiagnostics/collect_linux.go:246-275` | S | `Updates` field actually lists 50 installed dpkg packages, not pending updates. |
+| P1-5 | `goDiagnostics/common.go:231-262` | S | Collector walk does not check `ctx.Err()` after the file budget is hit. |
+| P1-6 | `goTiff/header.go:106` | S | ~~IFD entry-count cap is stricter than necessary and rejects large legitimate files.~~ **Applied 2026-11-21** (see Achieved). |
+
+### P2 — Performance
+
+| ID | Location | Effort | One-line description |
+|---|---|---|---|
+| P2-1 | `main.go:11562-11576` | M | Serial per-pixel min/max loop over every frame in Pass 1. |
+| P2-2 | `main.go:31707-32124` | L | `runPostProcessing` is fully sequential and ignores `--workers`. |
+| P2-3 | `main.go:15147-15159` | S | `matchStarsToGaia` rebuilds the Gaia point list 4× instead of 2×. |
+| P2-4 | `main.go:17590-17600` | S | Gaia rate limiter sleeps while holding the global lock, serialising workers. |
+| P2-5 | `main.go:29273-29348` | S | Wiener deconvolution recomputes the PSF FFT for every tile. |
+
+### P3 — Edge cases / robustness
+
+| ID | Location | Effort | One-line description |
+|---|---|---|---|
+| P3-1 | `goPureRaw/internal/tiff/tiff.go:127` | S | IFD entry count is read from file with no cap before allocation. |
+| P3-2 | `goTiff/compress.go:139-142` | S | ~~PackBits output has no absolute upper bound on crafted streams.~~ **Applied 2026-11-21** (see Achieved). |
+| P3-3 | `goPureRaw/formats/cr2/decoder.go:80-85` | S | `findLosslessJPEG` reads the whole file after every candidate `FFC3`. |
+| P3-4 | `goPureRaw/internal/ljpeg/ljpeg.go:74-84,209` | M | JPEG RST restart markers are treated as corrupt data. |
+| P3-5 | `main.go:11725-11883` | S | Plate solve is silently skipped when the reference has <5 stars; no log line. |
+| P3-6 | `tiff_input.go:30-46` | S | ~~Astro-TIFF `CFAPattern`/WCS metadata is dropped when reading input TIFFs.~~ **Applied 2026-11-21** via item 110. |
+
+### P4 — Maintainability / small refactors
+
+| ID | Location | Effort | One-line description |
+|---|---|---|---|
+| P4-1 | `main.go:22341+` | L | Embedded `--selftest` suite duplicates the regular `go test` files. |
+| P4-2 | `goTiff/encode.go:253,315-324` | S | Pointer-area sizing uses 4-byte placeholders before final `StripOffsets`/`TileOffsets` are written. |
+| P4-3 | `goDiagnostics/platform.go:18` | S | `platformFactory` is a package-level mutable var swapped by tests. |
+| P4-4 | `goPureRaw/raw/registry.go:16-25` | S | `Register` panics on duplicate formats; a duplicate registration kills the binary. |
+| P4-5 | `main.go:5066` | M | ~~`readFloat32RGB` is a third TIFF reader coexisting with `gotiff.Decode` and in-tree writers.~~ **Applied 2026-11-21** via item 110 (thin goTiff-backed wrappers). |
+| P4-6 | `goTiff/decode.go:291` | S | ~~Local `min` shadows the Go builtin.~~ **Applied 2026-11-21** (see Achieved). |
+| P4-7 | `goPureRaw/internal/bitreader/bitreader.go:1` | S | Stale doc comment promises an LSB-first variant that does not exist. |
+
+**Suggested promotion order (ascending effort):** P0-1, P1-3, P1-4, P1-5,
+P1-6, P3-1, P3-2, P3-3, P3-5, P3-6, P4-2, P4-3, P4-4, P4-6, P4-7, P0-2,
+P1-1, P1-2, P2-1, P2-3, P2-4, P2-5, P3-4, P4-5, P2-2, P4-1.
+
+**TIFF backlog handled 2026-11-21:** items 104/105 (deep-review P0-1/P4-2)
+were investigated and closed as false positives with regression tests; P1-6,
+P4-6 and P3-2 were applied directly; item 110 moved all TIFF I/O to goTiff
+and propagated Astro-TIFF WCS/CFA metadata, subsuming deep-review P1-2, P4-5
+and P3-6. No TIFF items remain open in this backlog.
 
 ## Maintenance
 

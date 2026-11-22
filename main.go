@@ -1687,11 +1687,12 @@ func discoverFiles(root string, recursive bool, exclude []string) ([]string, err
 // =========================================================================
 
 type frame struct {
-	Width     int
-	Height    int
-	Pix       []float32 // interleaved RGB in [0, 1], unless a pixel was marked invalid (-1)
-	WCS       *wcsTan
-	Nonlinear bool
+	Width        int
+	Height       int
+	Pix          []float32 // interleaved RGB in [0, 1], unless a pixel was marked invalid (-1)
+	WCS          *wcsTan
+	Nonlinear    bool
+	BayerPattern string
 }
 
 func calibrate(f *frame, dark, flat, bias *frame) {
@@ -2521,7 +2522,7 @@ func resizeFrame(f *frame, w, h int) *frame {
 	if f.Width == w && f.Height == h {
 		return f
 	}
-	out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3), WCS: f.WCS, Nonlinear: f.Nonlinear, BayerPattern: f.BayerPattern}
 	scaleX := float64(f.Width) / float64(w)
 	scaleY := float64(f.Height) / float64(h)
 	for y := range h {
@@ -3972,39 +3973,6 @@ func cropCounts(c []int32, w int, r image.Rectangle) []int32 {
 // Output — TIFF
 // =========================================================================
 
-const (
-	tagImageWidth        = 256
-	tagImageLength       = 257
-	tagBitsPerSample     = 258
-	tagCompression       = 259
-	tagPhotometricInterp = 262
-	tagStripOffsets      = 273
-	tagSamplesPerPixel   = 277
-	tagRowsPerStrip      = 278
-	tagStripByteCounts   = 279
-	tagXResolution       = 282
-	tagYResolution       = 283
-	tagPlanarConfig      = 284
-	tagResolutionUnit    = 296
-	tagSampleFormat      = 339
-
-	typeShort    = 3
-	typeLong     = 4
-	typeRational = 5
-
-	compressionNone    = 1
-	photometricRGB     = 2
-	planarChunky       = 1
-	sampleFormatFloat  = 3
-	resolutionUnitNone = 1
-
-	ifdEntryCount = 14
-)
-
-func writeFloat32RGB(w io.Writer, width, height int, pix []float32) error {
-	return writeFloat32RGBScaled(w, width, height, pix, 1.0)
-}
-
 func writeRawFloat32RGB(w io.Writer, width, height int, pix []float32) error {
 	n := width * height * 3
 	if len(pix) != n {
@@ -4169,127 +4137,6 @@ func readRawFloat32RGB(path string) (int, int, []float32, error) {
 		i += count
 	}
 	return w, h, pix, nil
-}
-
-func writeFloat32RGBScaled(w io.Writer, width, height int, pix []float32, divisor float32) error {
-	if width <= 0 || height <= 0 {
-		return fmt.Errorf("tiff: invalid dimensions %dx%d", width, height)
-	}
-	n := width * height * 3
-	if len(pix) != n {
-		return fmt.Errorf("tiff: pixel buffer length %d does not match %dx%dx3 = %d", len(pix), width, height, n)
-	}
-	if divisor == 0 {
-		return errors.New("tiff: divisor must be non-zero")
-	}
-	stripBytes64 := int64(n) * 4
-	if stripBytes64 > math.MaxUint32 {
-		return fmt.Errorf("tiff: image too large for single strip (%d bytes)", stripBytes64)
-	}
-	stripBytes := uint32(stripBytes64)
-
-	ifdSize := uint32(2 + ifdEntryCount*12 + 4)
-	ifdOffset := uint32(8)
-	auxOffset := ifdOffset + ifdSize
-	bitsOffset := auxOffset
-	sfOffset := bitsOffset + 6
-	xResOffset := sfOffset + 6
-	yResOffset := xResOffset + 8
-	auxEnd := yResOffset + 8
-	pixelOffset := auxEnd
-	if rem := pixelOffset % 4; rem != 0 {
-		pixelOffset += 4 - rem
-	}
-
-	var header [8]byte
-	header[0], header[1] = 'I', 'I'
-	binary.LittleEndian.PutUint16(header[2:], 42)
-	binary.LittleEndian.PutUint32(header[4:], ifdOffset)
-	if _, err := w.Write(header[:]); err != nil {
-		return err
-	}
-
-	ifd := make([]byte, ifdSize)
-	binary.LittleEndian.PutUint16(ifd[0:], ifdEntryCount)
-	pos := 2
-	putShort := func(tag, v uint16) {
-		binary.LittleEndian.PutUint16(ifd[pos:], tag)
-		binary.LittleEndian.PutUint16(ifd[pos+2:], typeShort)
-		binary.LittleEndian.PutUint32(ifd[pos+4:], 1)
-		binary.LittleEndian.PutUint16(ifd[pos+8:], v)
-		pos += 12
-	}
-	putLong := func(tag uint16, v uint32) {
-		binary.LittleEndian.PutUint16(ifd[pos:], tag)
-		binary.LittleEndian.PutUint16(ifd[pos+2:], typeLong)
-		binary.LittleEndian.PutUint32(ifd[pos+4:], 1)
-		binary.LittleEndian.PutUint32(ifd[pos+8:], v)
-		pos += 12
-	}
-	putOffset := func(tag, typ uint16, count, offset uint32) {
-		binary.LittleEndian.PutUint16(ifd[pos:], tag)
-		binary.LittleEndian.PutUint16(ifd[pos+2:], typ)
-		binary.LittleEndian.PutUint32(ifd[pos+4:], count)
-		binary.LittleEndian.PutUint32(ifd[pos+8:], offset)
-		pos += 12
-	}
-	putLong(tagImageWidth, uint32(width))
-	putLong(tagImageLength, uint32(height))
-	putOffset(tagBitsPerSample, typeShort, 3, bitsOffset)
-	putShort(tagCompression, compressionNone)
-	putShort(tagPhotometricInterp, photometricRGB)
-	putLong(tagStripOffsets, pixelOffset)
-	putShort(tagSamplesPerPixel, 3)
-	putLong(tagRowsPerStrip, uint32(height))
-	putLong(tagStripByteCounts, stripBytes)
-	putOffset(tagXResolution, typeRational, 1, xResOffset)
-	putOffset(tagYResolution, typeRational, 1, yResOffset)
-	putShort(tagPlanarConfig, planarChunky)
-	putShort(tagResolutionUnit, resolutionUnitNone)
-	putOffset(tagSampleFormat, typeShort, 3, sfOffset)
-	binary.LittleEndian.PutUint32(ifd[pos:], 0)
-	if _, err := w.Write(ifd); err != nil {
-		return err
-	}
-
-	aux := make([]byte, int(auxEnd-auxOffset))
-	bo := int(bitsOffset - auxOffset)
-	sfo := int(sfOffset - auxOffset)
-	xro := int(xResOffset - auxOffset)
-	yro := int(yResOffset - auxOffset)
-	binary.LittleEndian.PutUint16(aux[bo:], 32)
-	binary.LittleEndian.PutUint16(aux[bo+2:], 32)
-	binary.LittleEndian.PutUint16(aux[bo+4:], 32)
-	for i := range 3 {
-		binary.LittleEndian.PutUint16(aux[sfo+i*2:], sampleFormatFloat)
-	}
-	binary.LittleEndian.PutUint32(aux[xro:], 1)
-	binary.LittleEndian.PutUint32(aux[xro+4:], 1)
-	binary.LittleEndian.PutUint32(aux[yro:], 1)
-	binary.LittleEndian.PutUint32(aux[yro+4:], 1)
-	if _, err := w.Write(aux); err != nil {
-		return err
-	}
-	if pad := int(pixelOffset) - int(auxEnd); pad > 0 {
-		if _, err := w.Write(make([]byte, pad)); err != nil {
-			return err
-		}
-	}
-
-	const bufFloats = 4096
-	scratch := make([]byte, bufFloats*4)
-	inv := float32(1.0) / divisor
-	for i := 0; i < n; {
-		count := min(n-i, bufFloats)
-		for j := 0; j < count; j++ {
-			binary.LittleEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[i+j]*inv))
-		}
-		if _, err := w.Write(scratch[:count*4]); err != nil {
-			return err
-		}
-		i += count
-	}
-	return nil
 }
 
 // writeFloat32RGBFITS writes a single-image-extension FITS file with
@@ -4932,126 +4779,6 @@ func xisfChecksumFromBytes(data []byte, algorithm string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-type bigTiffEntry struct {
-	tag   uint16
-	typ   uint16
-	count uint64
-	value uint64
-}
-
-func writeFloat32RGBBigTIFF(w io.Writer, width, height int, pix []float32) error {
-	n := width * height * 3
-	if width <= 0 || height <= 0 {
-		return fmt.Errorf("bigtiff: invalid dimensions %dx%d", width, height)
-	}
-	if len(pix) != n {
-		return fmt.Errorf("bigtiff: pixel buffer length %d does not match %dx%dx3 = %d", len(pix), width, height, n)
-	}
-	const (
-		typeShort = uint16(3)
-		typeLong  = uint16(4)
-		typeLong8 = uint16(16)
-	)
-	ifdOff := uint64(16)
-	dataOff := ifdOff + 8 + 11*20 + 8
-	inline := func(a, b uint16) uint64 { return uint64(a) | uint64(b)<<16 }
-	entries := []bigTiffEntry{
-		{256, typeLong, 1, uint64(width)},
-		{257, typeLong, 1, uint64(height)},
-		{258, typeShort, 3, inline(32, 32)},
-		{259, typeShort, 1, 1},
-		{262, typeShort, 1, 2},
-		{273, typeLong8, 1, dataOff},
-		{277, typeShort, 1, 3},
-		{278, typeLong8, 1, uint64(height)},
-		{279, typeLong8, 1, uint64(n * 4)},
-		{284, typeShort, 1, 1},
-		{339, typeShort, 3, inline(sampleFormatFloat, sampleFormatFloat)},
-	}
-	hdr := make([]byte, 16)
-	copy(hdr, "II")
-	binary.LittleEndian.PutUint16(hdr[2:], 43)
-	binary.LittleEndian.PutUint16(hdr[4:], 8)
-	binary.LittleEndian.PutUint64(hdr[8:], ifdOff)
-	if _, err := w.Write(hdr); err != nil {
-		return err
-	}
-	var buf [20]byte
-	binary.LittleEndian.PutUint64(buf[:8], uint64(len(entries)))
-	if _, err := w.Write(buf[:8]); err != nil {
-		return err
-	}
-	for _, e := range entries {
-		binary.LittleEndian.PutUint16(buf[0:], e.tag)
-		binary.LittleEndian.PutUint16(buf[2:], e.typ)
-		binary.LittleEndian.PutUint64(buf[4:], e.count)
-		binary.LittleEndian.PutUint64(buf[12:], e.value)
-		if _, err := w.Write(buf[:]); err != nil {
-			return err
-		}
-	}
-	binary.LittleEndian.PutUint64(buf[:8], 0)
-	if _, err := w.Write(buf[:8]); err != nil {
-		return err
-	}
-	scratch := make([]byte, 4096*4)
-	for i := 0; i < n; {
-		count := min(n-i, 4096)
-		for j := range count {
-			binary.LittleEndian.PutUint32(scratch[j*4:], math.Float32bits(pix[i+j]))
-		}
-		if _, err := w.Write(scratch[:count*4]); err != nil {
-			return err
-		}
-		i += count
-	}
-	return nil
-}
-
-func readFloat32RGBBigTIFF(path string) (width, height int, pix []float32, err error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	if len(data) < 16 || string(data[:2]) != "II" || binary.LittleEndian.Uint16(data[2:4]) != 43 ||
-		binary.LittleEndian.Uint16(data[4:6]) != 8 {
-		return 0, 0, nil, fmt.Errorf("bigtiff: %s: bad header", path)
-	}
-	pos := binary.LittleEndian.Uint64(data[8:16])
-	if pos+8 > uint64(len(data)) {
-		return 0, 0, nil, fmt.Errorf("bigtiff: %s: IFD out of range", path)
-	}
-	nEntries := binary.LittleEndian.Uint64(data[pos : pos+8])
-	if nEntries != 11 || pos+8+nEntries*20+8 > uint64(len(data)) {
-		return 0, 0, nil, fmt.Errorf("bigtiff: %s: bad IFD entry count %d", path, nEntries)
-	}
-	tags := make(map[uint16]bigTiffEntry)
-	for i := uint64(0); i < nEntries; i++ {
-		off := pos + 8 + i*20
-		e := bigTiffEntry{
-			tag:   binary.LittleEndian.Uint16(data[off:]),
-			typ:   binary.LittleEndian.Uint16(data[off+2:]),
-			count: binary.LittleEndian.Uint64(data[off+4:]),
-			value: binary.LittleEndian.Uint64(data[off+12:]),
-		}
-		tags[e.tag] = e
-	}
-	width = int(tags[256].value)
-	height = int(tags[257].value)
-	stripOff := tags[273].value
-	stripBytes := tags[279].value
-	if width <= 0 || height <= 0 || tags[259].value != 1 || tags[277].value != 3 ||
-		tags[262].value != 2 || tags[273].typ != 16 || stripBytes != uint64(width*height*3*4) ||
-		stripOff+stripBytes > uint64(len(data)) {
-		return 0, 0, nil, fmt.Errorf("bigtiff: %s: unsupported layout", path)
-	}
-	pix = make([]float32, width*height*3)
-	for i := range pix {
-		pix[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[stripOff+uint64(i)*4:]))
-	}
-	return width, height, pix, nil
-}
-
 // fitsWCS returns the plate-solution WCS with SIP coefficients attached,
 // or nil when no solution is available.
 func fitsWCS(sol *plateSolution) *wcsTan {
@@ -5061,159 +4788,6 @@ func fitsWCS(sol *plateSolution) *wcsTan {
 	w := sol.WCS
 	w.SIP = sol.SIP
 	return &w
-}
-
-func readFloat32RGB(r io.Reader) (width, height int, pix []float32, err error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	if len(data) < 8 || data[0] != 'I' || data[1] != 'I' {
-		return 0, 0, nil, errors.New("tiff: not little-endian")
-	}
-	if v := binary.LittleEndian.Uint16(data[2:]); v != 42 {
-		return 0, 0, nil, fmt.Errorf("tiff: version %d", v)
-	}
-	ifdOff := int(binary.LittleEndian.Uint32(data[4:]))
-	if ifdOff+2 > len(data) {
-		return 0, 0, nil, errors.New("tiff: IFD out of range")
-	}
-	nEntries := int(binary.LittleEndian.Uint16(data[ifdOff:]))
-	if ifdOff+2+nEntries*12+4 > len(data) {
-		return 0, 0, nil, errors.New("tiff: IFD truncated")
-	}
-	var (
-		w, h     uint32
-		bps, sf  []uint16
-		spp      uint16
-		photo    uint16
-		planar   uint16
-		stripOff []uint32
-		stripLen []uint32
-	)
-	for i := range nEntries {
-		off := ifdOff + 2 + i*12
-		tag := binary.LittleEndian.Uint16(data[off:])
-		typ := binary.LittleEndian.Uint16(data[off+2:])
-		count := int(binary.LittleEndian.Uint32(data[off+4:]))
-		valField := off + 8
-		readShorts := func() ([]uint16, error) {
-			if typ != typeShort {
-				return nil, fmt.Errorf("tiff: tag %d type %d", tag, typ)
-			}
-			out := make([]uint16, count)
-			if count*2 <= 4 {
-				for k := range count {
-					out[k] = binary.LittleEndian.Uint16(data[valField+k*2:])
-				}
-			} else {
-				o := int(binary.LittleEndian.Uint32(data[valField:]))
-				if o+count*2 > len(data) {
-					return nil, errors.New("tiff: offset out of range")
-				}
-				for k := range count {
-					out[k] = binary.LittleEndian.Uint16(data[o+k*2:])
-				}
-			}
-			return out, nil
-		}
-		readLongs := func() ([]uint32, error) {
-			if typ != typeLong {
-				return nil, fmt.Errorf("tiff: tag %d type %d", tag, typ)
-			}
-			out := make([]uint32, count)
-			if count*4 <= 4 {
-				out[0] = binary.LittleEndian.Uint32(data[valField:])
-			} else {
-				o := int(binary.LittleEndian.Uint32(data[valField:]))
-				if o+count*4 > len(data) {
-					return nil, errors.New("tiff: offset out of range")
-				}
-				for k := range count {
-					out[k] = binary.LittleEndian.Uint32(data[o+k*4:])
-				}
-			}
-			return out, nil
-		}
-		switch tag {
-		case tagImageWidth:
-			v, e := readLongs()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			w = v[0]
-		case tagImageLength:
-			v, e := readLongs()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			h = v[0]
-		case tagBitsPerSample:
-			v, e := readShorts()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			bps = v
-		case tagPhotometricInterp:
-			v, e := readShorts()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			photo = v[0]
-		case tagStripOffsets:
-			v, e := readLongs()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			stripOff = v
-		case tagSamplesPerPixel:
-			v, e := readShorts()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			spp = v[0]
-		case tagStripByteCounts:
-			v, e := readLongs()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			stripLen = v
-		case tagPlanarConfig:
-			v, e := readShorts()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			planar = v[0]
-		case tagSampleFormat:
-			v, e := readShorts()
-			if e != nil {
-				return 0, 0, nil, e
-			}
-			sf = v
-		}
-	}
-	if w == 0 || h == 0 || spp != 3 || photo != photometricRGB || planar != planarChunky {
-		return 0, 0, nil, errors.New("tiff: unexpected header fields")
-	}
-	if len(bps) != 3 || bps[0] != 32 || len(sf) != 3 || sf[0] != sampleFormatFloat {
-		return 0, 0, nil, errors.New("tiff: unexpected sample format")
-	}
-	if len(stripOff) != 1 || len(stripLen) != 1 {
-		return 0, 0, nil, errors.New("tiff: expected single strip")
-	}
-	nPix := int(w) * int(h) * 3
-	if int(stripLen[0]) != nPix*4 {
-		return 0, 0, nil, fmt.Errorf("tiff: strip byte count %d, expected %d", stripLen[0], nPix*4)
-	}
-	off := int(stripOff[0])
-	if off+nPix*4 > len(data) {
-		return 0, 0, nil, errors.New("tiff: pixel data out of range")
-	}
-	pix = make([]float32, nPix)
-	for i := range pix {
-		pix[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[off+i*4:]))
-	}
-	return int(w), int(h), pix, nil
 }
 
 // =========================================================================

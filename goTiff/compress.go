@@ -117,13 +117,16 @@ func encodePackBits(src []byte) []byte {
 }
 
 func decodePackBits(src []byte, expected int64) ([]byte, error) {
+	if expected < 0 || expected > maxReadSize {
+		return nil, errNoPixels
+	}
 	out := make([]byte, 0, expected)
 	for i := 0; i < len(src); {
 		ctrl := int8(src[i])
 		i++
 		if ctrl >= 0 {
 			n := int(ctrl) + 1
-			if i+n > len(src) {
+			if i+n > len(src) || int64(len(out)+n) > expected {
 				return nil, errNoPixels
 			}
 			out = append(out, src[i:i+n]...)
@@ -137,7 +140,10 @@ func decodePackBits(src []byte, expected int64) ([]byte, error) {
 			return nil, errNoPixels
 		}
 		n := 257 - int(ctrl)
-		for j := 0; j < n && int64(len(out)) < expected; j++ {
+		if int64(n) > expected-int64(len(out)) {
+			n = int(expected - int64(len(out)))
+		}
+		for j := 0; j < n; j++ {
 			out = append(out, src[i])
 		}
 		i++

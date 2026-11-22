@@ -3,6 +3,7 @@ package gotiff
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 const (
@@ -103,10 +104,13 @@ func readIFD(data []byte, order binary.ByteOrder, offset uint64, big bool) (map[
 			count = uint64(order.Uint32(p[4:8]))
 			valuePos = 8
 		}
-		if count > uint64(maxIFDEntries)*1024 {
+		if count > math.MaxUint32 {
 			return nil, 0, errBadIFD
 		}
 		e.count = uint32(count)
+		if size <= 0 || count > uint64(maxReadSize)/uint64(size) {
+			return nil, 0, errBadIFD
+		}
 		total := int64(count) * int64(size)
 		if total < 0 || total > maxReadSize {
 			return nil, 0, errBadIFD

@@ -18,13 +18,14 @@ are never gamma-encoded.
   and `CD1_1..CD2_2` (degrees).
 - `--bigtiff`: BigTIFF float32 with 64-bit offsets for stacks >4 GiB.
 
-The first-party `goTiff` module additionally reads TIFF inputs with 8/16-bit
-integer or 32/64-bit float samples, grayscale/RGB photometry, classic/BigTIFF
-containers, PackBits/LZW/Deflate compression, horizontal prediction, multipage
-IFDs and Astro-TIFF/CFA tags. Passing any of `--tiff-compression`,
-`--tiff-depth`, `--tiff-astro`, `--tiff-tiles` or `--tiff-predictor` switches
-`--tiff`/`--bigtiff` to the goTiff writer so those features are written;
-without them the legacy uncompressed float32 layout is preserved.
+All TIFF input and output goes through the first-party `goTiff` module: it
+reads 8/16-bit integer or 32/64-bit float samples, grayscale/RGB photometry,
+classic/BigTIFF containers, PackBits/LZW/Deflate compression, horizontal
+prediction, multipage IFDs and Astro-TIFF/CFA tags. The `--tiff-compression`,
+`--tiff-depth`, `--tiff-astro`, `--tiff-tiles` and `--tiff-predictor` flags
+select optional writer features; with defaults, `--tiff`/`--bigtiff` still
+produce uncompressed little-endian RGB float32 TIFFs. Astro-TIFF WCS and CFA
+metadata are propagated from input TIFFs into the frame's `WCS`/Bayer pattern.
 
 `--xisf` writes a monolithic XISF 1.0 file with planar float32 samples;
 `--xisf-rev2` adds SHA-256/512 or verified SHA-3 checksums and strict

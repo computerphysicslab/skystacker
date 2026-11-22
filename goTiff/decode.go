@@ -287,10 +287,3 @@ func sampleBytes(bits int, format SampleFormat) (int, error) {
 		return 0, UnsupportedError(fmt.Sprintf("SampleFormat %d", format))
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
