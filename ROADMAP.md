@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-21 · **Current state:** v0.6.1, 274 registered self-tests,
+**Updated:** 2026-11-22 · **Current state:** v0.6.1, 274 registered self-tests,
 Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-22):** 91 Done · 2 Open · 6 Blocked · 5 Executed/not accepted
+**Summary (2026-11-22):** 91 Done · 28 Open · 6 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
 items 104 and 105 were investigated the same day and **closed as false
@@ -35,7 +35,14 @@ and items 58–62 add a standalone multi-image processing mode analysed in
 goCrawler full export in [08](research/08-crawler-source-discovery.md) §11; items 72–74 were added when item 68 was implemented and are analysed in [02](research/02-astrometry-and-identification.md) §14; items 75–77 come from the calibrationless invariant-matching corpus consolidated in [02](research/02-astrometry-and-identification.md) §15; items 78–81 are the four-phase efficient blind-solver blueprint from [02](research/02-astrometry-and-identification.md) §17, gated against the 14-image corpus; items 88–89 come from [02](research/02-astrometry-and-identification.md) §19, item 90–92 from §20, and items 93–96 from the all-scope corpus in [08](research/08-crawler-source-discovery.md) §12; item 97 documents the saturation-aware detector fix. The status column below is
 the authoritative view.
 
-## Issue tracker — 110 items (ordered by effort)
+Items 111–136 were promoted on 2026-11-22 from the multi-provider audit
+(`audits/roadmap-update.md`, `audits/benchmarks.md`): five AI providers
+audited the serialized codebase with strict, non-rotating calls; duplicate,
+already-tracked and explicitly rejected proposals were removed during
+integration. Acceptance criteria are falsifiable and still require
+verification before implementation.
+
+## Issue tracker — 136 items (ordered by effort)
 
 The tracker is split into **not achieved** (Open, Blocked and Executed/not accepted) and **achieved** (Done) items. Deferred and explicitly rejected work is listed in its own section below. Within each table, rows are ordered by ascending effort.
 
@@ -43,6 +50,32 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
+| 111 | **Reconcile `--method` default across parser/help/docs** | S (~30 min) | **Open** | [docs/cli-reference.md](docs/cli-reference.md) | One default string remains; `testParseArgs` asserts it; grep finds no other value in `parseArgs`, `--help`, `TECHNICAL_SPEC.md`, `README.md`, `docs/cli-reference.md`. |
+| 112 | **Fix current-section drift in PROJECT_CONTEXT.md** | S (~30 min) | **Open** | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Recovery line expects 274 self-tests; spike table uses length 10 / intensity 0.3; opening text no longer calls the program single-file; session logs untouched. |
+| 113 | **Remove README self-contradictions** | S (~30 min) | **Open** | [README.md](README.md) | No stale claim that grid self-flat is not default; badge says Go 1.27.4; comparison cell no longer denies shipped `--deconvolve`/`--drizzle-upsample`. |
+| 114 | **Fix blind-solver troubleshooting and TECHNICAL_SPEC exclusion** | S (~30 min) | **Open** | [docs/troubleshooting.md](docs/troubleshooting.md) | Troubleshooting names `native`/`astrometry-local`/`astap`/`astrometry-web`; spec §2 Excluded no longer denies native CR2 decode. |
+| 115 | **Fix `scaleConsistentMatches` quartile index and `matches[0]` anchor** | S (~1 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | New test: outlier at index 0 is dropped and the other three survive; gate uses `scales[len/2]` or an explicit median; existing `TestScaleConsistentMatches` still passes. |
+| 116 | **Redact process command lines in goDiagnostics output** | S (~1 h) | **Open** | [research/05-toolchain-and-modularity.md](research/05-toolchain-and-modularity.md) | Fixture cmdline containing `api_key=secret` and `--mast-token hunter2` yields redacted JSON/text; normal `skystacker --selftest` cmdline still present. |
+| 117 | **Fix Darwin swap field and Linux CPU-share label in diagnostics** | S (~1 h) | **Open** | [research/05-toolchain-and-modularity.md](research/05-toolchain-and-modularity.md) | `Swapused` is not stored in `SwapTotalMB`; text no longer prints lifetime CPU share as an unqualified current CPU percent; test locks label/formula. |
+| 118 | **Archive HTTP context and redirect policy without `Authorization` leak** | S (~1 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `httptest` cross-host redirect receives no `Authorization`; cancelled context returns before handler; `TestArchiveAdapterQuery` still sees `Bearer secret` on first hop. |
+| 119 | **Refuse survey cutouts above the 50 Mpix service limit** | S (~30 min) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `width*height > 50_000_000` errors before dialing (test server sees zero requests); a 64x64 request still works. |
+| 120 | **Cap `ljpeg.Decode` pixel count and CR2 decode allocation** | S (~1 h) | **Open** | [research/07-native-cr2-decoding.md](research/07-native-cr2-decoding.md) | Oversized SOF3 returns an error without allocating planes; `TestMinimalStream`, `TestRestartMarkers` and the CR2 oracle (`PURERAW_CR2`) still pass. |
+| 121 | **Cap SBI1 tile and quad counts before allocation** | S (~1 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A header with counts above a documented bound is rejected; small-fixture round-trip still passes and compares quad star RA/Dec, not only band id. |
+| 122 | **Use a circular mean in `selectDensityUniformStars`** | S (~1 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | Stars at RA 0.01 and 6.27 rad are not split across a tile centre near pi; a non-wrapping tile still returns a subset under the quota. |
+| 123 | **Expose the embedded suite through `go test` without splitting main.go** | S (~1 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | `go test -run TestEmbeddedSelftest -count=1` calls `runSelfTests` and fails on any failure; the 274 cases are not deleted or rewritten (P4-1 remains separate). |
+| 124 | **Kahan summation for the streaming mean stack** | S (~1 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | Stack 100000 random float32 values; result within 1 LSB of a float64 reference. |
+| 125 | **Cache-invalidation sanity regression test** | S (~30 min) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | Modify one light after cache creation; the next run logs a cache miss and re-detects that frame. |
+| 126 | **Read CR2 black/white/CFA from the container, not EOS 40D constants** | M (~2 h) | **Open** | [research/07-native-cr2-decoding.md](research/07-native-cr2-decoding.md) | Synthetic CR2/TIFF header with a non-1018 black tag and non-RGGB CFA yields those values on `Image`; the 40D oracle still reports 14 bits and current geometry. |
+| 127 | **Delete the `fitsBlackLevelFor` side channel** | M (~2 h) | **Open** | [research/04-calibration-and-self-flat.md](research/04-calibration-and-self-flat.md) | `fitsBlackLevelFor` is gone from the function map; two FITS files with different `BLACK_LVL` return their own levels from a pure, order-independent function. |
+| 128 | **Prove EXIF GPS is not consumed as ICRS RA/Dec** | M (~2 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A JPEG with only GPS (40 N, 3 W) does not seed RA=3 deg, Dec=40 deg; the seed is rejected with a `geographic` log line or a tested conversion is locked to a fixture. |
+| 129 | **Single offline switch; no nova upload unless explicitly selected** | M (~2 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | With `AN_API_KEY` set, `--plate-solver auto` makes zero POSTs; `--plate-solver astrometry-web` still uploads; offline fails before dial; `--gaia-offline` unchanged. |
+| 130 | **Replace quadratic sky-map label placement with a spatial hash** | M (~2 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A fixed 1000-source fixture keeps the same label strings, no emitted boxes overlap, and collision checks use hash neighbours only; `testLayeredSVGAnnotation` still passes. |
+| 131 | **Surface cone-search failures in the processing report** | M (~2 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A mock HTTP 500 sets an error field on the report instead of omitting the section; a complete VOTable still sets `cone_truncated=false`. |
+| 132 | **Fuzz `ljpeg.Decode` and CR2 `findLosslessJPEG` like goTiff** | M (~2 h) | **Open** | [research/07-native-cr2-decoding.md](research/07-native-cr2-decoding.md) | `go test -fuzz=FuzzLJPEG -fuzztime=10s` in `goPureRaw/internal/ljpeg` passes with `minimalStream` and `minimalStreamWithRestart` seeds; second target covers a stray `FFC3`. |
+| 133 | **Dynamic tile-buffer sizing from available memory** | M (~2 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | Tile buffer scales with `MemAvailable` (floor 256 MB); a 60 MP test does not exceed 10% of available RAM. |
+| 134 | **End-to-end calibration fixture suite** | M (~2 h) | **Open** | [research/04-calibration-and-self-flat.md](research/04-calibration-and-self-flat.md) | Fixture of 5 lights plus master dark/flat/bias; stacked mean within 0.5% and variance within 1% of a stored reference. |
+| 135 | **Parallel-detection scaling benchmark** | M (~2 h) | **Open** | [research/05-toolchain-and-modularity.md](research/05-toolchain-and-modularity.md) | 30 MP detection at `--workers` 1/2/4/8 gives >=0.8x scaling per added core; the benchmark is committed to `BENCHMARKS.md`. |
+| 136 | **Parallelise `runPostProcessing` with a worker pool** | L (~4 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | 60 MP post-processing time drops >=1.7x with 4 workers; JPEG outputs byte-identical to the sequential path. |
 | 106 | **goDiagnostics Linux collector robustness** | S (~1 h) | **Open** | [05](research/05-toolchain-and-modularity.md) | `collect_linux.go` process scan ignores `ctx` and can block on `ReadDir /proc/<pid>/fd`; cap the scan, check `ctx.Err()` every N PIDs, rename `Updates` to `Packages` (it lists installed dpkg packages), and honour `--diagnose-timeout`. |
 | 109 | **Flag-value parsing without hardcoded list** | M (~2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) | `parseArgs` manually enumerates every flag that consumes a value (main.go:721-741); build the set from `flag.Visit` after registration so new value-flags cannot break positional parsing. |
 | 1 | **ASTAP interoperability hardening** | S (~45 min) | **Blocked** — no ASTAP adapter in code | [02](research/02-astrometry-and-identification.md) §ASTAP audit | Correct the `%errorlevel%` HFD scale in docs, add a decoding unit test, prefer textual `HFD_MEDIAN`/`STARS`, clamp HFD > 21.46 px, verify `-ra` units. No plate-solver code changes. |
@@ -262,6 +295,17 @@ reads on stray `FFC3`; P4-7 corrected the stale bitreader comment. Real
 CR2 decode still passes `TestDecodeOracle`/`TestConfigOracle` with
 `PURERAW_CR2` set. Bit-exact geometric agreement with dcraw is still
 blocked in item 10 (needs raw-Bayer oracle dumps; NCC ~0.05 on the corpus).
+
+
+## Multi-provider audit integration (2026-11-22, append-only)
+
+A deep audit of the serialized codebase was requested from gemini, groq,
+grok, openrouter and ollama with `myTools/DocSpider/serializer.py` plus
+`myTools/AI/AI-API/ai-api.py --strict`. Raw audits are in `audits/*-skystacker-audit.md`;
+latency/length/quality comparison in `audits/benchmarks.md`; the deduplicated
+proposal set that produced items 111–136 in `audits/roadmap-update.md`.
+Audit claims are hypotheses until reproduced; no automatic code changes were
+made from this pass.
 
 ## Maintenance
 
