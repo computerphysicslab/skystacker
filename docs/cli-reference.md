@@ -30,7 +30,7 @@ Astro-TIFF tag 270 and CFA metadata.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--method mean\|median\|sigma` | `mean` | Stacking reducer. |
+| `--method mean\|median\|sigma` | `sigma` | Stacking reducer. |
 | `--no-register` | off | Disable star-based registration. |
 | `--no-affine` | off | Similarity-only registration. |
 | `--sigma-clip F` | `3.0` | MAD rejection threshold for median/sigma. |

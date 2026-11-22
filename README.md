@@ -409,7 +409,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--resume` | If the output dir already has a stacked float32 image, continue with post-processing instead of re-stacking | `false` |
 | `--drizzle-upsample N` / `--drizzle-pixfrac F` | Diagnostic drizzled N× upsample (`stacked_drizzled.f32raw/.jpg`), N=1 off | off / `1.0` |
 | `--output string` | Output directory | `<input>/0_skystacker_results` |
-| `--method string` | Stacking method: `mean`, `median`, or `sigma` | `sigma` |
+| `--method string` | Stacking method: `mean`, `median`, or `sigma` (default; asserted by `testParseArgs`) | `sigma` |
 | `--workers int` | Maximum number of concurrent worker goroutines | Number of CPUs |
 | `--recursive` | Search input subdirectories recursively | `false` |
 | `--overwrite` | Permit replacing existing files in the output directory | `false` |

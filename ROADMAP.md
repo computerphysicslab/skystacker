@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-22):** 91 Done · 28 Open · 6 Blocked · 5 Executed/not accepted
+**Summary (2026-11-22):** 92 Done · 27 Open · 6 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
 items 104 and 105 were investigated the same day and **closed as false
@@ -50,7 +50,6 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
-| 111 | **Reconcile `--method` default across parser/help/docs** | S (~30 min) | **Open** | [docs/cli-reference.md](docs/cli-reference.md) | One default string remains; `testParseArgs` asserts it; grep finds no other value in `parseArgs`, `--help`, `TECHNICAL_SPEC.md`, `README.md`, `docs/cli-reference.md`. |
 | 112 | **Fix current-section drift in PROJECT_CONTEXT.md** | S (~30 min) | **Open** | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Recovery line expects 274 self-tests; spike table uses length 10 / intensity 0.3; opening text no longer calls the program single-file; session logs untouched. |
 | 113 | **Remove README self-contradictions** | S (~30 min) | **Open** | [README.md](README.md) | No stale claim that grid self-flat is not default; badge says Go 1.27.4; comparison cell no longer denies shipped `--deconvolve`/`--drizzle-upsample`. |
 | 114 | **Fix blind-solver troubleshooting and TECHNICAL_SPEC exclusion** | S (~30 min) | **Open** | [docs/troubleshooting.md](docs/troubleshooting.md) | Troubleshooting names `native`/`astrometry-local`/`astap`/`astrometry-web`; spec §2 Excluded no longer denies native CR2 decode. |
@@ -95,6 +94,7 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 
 | # | Milestone | Effort | Status | Research owner | Acceptance / scope |
 |---|---|---|---|---|---|
+| 111 | **Reconcile `--method` default across parser/help/docs** | S (~30 min) | **Done** 2026-11-22 | [docs/cli-reference.md](docs/cli-reference.md) | Fixed `--help` and `docs/cli-reference.md` to say `sigma` (matching `parseArgs`, `README.md`, `TECHNICAL_SPEC.md`); `testParseArgs` now asserts `opts.Method == "sigma"`. Grep confirms one default string. |
 | 104 | **goTiff multi-strip decode — false positive** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Investigation showed `decode.go` already writes each strip into `y0 = s*rows`; the reported row shift was wrong. Added `goTiff/tiff_multistrip_test.go` with 4 geometry cases; all pass. |
 | 105 | **goTiff encode pointer-area sizing — false positive** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Investigation showed `setBlockEntries` overwrites `data` with the same-length final offsets before `assignPointers`; no undersized pointer area. Added multi-tile/multi-strip encode tests in `tiff_multistrip_test.go`; all pass. |
 | P1-6 | **Relax goTiff IFD value-count cap** | S | **Done** 2026-11-21 | [05](research/05-toolchain-and-modularity.md) | Removed the arbitrary `maxIFDEntries*1024` count cap in `goTiff/header.go`; now bounded by `math.MaxUint32` and `maxReadSize/size`. Added `TestReadIFDLargeValueArray` and `TestReadIFDRejectsHugeCount`. |

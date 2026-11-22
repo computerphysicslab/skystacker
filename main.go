@@ -1434,7 +1434,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --overwrite       permit replacing files in the output directory")
 	fmt.Fprintln(w, "  --no-register     disable star registration (v0.2 behaviour)")
 	fmt.Fprintln(w, "  --no-affine       disable full-affine refinement (similarity-only registration)")
-	fmt.Fprintln(w, "  --method string   stacking method: mean, median, sigma (default \"mean\")")
+	fmt.Fprintln(w, "  --method string   stacking method: mean, median, sigma (default \"sigma\")")
 	fmt.Fprintln(w, "  --dark string     path to dark frame for calibration")
 	fmt.Fprintln(w, "  --flat string     path to flat frame for calibration")
 	fmt.Fprintln(w, "  --bias string     path to bias frame for calibration")
@@ -24355,6 +24355,9 @@ func testParseArgs() error {
 			return fmt.Errorf("GaiaNside default = %d, want 64", opts.GaiaNside)
 		}
 		// The actual parser defaults must match what --help claims.
+		if opts.Method != "sigma" {
+			return fmt.Errorf("Method default = %q, want sigma", opts.Method)
+		}
 		if opts.SpikesLength != 10.0 {
 			return fmt.Errorf("SpikesLength default = %v, want 10.0", opts.SpikesLength)
 		}
