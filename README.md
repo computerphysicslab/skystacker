@@ -621,8 +621,8 @@ frames unless `--external-allow-nonlinear` is given.
 | Flag | Description | Default |
 | --- | --- | --- |
 | `--tiff` | Write optional TIFF sum output in `TIFF/` | `false` |
-| `--tiff-compression none\|packbits\|lzw\|deflate` | Compression for the new goTiff writer path | `none` |
-| `--tiff-depth 8\|16\|32f\|64f` | Sample depth for the new goTiff writer path | `32f` |
+| `--tiff-compression none\|packbits\|lzw\|deflate` | Compression for the goTiff writer (all `--tiff`/`--bigtiff` output) | `none` |
+| `--tiff-depth 8\|16\|32f\|64f` | Sample depth for the goTiff writer (all `--tiff`/`--bigtiff` output) | `32f` |
 | `--tiff-astro` | Write FITS WCS into Astro-TIFF tag 270 | `false` |
 | `--tiff-tiles` / `--tiff-predictor` | Tiled TIFF / horizontal predictor for LZW-Deflate | `false` |
 | `--fits` | Write `stacked_sum.fits` + `stacked_mean.fits` (big-endian IEEE float32, BITPIX=-32, NAXIS=3; TAN WCS when plate-solved) | `false` |
@@ -739,7 +739,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 274 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative.
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 274 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (136 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -761,11 +761,20 @@ The following capabilities have been implemented through `0.6.1`:
 - **Star catalog export**: `--export-stars FILE` emits a flux-sorted JSON/CSV list of detected stars for a single `--process-image` input, with 0-based centroids, flux, size, eccentricity and HFR. Test: `TestExportStarsFluxSorted`.
 - **Diffuse-object classification**: `--classify-objects FILE` writes a report-only JSON catalogue of star-masked components with CAS/Gini/M20 morphology and IVOA `object-type`/`src.class` labels; pipeline pixels are never modified. Test: `TestDiffuseObjectClassification`.
 - **Saturation-aware star detection**: bright stars with large saturated halos are retained via compact-core flux/compactness checks instead of the old 200-pixel cap; diffraction spikes no longer displace centroids. Tests: `TestSaturatedStarDetection`, `TestSaturatedStarWithSpikesDetection`, `TestBrightStarSurvivesFluxTruncation`.
-- **goTiff TIFF engine**: first-party `goTiff/` module with a typed API for 8/16-bit uint and 32/64-bit float samples, grayscale/RGB, classic and BigTIFF, PackBits/LZW/Deflate with horizontal prediction, multipage IFDs, Astro-TIFF tag 270 and CFA tags. SkyStacker now discovers and ingests `.tif/.tiff/.btf/.bigtiff` inputs without precision loss. Tests: `go test ./...` in `goTiff/` and `TestTIFFInputIntegration`.
+- **goTiff TIFF engine**: first-party `goTiff/` module with a typed API for 8/16-bit uint and 32/64-bit float samples, grayscale/RGB, classic and BigTIFF, PackBits/LZW/Deflate with horizontal prediction, multipage IFDs, Astro-TIFF tag 270 and CFA tags. SkyStacker discovers and ingests `.tif/.tiff/.btf/.bigtiff` inputs without precision loss; **all TIFF output (default float32 layout and optional variants) now goes through goTiff**, and Astro-TIFF WCS/CFA metadata is propagated into the frame (`--tiff-astro`). Tests: `go test ./...` in `goTiff/`, `TestTIFFInputIntegration`, `TestTIFFInputAstroMetadataPropagation`.
+- **Native CR2 robustness**: the native pure-Go CR2 path now accepts JPEG restart markers (`FF D0..D7`) and TEM streams, caps IFD entry counts and avoids full-file reads on stray `FFC3` markers. The ×2 SOF3 width is the correct Bayer width (verified on a real EOS 40D file). Bit-exact agreement with `dcraw` is still an open validation item (roadmap item 10).
 
 ---
 
 ## Planned Potential Features and Technologies Roadmap
+
+### Multi-provider code audit (2026-11-22)
+
+Five AI providers audited the serialized codebase with strict, non-rotating calls. The raw audits, a latency/length/quality comparison and a deduplicated proposal set are in `audits/`:
+
+- `audits/gemini-skystacker-audit.md`, `audits/groq-skystacker-audit.md`, `audits/grok-skystacker-audit.md`, `audits/openrouter-skystacker-audit.md`, `audits/ollama-skystacker-audit.md`
+- `audits/benchmarks.md` — grok scored highest for depth (9/10), gemini fastest (8.8 s); provider context/TPM limits required tiered bundles.
+- `audits/roadmap-update.md` — 26 consolidated candidate items, promoted to `ROADMAP.md` as Open items 111–136 with falsifiable acceptance criteria. Audit claims remain hypotheses until reproduced.
 
 ### Tier 1 — Small, self-contained (`S`)
 
@@ -809,9 +818,9 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 | Aspect | SkyStacker Position |
 | --- | --- |
 | **Distribution & Runtime** | Single cross-platform Go binary (MIT License), CLI-only, zero external runtime dependencies (aside from optional `dcraw`/`ImageMagick` for RAW decoding) |
-| **Core Stacking & Calibration** | Dark/Flat/Bias + synthetic self-flat; Mean/Median/Quality-weighted Sigma clipping; global & local per-tile normalization; end-to-end `float32` |
+| **Core Stacking & Calibration** | Dark/Flat/Bias + self-flat (registered or sensor-space grid); Mean/Median/Quality-weighted Sigma clipping; global & local per-tile normalization; end-to-end `float32` |
 | **Built-in Post-Processing** | 8-step pipeline (polynomial background extraction, star removal, STF auto-stretch, guided + chroma denoise, curves, HDR blend, weighted mixes, diffraction spikes) |
-| **Current Gaps vs. Mature Suites** | No GUI, no drizzle/mosaic, no PSF deconvolution, no GPU acceleration. Comet tracking supports pixel, RA/Dec-rate and ephemeris modes. SER/XISF/FITS output exist. SIP is applied in WCS helpers and, optionally, in the stacking resampler (`--resample-sip`) |
+| **Current Gaps vs. Mature Suites** | No GUI, no true multi-frame drizzle/mosaic (`--drizzle-upsample` is diagnostic), no per-frame astrometric reprojection, no GPU acceleration. Comet tracking supports pixel, RA/Dec-rate, ephemeris modes and comet+stars recombination. SER/XISF/FITS/BigTIFF output exist. SIP is applied in WCS helpers and, optionally, in the stacking resampler (`--resample-sip`) |
 
 See [COMPARISON.md](COMPARISON.md) for a detailed matrix comparing SkyStacker against DeepSkyStacker, Siril, Astro Pixel Processor, PixInsight, Sequator, ASTAP, IRIS, Nebulosity, MaxIm DL, AstroImageJ, Starry Landscape Stacker, and AutoStakkert!.
 
