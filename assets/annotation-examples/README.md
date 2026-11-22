@@ -44,6 +44,16 @@ regenerated with a temporary Go harness that calls `projectAnnotationSources`,
   viewers render those black-on-black) and magnitude-encoded star colours.
 - `testAnnotationMultiTileCoverage`: cached Gaia stars from every tile
   crossing the frame are unioned, de-duplicated and deterministic.
+- `testGaiaFieldTileBorderCoverage`: the 9x9 sampling grid includes all four
+  frame borders (the old half-cell offset missed right/bottom tiles).
+- `testGaiaStarsForFieldCoverage`: offline gaps are counted, an online fetch
+  fills them, star unions are deterministic and a failed fetch stays visible
+  in the coverage report.
+- `testGaiaNameCrossmatch`: every Gaia star gets a unique `Gaia J…`
+  designation; a close SIMBAD/VizieR source supplies a real name, the matched
+  catalog entry is not duplicated and proper motion is used for the epoch gap.
+- `testIRSANameFallback`: the AllWISE VOTable fallback parses designations,
+  caches them and degrades cleanly when the service is unavailable.
 - `testAnnotationRasterParity`: deterministic raster, SSIM ≥0.99 and glyph
   baselines aligned within 1 px.
 - `testLayeredAnnotationEndToEnd`: one plate-solved fixture produces SVG, PNG

@@ -325,9 +325,24 @@ func runSkyMapSVG(outputDir string, opts runOptions) error {
 	}
 	ww := sol.WCS
 	ww.SIP = sol.SIP
-	gaia := cachedGaiaStarsForField(gaiaDefaultCacheDir(), gaiaDefaultNside, &ww, w, h)
+	fetch := func(ipix int) bool {
+		if opts.GaiaOffline || !opts.GaiaMultiTile {
+			return false
+		}
+		if _, err := gaiaGetTile(gaiaDefaultCacheDir(), gaiaDefaultMirror, gaiaDefaultNside,
+			ipix, gaiaDefaultMagLimit, false, false); err != nil {
+			logf("Sky map: Gaia tile %d fetch failed: %v", ipix, err)
+			return false
+		}
+		return true
+	}
+	gaia, coverage := gaiaStarsForField(gaiaDefaultCacheDir(), gaiaDefaultNside, &ww, w, h, 9, fetch)
+	if coverage.Missing > 0 {
+		logf("Sky map: Gaia covers %d/%d frame samples (%d tiles); %d samples have no cached tile",
+			coverage.Covered, coverage.Samples, coverage.Tiles, coverage.Missing)
+	}
 	if len(gaia) == 0 {
-		logf("Sky map: no cached Gaia tiles covering the field, skipping")
+		logf("Sky map: no Gaia stars for the field, skipping")
 		return nil
 	}
 	extra, err := loadAnnotationCatalogs(opts.AnnotationCatalogs)

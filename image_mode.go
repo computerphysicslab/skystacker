@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"math"
 	"os"
@@ -16,7 +20,7 @@ import (
 )
 
 var imageOperations = []string{
-	"blur", "sharpen", "background", "stretch", "denoise", "deconvolve", "starless",
+	"resize", "blur", "sharpen", "background", "stretch", "denoise", "deconvolve", "starless",
 	"sum", "subtract", "average", "median", "min", "max",
 	"measure-transform", "measure-quality", "sky-map", "survey-cutout", "plate-solve",
 }
@@ -55,6 +59,228 @@ func loadImageFrames(paths []string) ([]*frame, error) {
 		}
 	}
 	return frames, nil
+}
+
+// expandImageInputs expands directory arguments into their discovered image
+// files, keeping explicit file paths and comma-separated lists intact. It is
+// used by --image-op resize so a whole folder can be processed in one call.
+func expandImageInputs(spec string, recursive bool) ([]string, error) {
+	parts := strings.Split(spec, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			return nil, fmt.Errorf("image input %s: %w", p, err)
+		}
+		if !info.IsDir() {
+			out = append(out, p)
+			continue
+		}
+		files, err := discoverFiles(p, recursive, nil)
+		if err != nil {
+			return nil, fmt.Errorf("scan image directory %s: %w", p, err)
+		}
+		out = append(out, files...)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("--process-image has no image files")
+	}
+	return out, nil
+}
+
+// resizeFrameArea downsamples by averaging every source pixel that falls in
+// each destination cell. Compared with nearest/bilinear sampling this avoids
+// aliasing when shrinking star fields by 2x or more.
+func resizeFrameArea(f *frame, w, h int) *frame {
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+	if f.Width == w && f.Height == h {
+		return f
+	}
+	if w > f.Width || h > f.Height {
+		return resizeFrame(f, w, h)
+	}
+	out := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3), WCS: f.WCS,
+		Nonlinear: f.Nonlinear, BayerPattern: f.BayerPattern}
+	for y := range h {
+		y0 := y * f.Height / h
+		y1 := (y + 1) * f.Height / h
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		for x := range w {
+			x0 := x * f.Width / w
+			x1 := (x + 1) * f.Width / w
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var sum [3]float64
+			for sy := y0; sy < y1 && sy < f.Height; sy++ {
+				for sx := x0; sx < x1 && sx < f.Width; sx++ {
+					i := (sy*f.Width + sx) * 3
+					sum[0] += float64(f.Pix[i])
+					sum[1] += float64(f.Pix[i+1])
+					sum[2] += float64(f.Pix[i+2])
+				}
+			}
+			count := float64((min(y1, f.Height) - y0) * (min(x1, f.Width) - x0))
+			if count <= 0 {
+				count = 1
+			}
+			o := (y*w + x) * 3
+			for c := range 3 {
+				out.Pix[o+c] = float32(sum[c] / count)
+			}
+		}
+	}
+	return out
+}
+
+// jpegMetadataSegments returns the original APP1 Exif/XMP segments so a
+// resized JPEG keeps its capture time, GPS and camera metadata.
+func jpegMetadataSegments(path string) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	buf := make([]byte, 256*1024)
+	n, _ := io.ReadFull(f, buf)
+	buf = buf[:n]
+	if len(buf) < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
+		return nil
+	}
+	var out []byte
+	for pos := 2; pos+4 <= len(buf); {
+		if buf[pos] != 0xff {
+			break
+		}
+		marker := buf[pos+1]
+		if marker == 0xda || marker == 0xd9 {
+			break
+		}
+		length := int(buf[pos+2])<<8 | int(buf[pos+3])
+		end := pos + 2 + length
+		if length < 2 || end > len(buf) {
+			break
+		}
+		if marker == 0xe1 {
+			payload := buf[pos+4 : end]
+			if (len(payload) >= 6 && string(payload[:6]) == "Exif\x00\x00") ||
+				(len(payload) >= 29 && strings.HasPrefix(string(payload[:28]), "http://ns.adobe.com/xap/1.0/")) {
+				out = append(out, buf[pos:end]...)
+			}
+		}
+		pos = end
+	}
+	return out
+}
+
+// encodeResizedImage writes a display-faithful raster (no preview gamma lift)
+// in the same format as the source path.
+func encodeResizedImage(w io.Writer, srcPath, ext string, f *frame) error {
+	img := image.NewRGBA(image.Rect(0, 0, f.Width, f.Height))
+	for y := range f.Height {
+		row := y * img.Stride
+		for x := range f.Width {
+			i := (y*f.Width + x) * 3
+			o := row + x*4
+			for c := range 3 {
+				v := f.Pix[i+c]
+				if v < 0 {
+					v = 0
+				} else if v > 1 {
+					v = 1
+				}
+				img.Pix[o+c] = uint8(v*255 + 0.5)
+			}
+			img.Pix[o+3] = 255
+		}
+	}
+	switch strings.ToLower(ext) {
+	case ".jpg", ".jpeg":
+		var body bytes.Buffer
+		if err := jpeg.Encode(&body, img, &jpeg.Options{Quality: 95}); err != nil {
+			return err
+		}
+		data := body.Bytes()
+		meta := jpegMetadataSegments(srcPath)
+		if len(meta) > 0 && len(data) >= 2 && data[0] == 0xff && data[1] == 0xd8 {
+			if _, err := w.Write(data[:2]); err != nil {
+				return err
+			}
+			if _, err := w.Write(meta); err != nil {
+				return err
+			}
+			_, err := w.Write(data[2:])
+			return err
+		}
+		_, err := w.Write(data)
+		return err
+	case ".png":
+		return png.Encode(w, img)
+	default:
+		return fmt.Errorf("resize output format %q is not supported (use jpg, jpeg or png)", ext)
+	}
+}
+
+// runResizeImages implements --image-op resize: it shrinks every input by
+// --scale without stacking and either writes <name>_resize.<ext> into
+// --image-output or, with --overwrite, replaces each original atomically.
+func runResizeImages(o *cliOptions) error {
+	paths, err := expandImageInputs(o.ProcessImage, o.Recursive)
+	if err != nil {
+		return err
+	}
+	scale := o.Scale
+	if scale < 1 {
+		return fmt.Errorf("--scale must be >= 1 for resize, got %d", scale)
+	}
+	dir := o.ImageOutput
+	if dir == "" {
+		dir = "image_processing"
+	}
+	if !o.Overwrite {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	for _, path := range paths {
+		ext := strings.ToLower(filepath.Ext(path))
+		switch ext {
+		case ".jpg", ".jpeg", ".png":
+		default:
+			return fmt.Errorf("resize does not support %s: convert it to jpg or png first", ext)
+		}
+		f, err := decodeImageFile(path, 0, 0)
+		if err != nil {
+			return fmt.Errorf("decode %s: %w", path, err)
+		}
+		w := max(1, int(math.Round(float64(f.Width)/float64(scale))))
+		h := max(1, int(math.Round(float64(f.Height)/float64(scale))))
+		small := resizeFrameArea(f, w, h)
+		dst := path
+		if !o.Overwrite {
+			stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			dst = filepath.Join(dir, stem+"_resize"+ext)
+			if _, statErr := os.Stat(dst); statErr == nil {
+				return fmt.Errorf("output %s already exists (use --overwrite to replace it)", dst)
+			}
+		}
+		if err := writeFileAtomic(dst, func(wr io.Writer) error {
+			return encodeResizedImage(wr, path, ext, small)
+		}); err != nil {
+			return fmt.Errorf("write %s: %w", dst, err)
+		}
+		logf("Image resize: %s -> %s (%dx%d -> %dx%d, scale 1/%d)",
+			filepath.Base(path), dst, f.Width, f.Height, w, h, scale)
+	}
+	return nil
 }
 
 func writeImageProduct(dir, base, op string, f *frame, meta any) error {
@@ -332,6 +558,9 @@ func runImageCommand(o *cliOptions) error {
 			return err
 		}
 		return writeStarCatalog(o.ExportStars, paths[0], f, 500)
+	}
+	if o.ImageOp == "resize" {
+		return runResizeImages(o)
 	}
 	if o.ClassifyObjects != "" {
 		f, err := decodeImageFile(paths[0], 0, 0)

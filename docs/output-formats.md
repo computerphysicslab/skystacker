@@ -129,10 +129,10 @@ min separation, null fraction, hole risk).
 | File | Producer |
 |---|---|
 | `catalog_matches.json`, `anomalies.json` | `--annotate` |
-| `stacked_sky_map.svg` | `--sky-map` (layered `<g>` groups: background, gaia-stars, extended-objects, sso-vectors, labels, footer; Gaia stars from all cached tiles crossing the frame) |
+| `stacked_sky_map.svg` | `--sky-map` (layered `<g>` groups: background, gaia-stars, extended-objects, sso-vectors, labels, footer; Gaia stars from every tile crossing the frame, fetched when online) |
 | `stacked_annotated.svg` | `--annotate --sky-map` (SVG 2, stable `<g data-layer>` groups for RA/Dec, galactic and ecliptic grids, constellations, point/extended sources with magnitude-encoded literal colours, motion vectors, scale bar, finder chart, labels and footer) |
 | `stacked_annotated.png` | `--annotate --sky-map` (same unified source model and label placement as the SVG, with anti-aliasing, halos and colour-blind-safe palettes) |
-| `annotation_provenance.json` | `--annotate --sky-map` (renderer version, frame size, layer list, source/label counts and per-source catalogue provenance/warnings) |
+| `annotation_provenance.json` | `--annotate --sky-map` (renderer version, frame size, layer list, source/label counts, per-source catalogue provenance/warnings, `gaia_coverage` and `name_matches`: `designated`/`matched` Gaia sources plus example names from SIMBAD or AllWISE; unmatched stars keep a unique `Gaia J…` designation) |
 | `survey_reference.fits/.jpg` | `--survey-cutout` |
 | `diagnostics.txt/.json` | `--diagnose`, `--diagnose-integrated` |
 | `stacked_wht.f32raw`, `stacked_ctx.u32raw` | `--wht-ctx` (per-pixel weights and 32-bit contributor mask, versioned headers) |

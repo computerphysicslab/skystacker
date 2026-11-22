@@ -13,6 +13,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"html"
 	"image"
@@ -380,32 +382,49 @@ func projectAnnotationSources(w *wcsTan, width, height int, in []annotationSourc
 	return out
 }
 
-// cachedGaiaStarsForField unions every cached Gaia tile that intersects the
-// solved frame. Reading only the tile that contains CRVAL truncates wide
-// fields: a single HEALPix tile is smaller than a typical APS-C frame, so
-// stars and extended objects near the far corners were silently missing from
-// both sky maps (demo-test.md, "Distribucion geometrica truncada").
-//
-// The frame is sampled on a 9x9 grid (including points just outside the
-// borders) and each sample is mapped to its nested HEALPix tile. Tiles are
-// visited in sorted order and stars are de-duplicated, so the result is
-// deterministic and safe to feed into the stable renderers.
-func cachedGaiaStarsForField(cacheDir string, nside int, w *wcsTan, width, height int) []gaiaStar {
-	if w == nil || nside < 1 || width <= 0 || height <= 0 {
-		return nil
+// gaiaFieldCoverage records how much of the frame is covered by cached or
+// freshly fetched Gaia tiles. It is written to annotation_provenance.json so
+// an empty rectangular region is visible instead of silent.
+type gaiaFieldCoverage struct {
+	Samples int `json:"samples"`
+	Covered int `json:"covered"`
+	Tiles   int `json:"tiles"`
+	Missing int `json:"missing"`
+}
+
+// gaiaFieldTileSamples maps every HEALPix tile intersecting the frame to the
+// number of frame samples inside it. Samples cover the full [0,width-1] x
+// [0,height-1] range inclusive; the previous 9x9 grid was shifted half a
+// cell to the left/top and could miss tiles along the right/bottom borders.
+func gaiaFieldTileSamples(w *wcsTan, width, height, nside, samples int) map[int]int {
+	counts := make(map[int]int)
+	if w == nil || nside < 1 || width <= 0 || height <= 0 || samples < 2 {
+		return counts
 	}
-	const samples = 9
-	seen := make(map[int]bool)
 	for gy := 0; gy < samples; gy++ {
 		for gx := 0; gx < samples; gx++ {
-			x := (float64(gx) - 0.5) * float64(width) / float64(samples-1)
-			y := (float64(gy) - 0.5) * float64(height) / float64(samples-1)
+			x := float64(gx) * float64(width-1) / float64(samples-1)
+			y := float64(gy) * float64(height-1) / float64(samples-1)
 			ra, dec := wcsTanInverse(w, x, y)
-			seen[healpixAng2PixNested(nside, ra, dec)] = true
+			counts[healpixAng2PixNested(nside, ra, dec)]++
 		}
 	}
-	ipixs := make([]int, 0, len(seen))
-	for ipix := range seen {
+	return counts
+}
+
+// gaiaStarsForField unions Gaia stars from every tile intersecting the frame.
+// Tiles already on disk are loaded first; when fetch is non-nil (online,
+// multi-tile mode) missing tiles are requested and then loaded. Iteration is
+// in sorted tile order and stars are de-duplicated by sky position, so the
+// result is deterministic and safe for the stable renderers.
+func gaiaStarsForField(cacheDir string, nside int, w *wcsTan, width, height, samples int, fetch func(int) bool) ([]gaiaStar, gaiaFieldCoverage) {
+	counts := gaiaFieldTileSamples(w, width, height, nside, samples)
+	cov := gaiaFieldCoverage{}
+	for _, n := range counts {
+		cov.Samples += n
+	}
+	ipixs := make([]int, 0, len(counts))
+	for ipix := range counts {
 		ipixs = append(ipixs, ipix)
 	}
 	sort.Ints(ipixs)
@@ -413,9 +432,15 @@ func cachedGaiaStarsForField(cacheDir string, nside int, w *wcsTan, width, heigh
 	dedup := make(map[string]bool)
 	for _, ipix := range ipixs {
 		tile, ok := gaiaLoadTileCache(cacheDir, nside, ipix)
+		if !ok && fetch != nil && fetch(ipix) {
+			tile, ok = gaiaLoadTileCache(cacheDir, nside, ipix)
+		}
 		if !ok {
+			cov.Missing += counts[ipix]
 			continue
 		}
+		cov.Covered += counts[ipix]
+		cov.Tiles++
 		for _, st := range tile.Stars {
 			key := fmt.Sprintf("%.9f:%.9f", st.RA, st.Dec)
 			if dedup[key] {
@@ -425,7 +450,334 @@ func cachedGaiaStarsForField(cacheDir string, nside int, w *wcsTan, width, heigh
 			out = append(out, st)
 		}
 	}
-	return out
+	return out, cov
+}
+
+// cachedGaiaStarsForField is the offline wrapper used by the legacy sky map
+// and by tests: it never touches the network.
+func cachedGaiaStarsForField(cacheDir string, nside int, w *wcsTan, width, height int) []gaiaStar {
+	stars, _ := gaiaStarsForField(cacheDir, nside, w, width, height, 9, nil)
+	return stars
+}
+
+// gaiaJDesignation builds a deterministic, unique J2000-style designation
+// from a Gaia position (RA/Dec in radians). Gaia DR3 has no human-friendly
+// proper names for the vast majority of its sources, so a coordinate-based
+// designation is always available even when no external catalog has a match.
+func gaiaJDesignation(ra, dec float64) string {
+	raDeg := math.Mod(ra*180/math.Pi+360, 360)
+	sec := int(math.Round(raDeg/15*3600)) % (24 * 3600)
+	hh, mm, ss := sec/3600, (sec%3600)/60, sec%60
+	decDeg := dec * 180 / math.Pi
+	sign := byte('+')
+	if decDeg < 0 {
+		sign = '-'
+		decDeg = -decDeg
+	}
+	dsec := int(math.Round(decDeg * 3600))
+	dd, dm, ds := dsec/3600, (dsec%3600)/60, dsec%60
+	return fmt.Sprintf("Gaia J%02d%02d%02d%c%02d%02d%02d", hh, mm, ss, sign, dd, dm, ds)
+}
+
+// annotationNameMatchReport is written to annotation_provenance.json so a
+// consumer can tell which labels came from an external catalog and which are
+// coordinate-based Gaia designations.
+type annotationNameMatchReport struct {
+	Designated int      `json:"designated"`
+	Matched    int      `json:"matched"`
+	Examples   []string `json:"examples,omitempty"`
+}
+
+// gaiaPositionAtJ2000 propagates a Gaia source from J2017.5 back to J2000 so
+// it can be compared with SIMBAD/VizieR positions using a small tolerance.
+func gaiaPositionAtJ2000(s annotationSource) (ra, dec float64) {
+	dt := 0.0
+	if s.Epoch > 0 {
+		dt = 2000.0 - s.Epoch
+	}
+	ra, dec = s.RA, s.Dec
+	cosDec := math.Cos(dec)
+	if math.Abs(cosDec) < 1e-6 || dt == 0 {
+		return ra, dec
+	}
+	ra = math.Mod(ra+(s.PMRA/cosDec)*dt*masToRad, 2*math.Pi)
+	if ra < 0 {
+		ra += 2 * math.Pi
+	}
+	return ra, dec + s.PMDec*dt*masToRad
+}
+
+// crossMatchGaiaNames replaces the generic "Gaia" label with a catalog name
+// when a star-like named source lies within tolArcsec of the epoch-corrected
+// Gaia position. Unmatched stars keep a unique Gaia J designation. Matched
+// catalog entries are removed from the output so a star is never labelled
+// twice. Matching is deterministic: closest wins, then lowest candidate ID.
+func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec float64) ([]annotationSource, annotationNameMatchReport) {
+	if tolArcsec <= 0 {
+		tolArcsec = 10
+	}
+	type candidate struct {
+		id   string
+		name string
+		ra   float64
+		dec  float64
+	}
+	candidates := make([]candidate, 0, len(sources))
+	seen := make(map[string]bool)
+	for _, s := range candidatesIn {
+		if s.Type == "gaia" || strings.TrimSpace(s.Name) == "" ||
+			isExtendedAnnotationType(s.Type) || s.Extended {
+			continue
+		}
+		key := s.ID
+		if key == "" {
+			key = s.Name
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, candidate{id: key, name: s.Name, ra: s.RA, dec: s.Dec})
+	}
+	matchedCandidate := make(map[string]bool)
+	matchedByName := make(map[string]bool)
+	report := annotationNameMatchReport{}
+	out := make([]annotationSource, 0, len(sources))
+	emitted := make(map[string]bool)
+	for _, s := range sources {
+		if s.Type != "gaia" && s.ID != "" && emitted[s.ID] {
+			continue
+		}
+		if s.ID != "" {
+			emitted[s.ID] = true
+		}
+		if s.Type == "gaia" {
+			if strings.TrimSpace(s.Name) == "" || s.Name == "Gaia" {
+				s.Name = gaiaJDesignation(s.RA, s.Dec)
+			}
+			report.Designated++
+			ra, dec := gaiaPositionAtJ2000(s)
+			pm := math.Max(math.Abs(s.PMRA), math.Abs(s.PMDec))
+			dt := 0.0
+			if s.Epoch > 0 {
+				dt = math.Abs(2000.0 - s.Epoch)
+			}
+			tol := tolArcsec + pm*dt/1000
+			if tol > 30 {
+				tol = 30
+			}
+			best := -1
+			bestSep := math.Inf(1)
+			for ci, c := range candidates {
+				if matchedCandidate[c.id] {
+					continue
+				}
+				sep := angularSeparation(ra, dec, c.ra, c.dec) * (180 / math.Pi) * 3600
+				if sep > tol {
+					continue
+				}
+				if sep < bestSep || (sep == bestSep && ci < best) {
+					best, bestSep = ci, sep
+				}
+			}
+			if best >= 0 {
+				name := candidates[best].name
+				if name != "" && !matchedByName[name] {
+					if s.Metadata == nil {
+						s.Metadata = make(map[string]string)
+					}
+					s.Metadata["gaia_designation"] = s.Name
+					s.Metadata["crossmatch_catalog"] = candidateCatalog(candidatesIn, candidates[best].id)
+					s.Metadata["crossmatch_id"] = candidates[best].id
+					s.Metadata["crossmatch_sep_arcsec"] = strconv.FormatFloat(bestSep, 'f', 2, 64)
+					s.Name = name
+					s.Provenance = annotationProvenance{
+						Catalog: "Gaia DR3 + " + candidateCatalog(candidatesIn, candidates[best].id),
+						Service: "crossmatch",
+						URL:     candidates[best].id,
+						Offline: candidateOffline(candidatesIn, candidates[best].id),
+					}
+					matchedCandidate[candidates[best].id] = true
+					matchedByName[name] = true
+					report.Matched++
+					if len(report.Examples) < 12 {
+						report.Examples = append(report.Examples, name)
+					}
+				}
+			}
+		}
+		out = append(out, s)
+	}
+	deduped := out[:0]
+	for _, s := range out {
+		if !matchedCandidate[s.ID] || s.Type == "gaia" {
+			deduped = append(deduped, s)
+		}
+	}
+	return deduped, report
+}
+
+func candidateCatalog(sources []annotationSource, id string) string {
+	for _, s := range sources {
+		if s.ID == id {
+			return s.Provenance.Catalog
+		}
+	}
+	return "catalog"
+}
+
+func candidateOffline(sources []annotationSource, id string) bool {
+	for _, s := range sources {
+		if s.ID == id {
+			return s.Provenance.Offline
+		}
+	}
+	return true
+}
+
+// acquireSIMBADNames queries the same SIMBAD TAP cone over the full imaged
+// field (rather than the small plate-solving cone) solely to obtain names for
+// the positional cross-match. Failures degrade to offline designations.
+func acquireSIMBADNames(ctx context.Context, cacheDir, simbadURL string, raDeg, decDeg, radiusArcsec float64, timeout time.Duration) ([]annotationSource, annotationProvenance, error) {
+	if radiusArcsec <= 0 {
+		radiusArcsec = 60
+	}
+	key := fmt.Sprintf("simbad|%.6f|%.6f|%.1f", raDeg, decDeg, radiusArcsec)
+	path := annotationCacheFile(cacheDir, key)
+	var sources []annotationSource
+	if annotationReadCache(path, &sources) {
+		return sources, annotationProvenance{Catalog: "SIMBAD", Service: "cache", Offline: true, URL: path}, nil
+	}
+	sources, truncated, err := simbadTAPCone(ctx, simbadURL, raDeg, decDeg, radiusArcsec, timeout)
+	if err != nil {
+		return nil, annotationProvenance{Catalog: "SIMBAD", Service: "name-lookup", Offline: true}, err
+	}
+	if path != "" {
+		if data, mErr := json.Marshal(sources); mErr == nil {
+			os.MkdirAll(filepath.Dir(path), 0o755)
+			_ = os.WriteFile(path, data, 0o644)
+		}
+	}
+	return sources, annotationProvenance{Catalog: "SIMBAD", Service: "name-lookup",
+		URL: simbadURL, Retrieved: time.Now().UTC().Format(time.RFC3339), Truncated: truncated}, nil
+}
+
+// acquireIRSANames queries the AllWISE TAP cone as a name-source fallback when
+// SIMBAD is unavailable. AllWISE designations are catalog identifiers rather
+// than proper names, but they still give each matched Gaia star a meaningful,
+// externally resolvable label instead of the generic "Gaia".
+func acquireIRSANames(ctx context.Context, cacheDir, baseURL string, raDeg, decDeg, radiusArcsec float64, timeout time.Duration) ([]annotationSource, annotationProvenance, error) {
+	if radiusArcsec <= 0 {
+		radiusArcsec = 60
+	}
+	if radiusArcsec > 3600 {
+		radiusArcsec = 3600
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	key := fmt.Sprintf("irsa-names|%.6f|%.6f|%.1f", raDeg, decDeg, radiusArcsec)
+	path := annotationCacheFile(cacheDir, key)
+	var sources []annotationSource
+	if annotationReadCache(path, &sources) {
+		return sources, annotationProvenance{Catalog: "AllWISE", Service: "cache", Offline: true, URL: path}, nil
+	}
+	if baseURL == "" {
+		baseURL = "https://irsa.ipac.caltech.edu/TAP/sync"
+	}
+	query := fmt.Sprintf("SELECT TOP 5000 ra, dec, designation AS name FROM allwise_p3as_psd "+
+		"WHERE CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',%g,%g,%g))=1",
+		raDeg, decDeg, radiusArcsec/3600)
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, annotationProvenance{}, err
+	}
+	q := u.Query()
+	q.Set("REQUEST", "doQuery")
+	q.Set("LANG", "ADQL")
+	q.Set("FORMAT", "votable")
+	q.Set("MAXREC", "5000")
+	q.Set("QUERY", query)
+	u.RawQuery = q.Encode()
+	data, err := astrometryHTTPRequest(&http.Client{}, http.MethodGet, u.String(), nil, "", "", timeout)
+	if err != nil {
+		return nil, annotationProvenance{Catalog: "AllWISE", Service: "irsa-tap", Offline: true}, err
+	}
+	var table coneVOTable
+	if err := xml.Unmarshal(data, &table); err != nil {
+		return nil, annotationProvenance{Catalog: "AllWISE", Service: "irsa-tap", Offline: true},
+			fmt.Errorf("AllWISE VOTable: %w", err)
+	}
+	col := func(keys ...string) int {
+		for _, key := range keys {
+			for i, f := range table.Fields {
+				if strings.Contains(strings.ToLower(f.Name), key) {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	iRA, iDec, iName := col("ra"), col("dec"), col("name", "designation")
+	if iRA < 0 || iDec < 0 || iName < 0 {
+		return nil, annotationProvenance{Catalog: "AllWISE", Service: "irsa-tap", Offline: true},
+			errors.New("AllWISE VOTable has no ra/dec/designation columns")
+	}
+	prov := annotationProvenance{Catalog: "AllWISE", Service: "irsa-tap", URL: baseURL,
+		Retrieved: time.Now().UTC().Format(time.RFC3339), Truncated: len(table.Rows) >= 5000}
+	sources = make([]annotationSource, 0, len(table.Rows))
+	for _, row := range table.Rows {
+		if iRA >= len(row.Cells) || iDec >= len(row.Cells) || iName >= len(row.Cells) {
+			continue
+		}
+		ra, e1 := strconv.ParseFloat(strings.TrimSpace(row.Cells[iRA]), 64)
+		dec, e2 := strconv.ParseFloat(strings.TrimSpace(row.Cells[iDec]), 64)
+		if e1 != nil || e2 != nil {
+			continue
+		}
+		name := strings.TrimSpace(row.Cells[iName])
+		if name == "" {
+			continue
+		}
+		sources = append(sources, annotationSource{
+			ID: "irsa-" + name, Name: "WISE " + name, Type: "star", RA: ra * math.Pi / 180,
+			Dec: dec * math.Pi / 180, Priority: 70, Provenance: prov,
+		})
+	}
+	if path != "" {
+		if data, mErr := json.Marshal(sources); mErr == nil {
+			os.MkdirAll(filepath.Dir(path), 0o755)
+			_ = os.WriteFile(path, data, 0o644)
+		}
+	}
+	return sources, prov, nil
+}
+
+// wcsFieldRadiusArcsec estimates the angular radius of the imaged field from
+// its WCS corners; it is used to size the SIMBAD name-lookup cone.
+func wcsFieldRadiusArcsec(w *wcsTan, width, height int) float64 {
+	if w == nil || width <= 0 || height <= 0 {
+		return 0
+	}
+	points := [][2]float64{{0, 0}, {float64(width), 0}, {0, float64(height)},
+		{float64(width), float64(height)}, {float64(width) / 2, 0},
+		{float64(width) / 2, float64(height)}, {0, float64(height) / 2},
+		{float64(width), float64(height) / 2}}
+	maxSep := 0.0
+	for _, p := range points {
+		ra, dec := wcsTanInverseSIP(w, p[0], p[1])
+		if sep := angularSeparation(w.CRVAL1, w.CRVAL2, ra, dec); sep > maxSep {
+			maxSep = sep
+		}
+	}
+	arcsec := maxSep * 180 / math.Pi * 3600
+	if arcsec < 60 {
+		return 60
+	}
+	if arcsec > 3600 {
+		return 3600
+	}
+	return arcsec
 }
 
 // annotationLabelFields returns the label string of a source using the
@@ -1540,16 +1892,18 @@ func parseAnnotationLayers(spec string) []string {
 // raster products. It records the exact model, layers and sources used so a
 // downstream consumer can audit or reproduce the annotation.
 type layeredAnnotationReport struct {
-	Version    string                 `json:"version"`
-	Width      int                    `json:"width"`
-	Height     int                    `json:"height"`
-	Sources    int                    `json:"sources"`
-	Labels     int                    `json:"labels"`
-	Layers     []string               `json:"layers"`
-	SVG        string                 `json:"svg"`
-	Raster     string                 `json:"raster"`
-	Provenance []annotationProvenance `json:"provenance"`
-	Warnings   []string               `json:"warnings,omitempty"`
+	Version      string                     `json:"version"`
+	Width        int                        `json:"width"`
+	Height       int                        `json:"height"`
+	Sources      int                        `json:"sources"`
+	Labels       int                        `json:"labels"`
+	Layers       []string                   `json:"layers"`
+	SVG          string                     `json:"svg"`
+	Raster       string                     `json:"raster"`
+	Provenance   []annotationProvenance     `json:"provenance"`
+	Warnings     []string                   `json:"warnings,omitempty"`
+	GaiaCoverage *gaiaFieldCoverage         `json:"gaia_coverage,omitempty"`
+	NameMatches  *annotationNameMatchReport `json:"name_matches,omitempty"`
 }
 
 // annotationBaseImage loads the stacked JPEG as RGBA. A missing or invalid
@@ -1629,10 +1983,80 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 	bundle := offlineAnnotationBundle()
 	sources := append([]annotationSource(nil), acq.Sources...)
 
+	// Name cross-match. "auto" queries SIMBAD over the full field only when
+	// the run is online and --annotation-vo did not already request SIMBAD;
+	// "simbad" forces the lookup and "off" keeps coordinate designations.
+	nameMode := strings.ToLower(strings.TrimSpace(opts.AnnotationNames))
+	if nameMode == "" {
+		nameMode = "auto"
+	}
+	var nameSources []annotationSource
+	if nameMode == "irsa" && !opts.GaiaOffline {
+		radius := wcsFieldRadiusArcsec(&ww, w, h)
+		found, irsaProv, ierr := acquireIRSANames(context.Background(), acqOpts.CacheDir,
+			"", acqOpts.RADeg, acqOpts.DecDeg, radius, acqOpts.Timeout)
+		acq.Provenance = append(acq.Provenance, irsaProv)
+		if ierr != nil {
+			acq.Warnings = append(acq.Warnings, redactAnnotationError("AllWISE name lookup: "+ierr.Error()))
+			logf("Layered annotation: AllWISE name lookup failed: %v", ierr)
+		} else {
+			nameSources = found
+		}
+	} else if nameMode != "off" && !opts.GaiaOffline {
+		hasSIMBAD := false
+		for _, svc := range acqOpts.Services {
+			if svc == "simbad" {
+				hasSIMBAD = true
+			}
+		}
+		if nameMode == "simbad" || !hasSIMBAD {
+			radius := wcsFieldRadiusArcsec(&ww, w, h)
+			found, prov, nerr := acquireSIMBADNames(context.Background(), acqOpts.CacheDir,
+				"", acqOpts.RADeg, acqOpts.DecDeg, radius, acqOpts.Timeout)
+			acq.Provenance = append(acq.Provenance, prov)
+			if nerr != nil {
+				acq.Warnings = append(acq.Warnings, redactAnnotationError("SIMBAD name lookup: "+nerr.Error()))
+				logf("Layered annotation: SIMBAD name lookup failed: %v", nerr)
+			} else {
+				nameSources = found
+			}
+			if nerr != nil || len(nameSources) == 0 {
+				fallback, irsaProv, ierr := acquireIRSANames(context.Background(), acqOpts.CacheDir,
+					"", acqOpts.RADeg, acqOpts.DecDeg, radius, acqOpts.Timeout)
+				acq.Provenance = append(acq.Provenance, irsaProv)
+				if ierr != nil {
+					acq.Warnings = append(acq.Warnings, redactAnnotationError("AllWISE name lookup: "+ierr.Error()))
+					logf("Layered annotation: AllWISE name lookup failed: %v", ierr)
+				} else {
+					nameSources = fallback
+				}
+			}
+		}
+	}
+
 	// Cached Gaia stars carry epoch and proper motion, so they enrich the
-	// unified model rather than bypassing it. Union all cached tiles crossing
-	// the frame so wide fields are not truncated at one HEALPix tile.
-	for _, st := range cachedGaiaStarsForField(gaiaDefaultCacheDir(), gaiaDefaultNside, &ww, w, h) {
+	// unified model rather than bypassing it. Union every tile crossing the
+	// frame; in online multi-tile mode fetch the missing ones so an empty
+	// rectangular edge cannot be left without catalogue stars.
+	fetch := func(ipix int) bool {
+		if opts.GaiaOffline || !opts.GaiaMultiTile {
+			return false
+		}
+		if _, err := gaiaGetTile(gaiaDefaultCacheDir(), gaiaDefaultMirror, gaiaDefaultNside,
+			ipix, gaiaDefaultMagLimit, false, false); err != nil {
+			logf("Layered annotation: Gaia tile %d fetch failed: %v", ipix, err)
+			return false
+		}
+		return true
+	}
+	gaiaStars, coverage := gaiaStarsForField(gaiaDefaultCacheDir(), gaiaDefaultNside, &ww, w, h, 9, fetch)
+	if coverage.Missing > 0 {
+		logf("Layered annotation: Gaia covers %d/%d frame samples (%d tiles); %d samples have no cached tile",
+			coverage.Covered, coverage.Samples, coverage.Tiles, coverage.Missing)
+		acq.Warnings = append(acq.Warnings, fmt.Sprintf(
+			"Gaia catalogue coverage %d/%d frame samples; %d samples lack a tile", coverage.Covered, coverage.Samples, coverage.Missing))
+	}
+	for _, st := range gaiaStars {
 		sources = append(sources, annotationSource{
 			ID: fmt.Sprintf("gaia-%.6f-%.6f", st.RA, st.Dec), Name: "Gaia", Type: "gaia",
 			RA: st.RA, Dec: st.Dec, Band: "G", Mag: st.MagG, Epoch: gaiaReferenceYear,
@@ -1647,6 +2071,19 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 	for _, e := range extra {
 		sources = append(sources, annotationFromCatalogEntry(e, "annotation-catalog"))
 	}
+
+	nameCandidates := append(append([]annotationSource(nil), acq.Sources...), nameSources...)
+	var nameMatch annotationNameMatchReport
+	sources, nameMatch = crossMatchGaiaNames(sources, nameCandidates, 10)
+	if nameMatch.Matched > 0 {
+		acq.Provenance = append(acq.Provenance, annotationProvenance{
+			Catalog: "Gaia DR3 positional cross-match", Service: "name-crossmatch",
+			Offline: nameMode == "off" || opts.GaiaOffline,
+			URL:     fmt.Sprintf("%d/%d matched", nameMatch.Matched, nameMatch.Designated),
+		})
+	}
+	logf("Layered annotation: named %d/%d Gaia sources (%s)", nameMatch.Matched,
+		nameMatch.Designated, nameMode)
 	sources = projectAnnotationSources(&ww, w, h, sources)
 
 	var vectors []skyVelocityVector
@@ -1681,16 +2118,18 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 		return err
 	}
 	report := layeredAnnotationReport{
-		Version:    bundle.Version,
-		Width:      w,
-		Height:     h,
-		Sources:    len(sources),
-		Labels:     len(labels),
-		Layers:     layers,
-		SVG:        filepath.Base(svgPath),
-		Raster:     filepath.Base(pngPath),
-		Provenance: acq.Provenance,
-		Warnings:   acq.Warnings,
+		Version:      bundle.Version,
+		Width:        w,
+		Height:       h,
+		Sources:      len(sources),
+		Labels:       len(labels),
+		Layers:       layers,
+		SVG:          filepath.Base(svgPath),
+		Raster:       filepath.Base(pngPath),
+		Provenance:   acq.Provenance,
+		Warnings:     acq.Warnings,
+		GaiaCoverage: &coverage,
+		NameMatches:  &nameMatch,
 	}
 	if err := writeJSON(filepath.Join(outputDir, "annotation_provenance.json"), report); err != nil {
 		return err

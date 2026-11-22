@@ -55,10 +55,28 @@ skystacker --process-image a.jpg,b.jpg --image-op sum --image-output /tmp/ops
 skystacker --process-image photo.jpg --image-op measure-quality --image-output /tmp/ops
 ```
 
-Operations: `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`,
-`starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`,
+Operations: `resize`, `blur`, `sharpen`, `background`, `stretch`, `denoise`,
+`deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`,
 `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`,
-`plate-solve`. Inputs are never modified.
+`plate-solve`. All of them leave the inputs untouched except `resize --overwrite`.
+
+### Downscale images (resize)
+
+`resize` uses area averaging (no aliasing) and keeps the source format. It
+accepts files, a comma-separated list or a whole directory; `--scale N` means
+1/N in each dimension. JPG output keeps the original APP1 Exif/XMP metadata.
+
+```bash
+# Copies: <name>_resize.jpg in /tmp/resized
+skystacker --process-image assets/2024-08-07-Riofrio-M31-refr150   --image-op resize --scale 3 --image-output /tmp/resized
+
+# In place (atomic replacement of every JPG in the folder)
+skystacker --process-image assets/2024-08-07-Riofrio-M31-refr150   --image-op resize --scale 3 --overwrite
+```
+
+6000x4000 lights become 2000x1333 at `--scale 3`. Make a backup before an
+in-place run; without `--overwrite` an existing output is refused rather than
+silently replaced.
 
 ## Reproducibility
 

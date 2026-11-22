@@ -18,7 +18,7 @@ Astro-TIFF tag 270 and CFA metadata.
 | `--output DIR` | `<input>/0_skystacker_results` | Product directory. |
 | `--workers N` | `NumCPU` | Maximum concurrent workers. |
 | `--recursive` | off | Search subdirectories. |
-| `--overwrite` | off | Permit replacing files in the output directory. |
+| `--overwrite` | off | Permit replacing files in the output directory; for `--image-op resize` it replaces the source files atomically instead of writing copies. |
 | `--limit N` | `0` | Process at most N discovered frames. |
 | `--include-list FILE` | — | Keep only paths/names listed in FILE (`#` comments allowed). |
 | `--reference-crop IMAGE` | — | Warp every light into this image's pixel frame. |
@@ -88,7 +88,8 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--archive-adapters LIST` / `--mast-token TOKEN` | — | Opt-in MAST/ESASky/IRSA MOST queries with row limits and token handling. |
 | `--gaia-nside N` / `--gaia-mag-limit M` | `64` / `14.0` | Tile resolution and magnitude limit. |
 | `--gaia-offline` / `--gaia-cache-refresh` | off | Offline mode / forced refresh. |
-| `--gaia-multitile` (default on) / `--no-gaia-multitile` | on | Grow the seeded Gaia catalogue from all cached tiles around the pointing. |
+| `--gaia-multitile` (default on) / `--no-gaia-multitile` | on | Grow the seeded Gaia catalogue from every tile around the pointing; online runs fetch missing tiles for both sky maps and layered annotations. `--gaia-offline` restricts this to cached tiles and the coverage gap is reported in `annotation_provenance.json`. |
+| `--force` | off | Skip the RAM and disk pre-flight guards (not recommended). The RAM guard now models both reduction sets for `median`/`sigma`; the run ends with a `measured peak RSS` line for calibration. |
 | `--blind-detrend` | off | Detrended, HFD-filtered star extraction for blind solves on processed frames. |
 | `--gaia-loose-match` | off | Relax matcher thresholds for processed images (8 arcsec, 1/8 of top stars). |
 | `--resample-sip` | off | Apply stored SIP in the stacking resampler. |
@@ -96,6 +97,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--annotation-catalogs LIST` | — | Extra JSON catalogues. |
 | `--annotation-layers LIST` | all | Comma-separated SVG 2 layers (`grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, plus aliases). |
 | `--annotation-vo LIST` | — | Optional SIMBAD/VizieR cone queries for layered annotations; offline bundle by default. |
+| `--annotation-names MODE` | `auto` | Gaia labels: `auto` (SIMBAD full-field query, AllWISE/IRSA fallback), `simbad`, `irsa` or `off` (unique `Gaia J…` designations only). |
 | `--annotation-cache DIR` | Gaia cache dir | Disk cache for VO annotation queries. |
 | `--sso-ephemeris FILE` | — | MPC-style SSO ephemeris with site header and mandatory `DATE-OBS`; velocity-vector layer. |
 | `--cone-catalog NAME` / `--cone-radius N` | — / `60` | SDSS/IRSA/VizieR cone search (arcsec). |
@@ -159,8 +161,8 @@ See [post-processing.md](post-processing.md).
 
 | Flag | Default | Description |
 |---|---|---|
-| `--process-image PATH[,PATH...]` | — | Process existing images without stacking. |
-| `--image-op OP` | — | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve`. |
+| `--process-image PATH[,PATH...]` | — | Process existing images without stacking; `resize` accepts a directory (use `--recursive` to include subfolders). |
+| `--image-op OP` | — | `resize`, `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve`. |
 | `--image-output DIR` | `image_processing` | Output directory. |
 | `--export-stars FILE` | — | Export detected stars of `--process-image` as flux-sorted JSON/CSV; no `--image-op` required. |
 | `--export-votable FILE` | — | Export cone/annotation catalogs as VOTable 1.3 BINARY2. |

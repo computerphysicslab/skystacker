@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -206,6 +207,102 @@ func testAnnotationVO() error {
 	return nil
 }
 
+// testGaiaNameCrossmatch covers the label-name path: every Gaia star gets a
+// unique coordinate designation and a close catalog source replaces it with a
+// real name, with the matched catalog entry removed so labels do not duplicate.
+func testGaiaNameCrossmatch() error {
+	deg := math.Pi / 180
+	gaia := annotationSource{
+		ID: "gaia-near", Name: "Gaia", Type: "gaia", RA: 10.5 * deg, Dec: 41.2 * deg,
+		Mag: 12, Epoch: gaiaReferenceYear, Priority: 40,
+	}
+	farGaia := annotationSource{
+		ID: "gaia-far", Name: "Gaia", Type: "gaia", RA: 10.6 * deg, Dec: 41.2 * deg,
+		Mag: 13, Epoch: gaiaReferenceYear, Priority: 40,
+	}
+	named := annotationSource{
+		ID: "simbad-TEST", Name: "TEST STAR", Type: "star", RA: 10.5 * deg,
+		Dec: 41.2 * deg, Priority: 75,
+		Provenance: annotationProvenance{Catalog: "SIMBAD", Service: "simbad-tap"},
+	}
+	other := annotationSource{
+		ID: "simbad-OTHER", Name: "OTHER", Type: "star", RA: 11.5 * deg,
+		Dec: 41.2 * deg, Priority: 75,
+		Provenance: annotationProvenance{Catalog: "SIMBAD", Service: "simbad-tap"},
+	}
+	out, report := crossMatchGaiaNames(
+		[]annotationSource{gaia, farGaia},
+		[]annotationSource{named, other}, 10)
+	if report.Designated != 2 || report.Matched != 1 {
+		return fmt.Errorf("crossmatch report %+v", report)
+	}
+	var nearName, farName string
+	removedNamed, addedCandidates := true, false
+	for _, s := range out {
+		switch s.ID {
+		case "gaia-near":
+			nearName = s.Name
+			if s.Metadata["crossmatch_catalog"] != "SIMBAD" ||
+				s.Metadata["crossmatch_id"] != "simbad-TEST" {
+				return fmt.Errorf("crossmatch metadata missing: %+v", s.Metadata)
+			}
+		case "gaia-far":
+			farName = s.Name
+		case "simbad-TEST":
+			removedNamed = false
+		case "simbad-OTHER":
+			addedCandidates = true
+		}
+	}
+	if nearName != "TEST STAR" || !strings.HasPrefix(farName, "Gaia J") {
+		return fmt.Errorf("labels near=%q far=%q", nearName, farName)
+	}
+	if !removedNamed || addedCandidates {
+		return fmt.Errorf("catalog candidates leaked into output: removed=%v added=%v", removedNamed, addedCandidates)
+	}
+	d1 := gaiaJDesignation(10.5*deg, 41.2*deg)
+	d2 := gaiaJDesignation(10.5*deg+1e-4, 41.2*deg) // ~20 arcsec away
+	if d1 == d2 || !strings.HasPrefix(d1, "Gaia J") {
+		return fmt.Errorf("designations not unique: %q %q", d1, d2)
+	}
+	return nil
+}
+
+// testIRSANameFallback covers the AllWISE name catalogue used when SIMBAD is
+// unreachable: VOTable parsing, cache reuse and graceful HTTP failure.
+func testIRSANameFallback() error {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<?xml version="1.0"?><VOTABLE><RESOURCE><TABLE>`+
+			`<FIELD name="ra"/><FIELD name="dec"/><FIELD name="designation"/>`+
+			`<DATA><TABLEDATA><TR><TD>10.5</TD><TD>41.2</TD><TD>J004200.00+411200.0</TD></TR>`+
+			`<TR><TD>11.5</TD><TD>41.2</TD><TD>J004600.00+411200.0</TD></TR></TABLEDATA></DATA>`+
+			`</TABLE></RESOURCE></VOTABLE>`)
+	}))
+	defer server.Close()
+	dir, err := os.MkdirTemp("", "skystacker-irsa-names-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	sources, prov, err := acquireIRSANames(context.Background(), dir, server.URL,
+		10.7, 41.3, 1800, 2*time.Second)
+	if err != nil || len(sources) != 2 || prov.Service != "irsa-tap" {
+		return fmt.Errorf("IRSA names: %d sources, prov=%+v err=%v", len(sources), prov, err)
+	}
+	if sources[0].ID != "irsa-J004200.00+411200.0" ||
+		sources[0].Name != "WISE J004200.00+411200.0" ||
+		math.Abs(sources[0].RA-10.5*math.Pi/180) > 1e-9 {
+		return fmt.Errorf("IRSA source misparsed: %+v", sources[0])
+	}
+	server.Close()
+	cached, cachedProv, err := acquireIRSANames(context.Background(), dir, server.URL,
+		10.7, 41.3, 1800, time.Second)
+	if err != nil || len(cached) != 2 || !cachedProv.Offline {
+		return fmt.Errorf("IRSA cache reuse: %d sources, prov=%+v err=%v", len(cached), cachedProv, err)
+	}
+	return nil
+}
+
 func offlineAnnotationBundleSize() int { return len(offlineAnnotationBundle().Sources) }
 
 // testAnnotationPlacement covers item 141: zero overlaps in 20 deterministic
@@ -373,6 +470,133 @@ func testAnnotationMultiTileCoverage() error {
 	again := cachedGaiaStarsForField(dir, nside, w, 512, 512)
 	if len(again) != 2 || stars[0].RA != again[0].RA || stars[1].RA != again[1].RA {
 		return errors.New("multi-tile union is not deterministic")
+	}
+	return nil
+}
+
+// testGaiaFieldTileSamplesCoversBorders reproduces the empty-rectangle bug:
+// the old 9x9 sampling grid was shifted half a cell, so tiles touching the
+// right/bottom borders were never visited. Every frame corner must now map to
+// a sampled tile.
+func testGaiaFieldTileSamplesCoversBorders() error {
+	const n = 512
+	nside := 32
+	w := rotatedWCS(10*math.Pi/180, 41*math.Pi/180, 60, 23, false)
+	counts := gaiaFieldTileSamples(w, n, n, nside, 9)
+	total := 0
+	for _, v := range counts {
+		total += v
+	}
+	if total != 81 {
+		return fmt.Errorf("tile samples: got %d samples, want 81", total)
+	}
+	for _, p := range []struct{ x, y float64 }{{0, 0}, {n - 1, 0}, {0, n - 1}, {n - 1, n - 1}} {
+		ra, dec := wcsTanInverse(w, p.x, p.y)
+		ipix := healpixAng2PixNested(nside, ra, dec)
+		if counts[ipix] == 0 {
+			return fmt.Errorf("border pixel (%.0f,%.0f) tile %d is not sampled: %v", p.x, p.y, ipix, counts)
+		}
+	}
+	if len(counts) < 2 {
+		return fmt.Errorf("wide frame sampled only %d tile; want at least 2", len(counts))
+	}
+	return nil
+}
+
+// testGaiaStarsForFieldCoverage checks the full coverage contract: missing
+// tiles are counted (so an empty region is reported, not silent), an online
+// fetch fills them, stars are de-duplicated and tile order is deterministic.
+func testGaiaStarsForFieldCoverage() error {
+	dir, err := os.MkdirTemp("", "skystacker-ann-coverage-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	const n = 512
+	nside := 32
+	w := rotatedWCS(10*math.Pi/180, 41*math.Pi/180, 60, 23, false)
+	counts := gaiaFieldTileSamples(w, n, n, nside, 9)
+	ipixs := make([]int, 0, len(counts))
+	for ipix := range counts {
+		ipixs = append(ipixs, ipix)
+	}
+	sort.Ints(ipixs)
+	if len(ipixs) < 2 {
+		return errors.New("fixture frame must cross at least two tiles")
+	}
+	// One representative sky position per tile; the first tile's star is
+	// intentionally repeated in another tile to exercise de-duplication.
+	starAt := make(map[int]gaiaStar, len(ipixs))
+	for _, ipix := range ipixs {
+		for gy := 0; gy < 9; gy++ {
+			for gx := 0; gx < 9; gx++ {
+				x := float64(gx) * float64(n-1) / 8
+				y := float64(gy) * float64(n-1) / 8
+				ra, dec := wcsTanInverse(w, x, y)
+				if healpixAng2PixNested(nside, ra, dec) == ipix {
+					starAt[ipix] = gaiaStar{RA: ra, Dec: dec, MagG: 8 + float64(ipix%5)}
+					gy, gx = 9, 9
+				}
+			}
+		}
+	}
+	writeTile := func(ipix int, stars ...gaiaStar) error {
+		return gaiaSaveTileCache(dir, gaiaTile{Version: gaiaCacheVersion, Nside: nside, Ipix: ipix, Stars: stars})
+	}
+	if err := writeTile(ipixs[0], starAt[ipixs[0]]); err != nil {
+		return err
+	}
+
+	// Offline: only the cached tile contributes, and the gap is measurable.
+	offlineStars, offline := gaiaStarsForField(dir, nside, w, n, n, 9, nil)
+	if offline.Tiles != 1 || offline.Missing == 0 || offline.Covered+offline.Missing != 81 {
+		return fmt.Errorf("offline coverage %+v, want 1 tile and a reported gap", offline)
+	}
+	if len(offlineStars) != 1 {
+		return fmt.Errorf("offline stars: got %d, want 1", len(offlineStars))
+	}
+
+	// Online: fetch every missing tile; one tile repeats the first star.
+	fetched := make(map[int]bool)
+	fetch := func(ipix int) bool {
+		fetched[ipix] = true
+		stars := []gaiaStar{starAt[ipix]}
+		if ipix == ipixs[len(ipixs)-1] {
+			stars = append(stars, starAt[ipixs[0]])
+		}
+		if err := writeTile(ipix, stars...); err != nil {
+			return false
+		}
+		return true
+	}
+	stars, cov := gaiaStarsForField(dir, nside, w, n, n, 9, fetch)
+	if cov.Missing != 0 || cov.Tiles != len(ipixs) || cov.Covered != 81 {
+		return fmt.Errorf("online coverage %+v for %d tiles", cov, len(ipixs))
+	}
+	if len(fetched) != len(ipixs)-1 {
+		return fmt.Errorf("fetch called for %d tiles, want %d", len(fetched), len(ipixs)-1)
+	}
+	if len(stars) != len(ipixs) {
+		return fmt.Errorf("union: got %d stars after de-duplication, want %d", len(stars), len(ipixs))
+	}
+	again, cov2 := gaiaStarsForField(dir, nside, w, n, n, 9, nil)
+	if cov2 != cov || len(again) != len(stars) {
+		return fmt.Errorf("coverage/stars changed after fetch: %+v / %+v", cov, cov2)
+	}
+	for i := range stars {
+		if again[i].RA != stars[i].RA || again[i].Dec != stars[i].Dec {
+			return errors.New("tile union is not deterministic")
+		}
+	}
+
+	// A failed fetch must leave the gap visible in the coverage report.
+	missingTile := ipixs[len(ipixs)-1]
+	if err := os.Remove(gaiaTileCachePath(dir, nside, missingTile)); err != nil {
+		return err
+	}
+	partial, partialCov := gaiaStarsForField(dir, nside, w, n, n, 9, func(int) bool { return false })
+	if partialCov.Missing == 0 || len(partial) >= len(stars) {
+		return fmt.Errorf("failed fetch hidden: coverage %+v, stars %d", partialCov, len(partial))
 	}
 	return nil
 }

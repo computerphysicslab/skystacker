@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-22 · **Current state:** v0.6.1, 281 registered self-tests,
+**Updated:** 2026-11-22 · **Current state:** v0.6.1, 287 registered self-tests,
 Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
@@ -9,9 +9,10 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-22):** 96 Done · 29 Open · 7 Blocked · 5 Executed/not accepted
+**Summary (2026-11-22):** 97 Done · 29 Open · 7 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 137–141 and 143 were closed on 2026-11-22 with the layered
-annotation subsystem; item 142 stays Blocked by item 13 and goal 144 stays Open.
+annotation subsystem; item 145 (standalone `resize`) was closed the same day;
+item 142 stays Blocked by item 13 and goal 144 stays Open.
 Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
 items 104 and 105 were investigated the same day and **closed as false
@@ -44,7 +45,7 @@ already-tracked and explicitly rejected proposals were removed during
 integration. Acceptance criteria are falsifiable and still require
 verification before implementation.
 
-## Issue tracker — 144 items (ordered by effort)
+## Issue tracker — 145 items (ordered by effort)
 
 The tracker is split into **not achieved** (Open, Blocked and Executed/not accepted) and **achieved** (Done) items. Deferred and explicitly rejected work is listed in its own section below. Within each table, rows are ordered by ascending effort.
 
@@ -55,11 +56,12 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 144 | **GOAL: state-of-the-art layered SVG + annotated image from any plate-solved astronomical image** | XL (~30 h, phased via 137–143) | **Open** | research/02-astrometry-and-identification.md | Given any plate-solved FITS/Astro-TIFF/TIFF image, one CLI invocation produces a layered SVG 2 overlay (grids, catalogs, object shapes, SSO vectors, labels, finder chart) and a matching anti-aliased raster annotated image, with offline/online catalog provenance, deterministic label placement and ≤0.5 px alignment; validated on the vendor-style example corpus and synthetic fixtures. Sub-items 137–143 are the ordered delivery path; this umbrella item closes only when all of them are Done. |
 | 137 | **Unified annotation data model + offline catalog bundle** | M (~3 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A single `AnnotationSource` type (provenance, RA/Dec + error, band/mag, axes/PA, epoch/PM, label priority, metadata) is used by both SVG and raster renderers. A small offline catalog (bright stars, Messier/NGC/IC, LDN/Sh2, constellation lines) loads in `--offline` mode with <2 MB memory; golden JSON test asserts ≥95% of a synthetic field is annotated. |
 | 138 | **VO catalog acquisition with cache and provenance** | M (~4 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | Online SIMBAD/TAP + VizieR cone queries with on-disk cache, deterministic offline fallback, redacted errors and per-source provenance in the report; a mock server test covers success, timeout, truncation and cache reuse. |
-| 139 | **Layered SVG 2 overlay (grids, constellations, finder chart)** | L (~6 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `stacked_annotated.svg` validates as SVG 2, emits stable `<g data-layer>` groups for RA/Dec + galactic + ecliptic grids, constellation borders/lines, point sources, extended objects, SSO vectors, scale bar, finding-chart inset and accessible `<title>/<desc>`; file size ≤2 MiB for 10k sources. Renderer-safe literal colours encode magnitude; every cached Gaia tile crossing the frame is unioned and de-duplicated. |
+| 139 | **Layered SVG 2 overlay (grids, constellations, finder chart)** | L (~6 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `stacked_annotated.svg` validates as SVG 2, emits stable `<g data-layer>` groups for RA/Dec + galactic + ecliptic grids, constellation borders/lines, point sources, extended objects, SSO vectors, scale bar, finding-chart inset and accessible `<title>/<desc>`; file size ≤2 MiB for 10k sources. Renderer-safe literal colours encode magnitude; every Gaia tile crossing the frame is unioned and de-duplicated, fetched when online, and any gap is reported as `gaia_coverage` in the provenance report. |
 | 140 | **Raster annotated image from the same model (SVG↔raster parity)** | L (~6 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `stacked_annotated.png/.jpg` is rendered from the exact `AnnotationSource` list and placement output as the SVG, with anti-aliasing, label halos and colour-blind-safe palettes; golden fixture reaches SSIM ≥0.99 and glyph positions within 1 px of the SVG. |
 | 141 | **Deterministic label placement engine** | M (~4 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | Greedy priority placement with a spatial index plus force-directed relaxation, seeded deterministically; zero label overlaps in 100% of 20 synthetic fixtures, ≤200 ms for 10k labels, and `testLayeredSVGAnnotation` still passes. |
 | 142 | **Per-tile WCS + distortion-aware projection for annotation** | L (~6 h) | **Blocked — depends on item 13 (per-frame WCS reprojection)** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | The annotation renderer consumes per-frame/per-tile WCS from `plate_solution.json` (SIP order 2, mirror parity, field rotation) instead of a single shared solution; round-trip error <0.001 px for 10k points and alignment <0.5 px on a wide-field fixture. Cannot start until item 13 lands. |
-| 143 | **Annotation subsystem acceptance suite + documentation** | S (~1 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | End-to-end test: `skystacker --annotate --sky-map` on a plate-solved fixture emits SVG + raster + provenance report; README/COMPARISON updated with the new flags and the vendor-style example corpus (`assets/annotation-examples/`) documented; all 281+ embedded tests and `go test ./...` pass. |
+| 145 | **Standalone image resize operation** | S (~1 h) | **Done** | [docs/post-processing.md](docs/post-processing.md) | `--process-image DIR --image-op resize --scale N` shrinks every JPG/PNG by area averaging, accepts directories and `--recursive`, keeps EXIF in JPGs and replaces originals atomically with `--overwrite`; without it it writes `<name>_resize.<ext>` and refuses existing outputs. Covered by `testImageResize` (287 self-tests) and a real 5-file M31 folder run (6000x4000 -> 2000x1333 in ~5 s). |
+| 143 | **Annotation subsystem acceptance suite + documentation** | S (~1 h) | **Done** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | End-to-end test: `skystacker --annotate --sky-map` on a plate-solved fixture emits SVG + raster + provenance report; README/COMPARISON updated with the new flags and the vendor-style example corpus (`assets/annotation-examples/`) documented; all 287+ embedded tests (including border-tile sampling, coverage/fetch and Gaia name cross-match regressions) and `go test ./...` pass. |
 | 112 | **Fix current-section drift in PROJECT_CONTEXT.md** | S (~30 min) | **Open** | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Recovery line expects 274 self-tests; spike table uses length 10 / intensity 0.3; opening text no longer calls the program single-file; session logs untouched. |
 | 113 | **Remove README self-contradictions** | S (~30 min) | **Open** | [README.md](README.md) | No stale claim that grid self-flat is not default; badge says Go 1.27.4; comparison cell no longer denies shipped `--deconvolve`/`--drizzle-upsample`. |
 | 114 | **Fix blind-solver troubleshooting and TECHNICAL_SPEC exclusion** | S (~30 min) | **Open** | [docs/troubleshooting.md](docs/troubleshooting.md) | Troubleshooting names `native`/`astrometry-local`/`astap`/`astrometry-web`; spec §2 Excluded no longer denies native CR2 decode. |

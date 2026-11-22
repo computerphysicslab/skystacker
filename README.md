@@ -388,14 +388,27 @@ Gaia tiles and emit the layered SVG 2 map plus its raster twin:
 Results in `/tmp/skystacker-m31-demo/`: `plate_solution.json`,
 `stacked_annotated.jpg` (legacy overlay), `stacked_sky_map.svg` (legacy map),
 `stacked_annotated.svg` (SVG 2 layers), `stacked_annotated.png` and
-`annotation_provenance.json`. Omit `--gaia-offline` and add
-`--annotation-vo simbad,vizier` to enrich the same model from VO services;
-network failures only add a redacted warning and keep the offline sources.
-Star markers use renderer-safe literal colours (white → amber → brown by
-magnitude) with matching opacity, so the SVG stays visible in browsers,
-librsvg and ImageMagick instead of rendering black-on-black. Both sky maps
-union every cached Gaia tile crossing the frame, not only the CRVAL tile, so
-wide fields are not truncated at a tile boundary. Local adaptive star
+`annotation_provenance.json`. This example uses `--gaia-offline`, so it can
+only read tiles already in the Gaia cache; if part of the frame has no cached
+tile it will be empty. The provenance report now makes that explicit with a
+`gaia_coverage` block and a warning (on a fresh cache this field reports
+`42/81` frame samples, `1` tile, `39` missing). Omit `--gaia-offline` — the
+default — to fetch every missing tile crossing the frame (for M31: `81/81`
+samples, `4` tiles, no empty region). Gaia stars have no proper names in the cache, so each one now gets a unique
+coordinate designation such as `Gaia J004245+411630`. In an online run
+`--annotation-names auto` queries SIMBAD over the full field and, if SIMBAD is
+unreachable, falls back to AllWISE through IRSA; close matches replace the
+designation with the catalog identifier (for example `WISE
+J004057.98+414350.8`) and the number of matches is recorded in
+`annotation_provenance.json` (`name_matches`). Use `--annotation-names simbad`,
+`irsa` or `off` to force a catalog, the fallback only, or designations only.
+Add `--annotation-vo simbad,vizier` to
+enrich the same model from VO services; network failures only add a redacted
+warning and keep the offline sources. Star markers use renderer-safe literal
+colours (white → amber → brown by magnitude) with matching opacity, so the SVG
+stays visible in browsers, librsvg and ImageMagick instead of rendering
+black-on-black. Both sky maps union every tile crossing the frame, cached or
+fetched when online, not only the CRVAL tile. Local adaptive star
 detection (box-blur high pass) is already used by the solver and stack.
 The vendor-style reference images and the synthetic golden field are in
 `assets/annotation-examples/`.
@@ -507,14 +520,24 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--annotate --sky-map` | Also write the unified layered products `stacked_annotated.svg`, `stacked_annotated.png` and `annotation_provenance.json` | `false` |
 | `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry | `false` |
 | `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout` | `CDS/P/DSS2/color` / `30` |
-| `--process-image PATH[,PATH...]` | Process existing JPG/PNG/FITS images without stacking | — |
-| `--image-op OP` | `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve` (blind-capable) | — |
+| `--process-image PATH[,PATH...]` | Process existing JPG/PNG/FITS images without stacking; `resize` also accepts a directory | — |
+| `--image-op OP` | `resize`, `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve` (blind-capable) | — |
 | `--image-output DIR` | Output directory for image-mode products | `image_processing` |
 
-Image mode writes `<basename>_<op>.f32raw` + JPEG (and JSON metadata), never
-modifies the inputs, and reuses the same plate-solve/Gaia/HiPS helpers as the
-stacking products. `measure-transform`/`measure-quality` write
-`image_measurements.csv/.json`.
+Apart from `resize --overwrite`, image mode writes `<basename>_<op>.f32raw` +
+JPEG (and JSON metadata), never modifies the inputs, and reuses the same
+plate-solve/Gaia/HiPS helpers as the stacking products.
+
+To shrink a whole folder in place (JPG/PNG, EXIF kept in JPGs):
+
+```bash
+skystacker --process-image assets/2024-08-07-Riofrio-M31-refr150 \
+  --image-op resize --scale 3 --overwrite
+```
+
+Without `--overwrite`, each input produces `<name>_resize.<ext>` in
+`--image-output`; existing outputs are refused unless `--overwrite` is set.
+`measure-transform`/`measure-quality` write `image_measurements.csv/.json`.
 | `--bg-multiscale` | Remove a coarse 20th-percentile background grid before the polynomial fit | `false` |
 | `--deconvolve` | Richardson-Lucy deconvolution with Gaussian PSF after background removal (CPU-heavy) | `false` |
 | `--deconvolve-grid` / `--deconv-grid-size N` | Local PSF from star HFR over a 3×3/4×4 grid instead of one global sigma | `false` / `3` |
@@ -637,6 +660,7 @@ frames unless `--external-allow-nonlinear` is given.
 | `--blind-catalog ID` | published Gaia quad catalog (`mag07`, `mag10`, `mag10deep`); see `catalogs/` and `docs/plate-solving.md` | — |
 | `--astap-cmd CMD` | local ASTAP blind-solver command (needs D05–D80 database) | `astap` |
 | `--cone-catalog NAME` / `--cone-radius N` | external VOTable cone search added to annotations (sdss, irsa, vizier; arcsec) | — / `60` |
+| `--annotation-names MODE` | Gaia label names: `auto` (SIMBAD over the whole field, AllWISE fallback), `simbad`, `irsa` or `off` | `auto` |
 | `--blind-benchmark DIR` / `--benchmark-solvers LIST` | head-to-head blind-solve CSV over a corpus | — |
 | `--astrometry-cmd CMD` / `--astrometry-api-key KEY` | local `solve-field` command / nova API key (`AN_API_KEY` also read) | `solve-field` / — |
 | `--solve-field-args ARGS` | extra quoted argv for local `solve-field` (no shell) | — |
@@ -761,7 +785,7 @@ Astrophotography session
 
 Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
-- **Memory check**: Estimates `frameMB * 5` for `mean` and `frameMB * 4 + tileBufMB` (tile buffer capped at `256 MB`) for `median`/`sigma`, applying a `1.5 × naive + 2000 MB` peak safety margin compared against available RAM (`/proc/meminfo` `MemAvailable` on Linux).
+- **Memory check**: `mean` estimates `frameMB * 5`. `median`/`sigma` model the buffers that are simultaneously live: pass 1 keeps max/min, `validCount`, the plain sum and one decoded frame; **both** the unregistered and registered reductions keep `sumPix + meanPix + rejPix + wgtPix`, plus the capped 256 MB tile buffer. A `1.6 × naive + 2000 MB` peak margin is compared against available RAM (`/proc/meminfo` `MemAvailable`). After the run the actual peak RSS (`VmHWM`) is logged next to the estimate. The old formula (`frameMB * 4 + 256 MB`, called "real peak" after `1.5x`) reported 2031 MB for the five-frame M31 sigma session while the process really peaked at 4168–4912 MB; the corrected model reports 4658 MB.
 - **Disk check (`median`/`sigma` only)**: Verifies `frames * frameBytes * 2 + 500 MB` headroom for temporary spill files against available filesystem blocks. (`mean` performs no disk spill.)
 - **Time estimation**: Reports a calibrated runtime estimate based on frame count, megapixels, RAW conversion overhead (~12 s/frame for CR2/CR3), and post-processing settings.
 - **Fault tolerance**:
@@ -775,7 +799,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 281 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (144 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 287 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (145 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 

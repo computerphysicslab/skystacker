@@ -282,6 +282,7 @@ type cliOptions struct {
 	AnnotationCatalogs     string
 	AnnotationLayers       string
 	AnnotationVO           string
+	AnnotationNames        string
 	AnnotationCache        string
 	SsoEphemeris           string
 	Starless               bool
@@ -596,7 +597,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.Float64Var(&o.SigmaClipLow, "sigma-clip-low", 0, "asymmetric low-side sigma threshold (0 = use --sigma-clip)")
 	fs.Float64Var(&o.SigmaClipHigh, "sigma-clip-high", 0, "asymmetric high-side sigma threshold (0 = use --sigma-clip)")
 	fs.IntVar(&o.TileSize, "tile-size", 0, "tile side length in px for median/sigma reduction (0 = auto)")
-	fs.IntVar(&o.Scale, "scale", 1, "downscale factor (2 = half size, 4 = quarter size)")
+	fs.IntVar(&o.Scale, "scale", 1, "downscale factor for stacking; with --image-op resize also shrinks the processed images (2 = half size, 3 = third)")
 	fs.BoolVar(&o.Force, "force", false, "skip OOM safety check (NOT recommended)")
 	fs.BoolVar(&o.Normalize, "normalize", false, "globally normalize each frame sky background to the reference frame (requires registration)")
 	fs.BoolVar(&o.LocalNormalize, "local-normalize", false, "per-tile normalization (implies --normalize; requires registration)")
@@ -632,6 +633,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.AnnotationCatalogs, "annotation-catalogs", "", "comma-separated JSON catalogs (ra/dec degrees, optional name/type/mag/major/minor/pa) for multi-catalog cross-match")
 	fs.StringVar(&o.AnnotationLayers, "annotation-layers", "", "comma-separated SVG 2 annotation layers: grid-radec,grid-galactic,grid-ecliptic,constellations,scale-bar,finder-chart (default: all)")
 	fs.StringVar(&o.AnnotationVO, "annotation-vo", "", "comma-separated VO catalogs for layered annotations: simbad,vizier (offline by default)")
+	fs.StringVar(&o.AnnotationNames, "annotation-names", "auto", "Gaia label names: auto (SIMBAD, AllWISE fallback), simbad, irsa, off (coordinate designations only)")
 	fs.StringVar(&o.AnnotationCache, "annotation-cache", "", "disk cache directory for VO annotation queries (default: Gaia cache dir)")
 	fs.StringVar(&o.SsoEphemeris, "sso-ephemeris", "", "MPC-style SSO ephemeris with site header and DATE-OBS for velocity-vector annotation layers")
 	fs.StringVar(&o.RejectionMode, "rejection", "", "rejection heuristic: auto, mean, median or sigma (auto maps Min/Max/Percentile/Sigma/Winsorized/Linear-Fit bands onto shipped reducers)")
@@ -675,8 +677,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.SurveyCutout, "survey-cutout", false, "fetch a CDS HiPS survey cutout matching the solved frame geometry")
 	fs.StringVar(&o.SurveyHIPS, "survey-hips", "CDS/P/DSS2/color", "HiPS survey ID for --survey-cutout")
 	fs.IntVar(&o.SurveyTimeout, "survey-timeout", 30, "HTTP timeout in seconds for --survey-cutout")
-	fs.StringVar(&o.ProcessImage, "process-image", "", "comma-separated image paths to process without stacking")
-	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout, plate-solve")
+	fs.StringVar(&o.ProcessImage, "process-image", "", "comma-separated image paths or a directory to process without stacking (resize expands directories)")
+	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: resize, blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout, plate-solve")
 	fs.StringVar(&o.ImageOutput, "image-output", "image_processing", "output directory for --process-image results")
 	fs.StringVar(&o.ExportStars, "export-stars", "", "export the detected star list of --process-image as flux-sorted JSON or CSV")
 	fs.StringVar(&o.ExportVotable, "export-votable", "", "export cone/annotation catalogs as VOTable 1.3 BINARY2")
@@ -737,7 +739,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--annotation-layers" || arg == "--annotation-vo" || arg == "--annotation-cache" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--archive-adapters" || arg == "--mast-token" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--annotation-layers" || arg == "--annotation-vo" || arg == "--annotation-names" || arg == "--annotation-cache" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--archive-adapters" || arg == "--mast-token" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -976,6 +978,11 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.ConeRadiusArcsec <= 0 || o.ConeRadiusArcsec > 180 {
 		return nil, fmt.Errorf("--cone-radius must be in (0, 180] arcsec, got %g", o.ConeRadiusArcsec)
+	}
+	switch strings.ToLower(strings.TrimSpace(o.AnnotationNames)) {
+	case "", "auto", "simbad", "irsa", "off":
+	default:
+		return nil, fmt.Errorf("--annotation-names must be auto, simbad, irsa or off, got %q", o.AnnotationNames)
 	}
 	switch o.PlateSolver {
 	case "", "auto", "gaia", "astrometry-local", "astap", "native", "astrometry-web":
@@ -1549,6 +1556,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --annotation-catalogs LIST  extra JSON catalogs for cross-match (RA/Dec in degrees)")
 	fmt.Fprintln(w, "  --annotation-layers LIST  SVG 2 layers: grid-radec,grid-galactic,grid-ecliptic,constellations,scale-bar,finder-chart (default: all)")
 	fmt.Fprintln(w, "  --annotation-vo LIST       optional VO services: simbad,vizier (offline by default)")
+	fmt.Fprintln(w, "  --annotation-names MODE    Gaia names: auto, simbad, irsa, off (offline uses Gaia J designations)")
 	fmt.Fprintln(w, "  --annotation-cache DIR     disk cache for VO annotation queries (default: Gaia cache dir)")
 	fmt.Fprintln(w, "  --sso-ephemeris FILE        MPC-style SSO ephemeris (a:/c:/p:/dp:/s: IDs), site header and DATE-OBS")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
@@ -1582,11 +1590,13 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --survey-cutout        fetch a CDS HiPS FITS cutout matching the solved frame")
 	fmt.Fprintln(w, "  --survey-hips ID / --survey-timeout N  HiPS survey and HTTP timeout (30 s)")
 	fmt.Fprintln(w, "  --process-image PATH[,PATH...]  process image(s) without running the stacking pipeline")
+	fmt.Fprintln(w, "                                 a directory expands to its image files for --image-op resize")
 	fmt.Fprintln(w, "  --image-op OP / --image-output DIR  operation (see --help listing) and output directory")
+	fmt.Fprintln(w, "  --scale N                       downscale factor; --image-op resize --overwrite replaces originals")
 	fmt.Fprintln(w, "  --export-stars FILE            export detected stars (brightest first) as .json/.csv")
 	fmt.Fprintln(w, "  --export-votable FILE          export cone/annotation catalogs as VOTable 1.3 BINARY2")
 	fmt.Fprintln(w, "  --classify-objects FILE        report-only diffuse morphology + IVOA object-type JSON")
-	fmt.Fprintln(w, "                     ops: blur sharpen background stretch denoise deconvolve starless")
+	fmt.Fprintln(w, "                     ops: resize blur sharpen background stretch denoise deconvolve starless")
 	fmt.Fprintln(w, "                          sum subtract average median min max measure-transform")
 	fmt.Fprintln(w, "                          measure-quality sky-map survey-cutout plate-solve")
 	fmt.Fprintln(w, "  --deconvolve-wiener    FFT Wiener deconvolution (uses --deconv-sigma)")
@@ -5779,6 +5789,9 @@ func resolvedFlagLines(o runOptions) []string {
 		if o.AnnotationVO != "" {
 			add("--annotation-vo " + quoteReportArg(o.AnnotationVO))
 		}
+		if o.AnnotationNames != "" && o.AnnotationNames != "auto" {
+			add("--annotation-names " + quoteReportArg(o.AnnotationNames))
+		}
 		if o.AnnotationCache != "" {
 			add("--annotation-cache " + quoteReportArg(o.AnnotationCache))
 		}
@@ -6446,6 +6459,7 @@ type runOptions struct {
 	AnnotationCatalogs     string
 	AnnotationLayers       string
 	AnnotationVO           string
+	AnnotationNames        string
 	AnnotationCache        string
 	SsoEphemeris           string
 	Starless               bool
@@ -6762,6 +6776,97 @@ func getAvailableMemoryMB() int {
 	lines := strings.SplitSeq(string(data), "\n")
 	for line := range lines {
 		if strings.HasPrefix(line, "MemAvailable:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, _ := strconv.Atoi(fields[1])
+				return kb / 1024
+			}
+		}
+	}
+	return 0
+}
+
+// stackMemoryEstimate is the pre-flight estimate of the working set needed by
+// a stacking run. NaiveMB is the sum of the large live buffers, AdjustedPeakMB
+// adds Go's GC lag (the heap grows to roughly 1.5x the live set before a full
+// collection), and RequiredMB adds the fixed safety margin.
+type stackMemoryEstimate struct {
+	FrameMB        float64
+	NaiveMB        int
+	AdjustedPeakMB int
+	RequiredMB     int
+	SpillDiskMB    float64
+}
+
+const (
+	stackTileBufferMB   = 256.0 // reduceTilesStack caps its per-tile gather buffer
+	stackGCPeakFactor   = 1.6   // GOGC=100: heap grows before collection (measured 1.48-1.69x)
+	stackSafetyMarginMB = 2000
+)
+
+// estimateStackMemory models the buffers that are simultaneously live during
+// the most expensive phase (the registered sigma/median reduction):
+//
+//   - Pass 1 keeps max/min (2x a float32 RGB frame), validCount (1/3x), the
+//     plain unregistered sum (1x) and one decoded frame (1x).
+//   - Each reduction keeps sumPix + meanPix (2x) and rejPix + wgtPix (2/3x).
+//     Unregistered and registered reductions are both kept alive because
+//     their maps and no-correction mean are written after both reductions.
+//   - reduceTilesStack adds a capped gather buffer of ~256 MB.
+//
+// The old model counted only one reduction (4x + 256 MB) and was roughly 2x
+// low: a 5x6000x4000 sigma run peaked at 4302 MB RSS while it predicted
+// 2031 MB. The corrected model predicts ~4660 MB for the same run; observed
+// RSS on that workload was 4302-4912 MB across three instrumented runs.
+func estimateStackMemory(procW, procH, frames int, method string, registration bool) stackMemoryEstimate {
+	frameMB := float64(procW*procH*3*4) / (1024 * 1024)
+	est := stackMemoryEstimate{FrameMB: frameMB}
+	regSets := 1.0
+	if registration {
+		regSets = 2
+	}
+	switch method {
+	case "median", "sigma":
+		passLive := frameMB * (2 + 1.0/3 + 1 + 1)
+		reduction := frameMB * (2 + 2.0/3) * regSets
+		est.NaiveMB = int(passLive + reduction + stackTileBufferMB)
+		est.SpillDiskMB = float64(max(frames, 0)) * frameMB * 2.0
+	default:
+		est.NaiveMB = int(frameMB * 5)
+	}
+	est.AdjustedPeakMB = int(float64(est.NaiveMB) * stackGCPeakFactor)
+	est.RequiredMB = est.AdjustedPeakMB + stackSafetyMarginMB
+	return est
+}
+
+// processCurrentRSSMB reads the current resident set size from Linux
+// /proc/self/status. It returns 0 on platforms without that file.
+func processCurrentRSSMB() int {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, _ := strconv.Atoi(fields[1])
+				return kb / 1024
+			}
+		}
+	}
+	return 0
+}
+
+// processPeakRSSMB reads the process high-water mark of resident memory
+// (VmHWM). It is the ground truth used to calibrate estimateStackMemory.
+func processPeakRSSMB() int {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.HasPrefix(line, "VmHWM:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
 				kb, _ := strconv.Atoi(fields[1])
@@ -10879,42 +10984,20 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 	logf("Estimated processing time: ~%s%s", time.Duration(estSecs*float64(time.Second)).Round(time.Second), estNote)
 
-	// Memory estimation.
-	//
-	// Mean method (streaming): only one accumulator plus 2 max/min buffers,
-	// plus one decoded frame at a time. Peak is ~5 x frameMB.
-	//
-	// Median/sigma method (out-of-core): frames are spilled to disk, so
-	// the only large live buffers are 2 x max/min + validCount +
-	// sumPix + meanPix + rejPix/wgtPix + one tile buffer. The tile buffer
-	// is capped at 256 MB inside reduceTilesStack.
-	frameMB := float64(procW*procH*3*4) / (1024 * 1024)
-	var estMemMB int
-	var diskMB float64
-	if opts.Method == "median" || opts.Method == "sigma" {
-		// Pass 1+2 live: max/min (2x), validCount (1x), 1 decoded frame.
-		// Reduction live: sumPix + meanPix (2x), rej+wgt (0.67x),
-		// tile buffer (capped).
-		baseMem := frameMB * 4
-		tileBufMB := 256.0
-		estMemMB = int(baseMem + tileBufMB)
-		// Each frame is spilled twice (pass 1 raw, pass 2 resampled).
-		diskMB = float64(len(candidates)) * frameMB * 2.0
-		logf("Median/sigma: spilling %d frame(s) to disk (~%.0f MB peak)", len(candidates), diskMB)
-	} else {
-		estMemMB = int(frameMB * 5)
-	}
+	// Memory estimation. The model and its calibration are in
+	// estimateStackMemory; the old 4x+256 MB formula ignored the second
+	// (registered) reduction and under-reported the peak by ~2x.
+	memEst := estimateStackMemory(procW, procH, len(candidates), opts.Method,
+		opts.Register && len(candidates) > 1)
 	availMemMB := getAvailableMemoryMB()
-
-	// Real peak is ~1.5x the naive estimate because Go's GC only triggers
-	// when the heap doubles (GOGC=100). We also keep the 2 GB safety margin.
-	realPeak := int(float64(estMemMB) * 1.5)
-	requiredMB := realPeak + 2000
-
+	if memEst.SpillDiskMB > 0 {
+		logf("Median/sigma: spilling %d frame(s) to disk (~%.0f MB peak)",
+			len(candidates), memEst.SpillDiskMB)
+	}
 	logf("Memory: naive estimate %d MB, real peak (GC-adjusted) %d MB, available %d MB",
-		estMemMB, realPeak, availMemMB)
+		memEst.NaiveMB, memEst.AdjustedPeakMB, availMemMB)
 
-	if availMemMB > 0 && requiredMB > availMemMB && !opts.Force {
+	if availMemMB > 0 && memEst.RequiredMB > availMemMB && !opts.Force {
 		hint := "--method mean (streaming, ~200 MB)"
 		if opts.Method == "mean" {
 			hint = "--scale 2 (halve dimensions, 4x less memory)"
@@ -10922,7 +11005,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		return fmt.Errorf("OUT OF MEMORY PREVENTED\n"+
 			"  Naive estimate:       %d MB\n"+
 			"  Real peak (GC lag):   %d MB\n"+
-			"  Safety margin:        2000 MB\n"+
+			"  Safety margin:        %d MB\n"+
 			"  Total required:       %d MB\n"+
 			"  Currently available:  %d MB\n\n"+
 			"Use one of these options:\n"+
@@ -10930,7 +11013,8 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			"    --scale 2       Halve image dimensions (4x less memory)\n"+
 			"    --force         Skip this safety check (NOT recommended)\n\n"+
 			"Or close memory-hungry apps (Chrome, Firefox, Slack) and retry.",
-			estMemMB, realPeak, requiredMB, availMemMB, hint)
+			memEst.NaiveMB, memEst.AdjustedPeakMB, stackSafetyMarginMB,
+			memEst.RequiredMB, availMemMB, hint)
 	}
 	frameBytes := int64(procW) * int64(procH) * 3 * 4
 	// Disk pre-flight: median/sigma spill two raw float32 frames per
@@ -13012,6 +13096,10 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	}
 
 	logf("Actual processing time: %s", rep.Duration.Round(time.Millisecond))
+	if measured := processPeakRSSMB(); measured > 0 {
+		logf("Memory: measured peak RSS %d MB (estimate %d MB, ratio %.2f)",
+			measured, memEst.AdjustedPeakMB, float64(measured)/float64(memEst.AdjustedPeakMB))
+	}
 	if cacheDir != "" && !opts.KeepCache {
 		if err := os.RemoveAll(cacheDir); err != nil {
 			logf("WARNING: could not remove cache %s: %v", cacheDir, err)
@@ -18986,6 +19074,67 @@ func testGetAvailableMemoryMB() error {
 	return nil
 }
 
+// testMemoryEstimateVsMeasured calibrates the pre-flight memory model against
+// the peak RSS measured on the real M31 sigma run and validates the /proc RSS
+// reader with a known synthetic allocation.
+func testMemoryEstimateVsMeasured() error {
+	est := estimateStackMemory(6000, 4000, 5, "sigma", true)
+	// VmHWM from /usr/bin/time -v and a 200 ms /proc sampler on 2026-11-22:
+	// the five bundled M31 JPGs peaked between 4302 and 4912 MB during the
+	// registered reduction. The corrected estimator must cover that range.
+	measuredM31PeaksMB := []int{4168, 4302, 4912}
+	for _, measured := range measuredM31PeaksMB {
+		ratio := float64(measured) / float64(est.AdjustedPeakMB)
+		if ratio < 0.85 || ratio > 1.15 {
+			return fmt.Errorf("memory estimate %.0f MB vs measured %d MB (ratio %.2f)",
+				float64(est.AdjustedPeakMB), measured, ratio)
+		}
+	}
+	noReg := estimateStackMemory(6000, 4000, 5, "sigma", false)
+	if noReg.NaiveMB >= est.NaiveMB || noReg.SpillDiskMB != est.SpillDiskMB {
+		return fmt.Errorf("registration should add one reduction set only: %+v vs %+v", noReg, est)
+	}
+	mean := estimateStackMemory(6000, 4000, 5, "mean", true)
+	if mean.NaiveMB >= est.NaiveMB || mean.SpillDiskMB != 0 {
+		return fmt.Errorf("mean method must not use tiled reduction: %+v", mean)
+	}
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+
+	// Allocate a known live working set and confirm the RSS reader sees it.
+	oldGC := debug.SetGCPercent(-1)
+	defer func() {
+		runtime.GC()
+		debug.SetGCPercent(oldGC)
+	}()
+	runtime.GC()
+	base := processCurrentRSSMB()
+	if base <= 0 {
+		return errors.New("could not read current RSS from /proc/self/status")
+	}
+	peak := processPeakRSSMB()
+	if peak < base {
+		return fmt.Errorf("peak RSS %d MB is below current RSS %d MB", peak, base)
+	}
+	const chunkMB = 32
+	bufs := make([][]float32, 6)
+	for i := range bufs {
+		b := make([]float32, chunkMB*1024*1024/4)
+		for j := range b {
+			b[j] = float32(i)
+		}
+		bufs[i] = b
+	}
+	delta := processCurrentRSSMB() - base
+	want := chunkMB * len(bufs)
+	if delta < want/2 || delta > want+want {
+		return fmt.Errorf("RSS delta %d MB for %d MB of touched buffers", delta, want)
+	}
+	runtime.KeepAlive(bufs)
+	return nil
+}
+
 // testGetAvailableDiskBytes covers the Unix branch and its missing-path
 // case.
 func testGetAvailableDiskBytes() error {
@@ -22175,6 +22324,7 @@ func runSelfTests() int {
 		{"stack calibration folder", testStackCalibrationFolder},
 		{"frame from YCbCr", testFrameFromYCbCr},
 		{"get available memory MB", testGetAvailableMemoryMB},
+		{"memory estimate vs measured RSS", testMemoryEstimateVsMeasured},
 		{"get available disk bytes", testGetAvailableDiskBytes},
 		{"apply norm transform", testApplyNormTransform},
 		{"healpix tile size deg2", testHealpixTileSizeDeg2},
@@ -22221,9 +22371,14 @@ func runSelfTests() int {
 		{"calibration master export", testExportCalibrationMasters},
 		{"annotation bundle and golden field", testAnnotationBundle},
 		{"annotation VO cache provenance", testAnnotationVO},
+		{"gaia name crossmatch", testGaiaNameCrossmatch},
+		{"image resize op", testImageResize},
+		{"IRSA name fallback", testIRSANameFallback},
 		{"annotation deterministic placement", testAnnotationPlacement},
 		{"annotation layered SVG 2", testAnnotationSVG},
 		{"annotation multi-tile coverage", testAnnotationMultiTileCoverage},
+		{"gaia field tile border coverage", testGaiaFieldTileSamplesCoversBorders},
+		{"gaia field coverage and fetch", testGaiaStarsForFieldCoverage},
 		{"annotation SVG raster parity", testAnnotationRasterParity},
 		{"layered annotation end to end", testLayeredAnnotationEndToEnd},
 	}
@@ -34164,6 +34319,7 @@ func main() {
 		AnnotationCatalogs:     opts.AnnotationCatalogs,
 		AnnotationLayers:       opts.AnnotationLayers,
 		AnnotationVO:           opts.AnnotationVO,
+		AnnotationNames:        opts.AnnotationNames,
 		AnnotationCache:        opts.AnnotationCache,
 		SsoEphemeris:           opts.SsoEphemeris,
 		Starless:               opts.Starless,
