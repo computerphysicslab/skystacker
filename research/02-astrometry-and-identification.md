@@ -736,3 +736,51 @@ Items 79 and 81 remain "executed, not accepted". The quad-index lookup now votes
 ## 29. Duplicate pendingToAnalyse file cleaned up (2026-11-21, append-only)
 
 On 2026-11-21 an untracked copy of `research/pendingToAnalyse/Blind Plate Solving Eficiente.md` was found in the tree. Its content had already been consolidated in §17 on 2026-11-20, so no new research facts were extracted. The file was removed and `research/pendingToAnalyse/` was kept with `.gitkeep`, per the pendingToAnalyse protocol (process the document, fold new material into the canonical files, then delete the processed source while keeping the folder). No roadmap changes resulted.
+
+## 30. AstroBin astrometry-tool annotation corpus (2026-11-22, append-only)
+
+**Provenance.** 13 untracked JPGs and one URL stub appeared in `research/pendingToAnalyse/` on
+2026-11-22. The stub points to <https://welcome.astrobin.com/features/astrometry-tools>,
+which hosts all 13 images. They are vendor/marketing screenshots of AstroBin's plate-solution
+overlays (Lite/Premium = Astrometry.net backend; Ultimate = PixInsight solver with distortion
+correction). They were inspected visually and via Tesseract OCR; unique facts are folded here
+and the pending attachments were moved to the gitignored local folder `assets/annotation-examples/` (folder kept with `.gitkeep`).
+
+**What the images show (all 13).** Annotated deep-sky frames with an RA/Dec graticule, object
+circles/ellipses and label collars of several colours, constellation borders/lines, and a
+finding-chart inset. Fields identified by label: Cygnus wide field (`ultimate-platesolving.jpg`,
+"A tour around the Cygnus constellation" by Sendhil Chandramouli); Orion/M42/M43 with Alnitak,
+Alnilam, Rigel and M78 (`1ae24f1b-…jpg`); Virgo galaxies NGC 4406/4438/4388/4402/4425 and IC
+3355/3303 (`21.48.48`); Ophiuchus/Sagittarius with η Oph/Sabik and Kaus Australis (`21.49.32`);
+Puppis/Cma with Sh2-293/294/297/298, vdB 87-95, PK225-02.1 and Muliphein (`21.52.12`); Orion
+Nebula NGC 1976/1982/1980/1981/1977 and NGC 1999 (`21.53.27`); Witch Head IC 2118 with Rigel and
+NGC 1797/1799/1752 (`21.53.35`); Taurus with M45, Hyades, Aldebaran, NGC 1508/1497/1554, IC
+353/357/358, "Struve's Lost nebula" and numbered asteroids (150 Nuwa, 432 Pythia, 596 Scheila)
+(`21.54.48`); Orion/IC 434/NGC 2024 and NGC 1976 stack (`21.56.08`); NGC 467/470/474 group
+(`21.56.15`); Veil Nebula NGC 6960/6977/6992, IC 1340, LDN 846/864/868, LBN 191, Sh2-103
+(`2022_08_Cirrus_AufgehelltCrop…jpg`); M103 with dense HD-number labels (`m103-annotated.jpg`);
+NGC 6888 Crescent Nebula (`NGC_6888_LichtpunktMix…jpg`).
+
+**Vendor-documented capabilities (from the landing page).** Ultimate annotations include RA/Dec,
+ecliptic and galactic grids, constellation borders/lines, named stars, Messier, NGC, IC, vdB,
+Sharpless, Barnard, LDN, LBN, PGC, GCVS, Tycho-2, quasars, planets and asteroids; the viewer has a
+"Space Cursor" for on-image coordinates and per-category toggles. Lite/Premium uses
+Astrometry.net and explicitly warns that wide fields are less accurate because star triangulation
+does not model field distortion; Ultimate uses a PixInsight solver that accounts for distortion.
+Asteroids cannot be recognised on stacked images (no single exposure time); raw XISF/FITS with
+DATE-OBS is required.
+
+**Relevance to SkyStacker.** This corpus is a *visual* validation target for the shipped
+annotation subsystem (`--annotate`, `--sky-map`, `--sso-ephemeris`, `--cone-catalog`): the label
+collars, colour-coded object classes and coordinate grids are exactly what `buildSkyMapSVGLayers`
+(§13.2, item 55) and the layered SVG output produce. It reinforces three tracked gaps rather
+than creating new ones: (a) per-frame astrometric reprojection / distortion application (item 13,
+blocking mosaic item 27) — SkyStacker fits order-2 SIP but cannot yet match PixInsight's
+distortion-aware wide-field solve; (b) multi-catalogue annotation with named stars, dark nebulae
+and per-category toggles (partially covered by items 50/55/69); (c) asteroid handling on stacked
+data, which is physically impossible without raw timestamps — consistent with SkyStacker's
+`--sso-ephemeris` requiring `DATE-OBS` (item 50). No new roadmap item is promoted: the facts are
+already owned by items 13, 27, 50, 55 and 69.
+
+**Sources absorbed:** `research/pendingToAnalyse/*.jpg` (13 files), the URL stub, and
+<https://welcome.astrobin.com/features/astrometry-tools> (accessed 2026-11-22).
