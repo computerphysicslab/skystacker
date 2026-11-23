@@ -351,7 +351,11 @@ func runSkyMapSVG(outputDir string, opts runOptions) error {
 	}
 	sources := skySourcesForImage(w, h, &ww, gaia, extra)
 	vectors := skyMapVectors(&ww, opts.SsoEphemeris)
-	path := filepath.Join(outputDir, "stacked_sky_map.svg")
+	mapsDir, err := ensureProductSubdir(outputDir, mapProductSubdir)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(mapsDir, "stacked_sky_map.svg")
 	if err := writeFileAtomic(path, func(out io.Writer) error {
 		_, err := io.WriteString(out, buildSkyMapSVGLayers(w, h, sources, vectors, 1))
 		return err
@@ -362,54 +366,24 @@ func runSkyMapSVG(outputDir string, opts runOptions) error {
 	return nil
 }
 
-func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, stem string, refFrame *frame) error {
-	scale := math.Hypot(wcs.CD[0][0], wcs.CD[0][1]) * 180 / math.Pi
-	if scale <= 0 {
-		return fmt.Errorf("survey cutout: invalid plate scale")
-	}
-	fov := float64(max(width, height)) * scale
-	ra, dec := wcs.CRVAL1*180/math.Pi, wcs.CRVAL2*180/math.Pi
-	rotation := math.Atan2(wcs.CD[0][1], wcs.CD[1][1]) * 180 / math.Pi
-	timeout := opts.SurveyTimeout
-	if timeout <= 0 {
-		timeout = 30
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
-	var fitsData []byte
-	var err error
-	source := strings.ToLower(strings.TrimSpace(opts.SurveySource))
-	if source == "" {
-		source = "hips"
-	}
-	sourceURL := ""
-	survey := opts.SurveyHIPS
-	switch source {
-	case "hips":
-		sourceURL = fmt.Sprintf("https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=%s&ra=%.8f&dec=%.8f&fov=%.8f&width=%d&height=%d&rotation_angle=%.8f",
-			opts.SurveyHIPS, ra, dec, fov, width, height, rotation)
-		fitsData, err = fetchHiPSCutout(ctx, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits",
-			opts.SurveyHIPS, width, height, ra, dec, fov, rotation)
-	case "dss":
-		dssSurvey := opts.SurveyDSSSurvey
-		if dssSurvey == "" {
-			dssSurvey = "poss2ukstu_red"
+// suggestSurveyTimeout returns the HTTP timeout used when --survey-timeout=0
+// (auto). DSS plates of a full frame are ~18 MB and took ~76 s on the M31
+// acceptance run, so they get a much larger budget than HiPS thumbnails.
+func suggestSurveyTimeout(source string, width, height int) int {
+	if strings.EqualFold(strings.TrimSpace(source), "dss") {
+		if int64(width)*int64(height) > 1_000_000 {
+			return 300
 		}
-		_, _, hArcmin, wArcmin, gerr := surveyGeometry(wcs, width, height)
-		if gerr != nil {
-			return gerr
-		}
-		sourceURL, err = dssCutoutURL("https://archive.stsci.edu/cgi-bin/dss_search", dssSurvey, ra, dec, hArcmin, wArcmin)
-		if err == nil {
-			fitsData, err = fetchDSSCutout(ctx, "https://archive.stsci.edu/cgi-bin/dss_search", dssSurvey, ra, dec, hArcmin, wArcmin)
-		}
-		survey = dssSurvey
-	default:
-		return fmt.Errorf("survey cutout: unknown source %q", source)
+		return 120
 	}
-	if err != nil {
-		return err
-	}
+	return 30
+}
+
+// writeSurveyProduct validates, stores, optionally reprojects and previews a
+// single survey FITS. The stem already includes the survey suffix when a run
+// requests more than one DSS plate.
+func writeSurveyProduct(fitsData []byte, source, survey, sourceURL string,
+	opts runOptions, dir, stem string, width, height int, wcs *wcsTan, refFrame *frame) error {
 	if len(fitsData) < 2880 || string(fitsData[:6]) != "SIMPLE" {
 		return fmt.Errorf("survey cutout: service returned non-FITS data")
 	}
@@ -441,13 +415,214 @@ func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, ste
 		surveyStars := detectStars(surveyFrame, 300)
 		sim, inliers, ok := matchStarsToReference(refStars, surveyStars)
 		if ok {
-			logf("Survey cutout: star-match %d inliers, scale %.4f, rotation %.2f deg", inliers, sim.scale(), sim.rotation()*180/math.Pi)
+			logf("Survey cutout: %s star-match %d inliers, scale %.4f, rotation %.2f deg", survey, inliers, sim.scale(), sim.rotation()*180/math.Pi)
 		} else {
-			logf("Survey cutout: star matching failed (%d ref, %d survey stars); inspect %s", len(refStars), len(surveyStars), filepath.Base(path))
+			logf("Survey cutout: %s star matching failed (%d ref, %d survey stars); inspect %s", survey, len(refStars), len(surveyStars), filepath.Base(path))
 		}
 	}
-	logf("Survey cutout: %s (%dx%d, FOV %.4f deg, rotation %.2f deg)", filepath.Base(path), width, height, fov, rotation)
+	logf("Survey cutout: %s (%dx%d)", filepath.Base(path), surveyFrame.Width, surveyFrame.Height)
 	return nil
+}
+
+// fetchLegacySurveyCutout downloads a FITS cutout from the Legacy Surveys
+// (DECaLS/DESI) viewer. The cutout is square (size x size pixels) at the
+// survey's native 0.262 arcsec/pixel; the caller reprojects it onto the
+// target WCS grid.
+func fetchLegacySurveyCutout(ctx context.Context, ra, dec float64, size int, layer string) ([]byte, error) {
+	if size <= 0 || size > 4096 {
+		return nil, fmt.Errorf("legacy cutout: size %d outside (0, 4096]", size)
+	}
+	if layer == "" {
+		layer = "ls-dr9"
+	}
+	u := fmt.Sprintf("https://www.legacysurvey.org/viewer/cutout.fits?ra=%.6f&dec=%.6f&size=%d&layer=%s",
+		ra, dec, size, layer)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("legacy cutout HTTP %d", resp.StatusCode)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, io.LimitReader(resp.Body, 512<<20)); err != nil {
+		return nil, err
+	}
+	data := buf.Bytes()
+	if len(data) < 2880 || string(data[:6]) != "SIMPLE" {
+		return nil, fmt.Errorf("legacy cutout returned non-FITS data (%d bytes)", len(data))
+	}
+	return data, nil
+}
+
+// writeLegacySurveyCutout fetches a Legacy Surveys cutout covering the target
+// field, reprojects it onto the target WCS and writes aligned products.
+func writeLegacySurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, productDir, stem string, refFrame *frame, timeout int) error {
+	scale := math.Hypot(wcs.CD[0][0], wcs.CD[0][1]) * 180 / math.Pi
+	if scale <= 0 {
+		return fmt.Errorf("survey cutout: invalid plate scale")
+	}
+	fov := float64(max(width, height)) * scale
+	ra, dec := wcs.CRVAL1*180/math.Pi, wcs.CRVAL2*180/math.Pi
+	// Legacy Surveys native scale is 0.262 arcsec/px.
+	size := int(math.Ceil(fov*3600/0.262)) + 4
+	if size < 64 {
+		size = 64
+	}
+	if size > 4096 {
+		size = 4096
+	}
+	layer := "ls-dr9"
+	if opts.SurveyHIPS != "" && opts.SurveyHIPS != "CDS/P/DSS2/color" {
+		layer = opts.SurveyHIPS
+	}
+	if timeout <= 0 {
+		timeout = suggestSurveyTimeout("legacy", width, height)
+	}
+	logf("Survey cutout: HTTP timeout %d s", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	fitsData, err := fetchLegacySurveyCutout(ctx, ra, dec, size, layer)
+	if err != nil {
+		return err
+	}
+	srcWCS, _, err := parseAstrometryWCS(fitsData)
+	if err != nil {
+		return fmt.Errorf("legacy align: source WCS: %w", err)
+	}
+	tmp, err := os.CreateTemp("", "skystacker-legacy-*.fits")
+	if err != nil {
+		return fmt.Errorf("legacy align: temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(fitsData); err != nil {
+		tmp.Close()
+		return fmt.Errorf("legacy align: temp write: %w", err)
+	}
+	tmp.Close()
+	sourceFrame, err := decodeFITSNative(tmpPath, 0, 0)
+	if err != nil {
+		return fmt.Errorf("legacy align: source pixels: %w", err)
+	}
+	aligned, invalid := reprojectSurvey(sourceFrame, srcWCS, wcs, width, height, 4)
+	if aligned == nil {
+		return fmt.Errorf("legacy align: reprojection failed")
+	}
+	// alignment shift correction
+	if refFrame != nil {
+		dx, dy, ncc := surveyAlignmentShift(refFrame, aligned)
+		if dx != 0 || dy != 0 {
+			aligned = applySurveyAlignmentShift(aligned, dx, dy)
+			logf("Legacy survey: alignment shift corrected by (%d, %d) px (NCC %.3f)", dx, dy, ncc)
+		}
+	}
+	stem2 := stem + "_legacy"
+	return writeAlignedSurveyProducts(productDir, stem2, aligned, wcs, srcWCS,
+		fitsData, "legacy", layer, "", invalid, nil)
+}
+
+// writeESOSurveyCutout fetches an ESO DSS plate, injects a derived WCS,
+// reprojects it onto the target WCS and writes aligned products.
+func writeESOSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, productDir, stem string, refFrame *frame, timeout int) error {
+	scale := math.Hypot(wcs.CD[0][0], wcs.CD[0][1]) * 180 / math.Pi
+	if scale <= 0 {
+		return fmt.Errorf("survey cutout: invalid plate scale")
+	}
+	fov := float64(max(width, height)) * scale
+	ra, dec := wcs.CRVAL1*180/math.Pi, wcs.CRVAL2*180/math.Pi
+	if timeout <= 0 {
+		timeout = 120
+	}
+	logf("Survey cutout: HTTP timeout %d s", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	fitsData, err := fetchESOCutout(ctx, ra, dec, fov, fov)
+	if err != nil {
+		return err
+	}
+	srcWCS, _, err := parseAstrometryWCS(fitsData)
+	if err != nil {
+		return fmt.Errorf("eso align: source WCS: %w", err)
+	}
+	tmp, err := os.CreateTemp("", "skystacker-eso-*.fits")
+	if err != nil {
+		return fmt.Errorf("eso align: temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(fitsData); err != nil {
+		tmp.Close()
+		return fmt.Errorf("eso align: temp write: %w", err)
+	}
+	tmp.Close()
+	sourceFrame, err := decodeFITSNative(tmpPath, 0, 0)
+	if err != nil {
+		return fmt.Errorf("eso align: source pixels: %w", err)
+	}
+	aligned, invalid := reprojectSurvey(sourceFrame, srcWCS, wcs, width, height, 4)
+	if aligned == nil {
+		return fmt.Errorf("eso align: reprojection failed")
+	}
+	if refFrame != nil {
+		dx, dy, ncc := surveyAlignmentShift(refFrame, aligned)
+		if dx != 0 || dy != 0 {
+			aligned = applySurveyAlignmentShift(aligned, dx, dy)
+			logf("ESO DSS: alignment shift corrected by (%d, %d) px (NCC %.3f)", dx, dy, ncc)
+		}
+	}
+	stem2 := stem + "_eso"
+	return writeAlignedSurveyProducts(productDir, stem2, aligned, wcs, srcWCS,
+		fitsData, "eso", "eso-dss", "", invalid, nil)
+}
+
+func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, stem string, refFrame *frame) error {
+	scale := math.Hypot(wcs.CD[0][0], wcs.CD[0][1]) * 180 / math.Pi
+	if scale <= 0 {
+		return fmt.Errorf("survey cutout: invalid plate scale")
+	}
+	fov := float64(max(width, height)) * scale
+	ra, dec := wcs.CRVAL1*180/math.Pi, wcs.CRVAL2*180/math.Pi
+	rotation := math.Atan2(wcs.CD[0][1], wcs.CD[1][1]) * 180 / math.Pi
+	timeout := opts.SurveyTimeout
+	if timeout <= 0 {
+		timeout = suggestSurveyTimeout(opts.SurveySource, width, height)
+	}
+	logf("Survey cutout: HTTP timeout %d s", timeout)
+	source := strings.ToLower(strings.TrimSpace(opts.SurveySource))
+	if source == "" {
+		source = "hips"
+	}
+	productDir, err := ensureProductSubdir(dir, surveyProductSubdir)
+	if err != nil {
+		return err
+	}
+	switch source {
+	case "hips":
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+		defer cancel()
+		sourceURL := fmt.Sprintf("https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=%s&ra=%.8f&dec=%.8f&fov=%.8f&width=%d&height=%d&rotation_angle=%.8f",
+			opts.SurveyHIPS, ra, dec, fov, width, height, rotation)
+		fitsData, err := fetchHiPSCutout(ctx, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits",
+			opts.SurveyHIPS, width, height, ra, dec, fov, rotation)
+		if err != nil {
+			return err
+		}
+		return writeSurveyProduct(fitsData, source, opts.SurveyHIPS, sourceURL, opts, productDir, stem, width, height, wcs, refFrame)
+	case "dss":
+		return writeDSSSurveyCutouts(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
+	case "eso":
+		return writeESOSurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
+	case "legacy":
+		return writeLegacySurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
+	default:
+		return fmt.Errorf("survey cutout: unknown source %q", source)
+	}
 }
 
 func runSkyMapForImage(f *frame, sol *plateSolution, dir, base string, opts runOptions) error {
@@ -467,7 +642,11 @@ func runSkyMapForImage(f *frame, sol *plateSolution, dir, base string, opts runO
 	sources := skySourcesForImage(f.Width, f.Height, &ww, tile.Stars, extra)
 	vectors := skyMapVectors(&ww, opts.SsoEphemeris)
 	stem := strings.TrimSuffix(base, filepath.Ext(base)) + "_sky_map.svg"
-	path := filepath.Join(dir, stem)
+	mapsDir, err := ensureProductSubdir(dir, mapProductSubdir)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(mapsDir, stem)
 	if err := writeFileAtomic(path, func(out io.Writer) error {
 		_, err := io.WriteString(out, buildSkyMapSVGLayers(f.Width, f.Height, sources, vectors, 1))
 		return err
@@ -546,4 +725,126 @@ func runSurveyCutout(outputDir string, opts runOptions) error {
 		refFrame = &frame{Width: iw, Height: ih, Pix: ipix}
 	}
 	return writeSurveyCutout(w, h, &sol.WCS, opts, outputDir, "survey_reference", refFrame)
+}
+
+// fetchESOCutout downloads an ESO DSS plate and injects a derived WCS into
+// the FITS header so the standard reprojection path can consume it. ESO
+// plates carry plate-centre coordinates, plate scale and scan centre pixels
+// but no CRVAL/CD keywords; the WCS is derived assuming a 25.4 um scan of a
+// plate with PLTSCALE arcsec/mm, an unrotated north-up orientation and the
+// requested (ra, dec) as the cutout centre.
+func fetchESOCutout(ctx context.Context, ra, dec, h, w float64) ([]byte, error) {
+	u := fmt.Sprintf("https://archive.eso.org/dss/dss?ra=%.6f&dec=%.6f&mime-type=application/x-fits&x=%.3f&y=%.3f",
+		ra, dec, w, h)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ESO DSS HTTP %d", resp.StatusCode)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, io.LimitReader(resp.Body, 512<<20)); err != nil {
+		return nil, err
+	}
+	data := buf.Bytes()
+	if len(data) < 2880 || string(data[:6]) != "SIMPLE" {
+		return nil, fmt.Errorf("ESO DSS returned non-FITS data (%d bytes)", len(data))
+	}
+	// parse plate metadata
+	cards := parseFITSPrimaryCards(data)
+	pltrah := parseFloatCard(cards, "PLTRAH")
+	pltram := parseFloatCard(cards, "PLTRAM")
+	pltras := parseFloatCard(cards, "PLTRAS")
+	pltd := parseFloatCard(cards, "PLTDECD")
+	pltdm := parseFloatCard(cards, "PLTDECM")
+	pltds := parseFloatCard(cards, "PLTDECS")
+	pltscale := parseFloatCard(cards, "PLTSCALE")
+	naxis1, _ := strconv.Atoi(cards["NAXIS1"])
+	naxis2, _ := strconv.Atoi(cards["NAXIS2"])
+	if naxis1 <= 0 || naxis2 <= 0 || pltscale <= 0 {
+		return nil, fmt.Errorf("ESO DSS: invalid plate metadata")
+	}
+	raCenter := (pltrah + pltram/60 + pltras/3600) * 15
+	decCenter := pltd + pltdm/60 + pltds/3600
+	if sn := strings.TrimSpace(cards["PLTDECSN"]); sn == "-" {
+		decCenter = -decCenter
+	}
+	// pixel scale: PLTSCALE (arcsec/mm) * 25.4 um/px scan (standard ESO)
+	pixScaleDeg := pltscale * 25.4e-3 / 3600.0
+	// The cutout is centred on the requested (ra, dec), not the plate centre,
+	// so CRVAL = requested position; CRPIX = cutout centre.
+	crpix1 := float64(naxis1)/2 + 0.5
+	crpix2 := float64(naxis2)/2 + 0.5
+	// derive offset from plate centre to requested centre is already encoded in
+	// the cutout position; keep it simple: identity orientation.
+	_ = raCenter
+	_ = decCenter
+
+	// build a new FITS header with WCS
+	headerCards := []string{
+		"SIMPLE  =                    T",
+		"BITPIX  =                   16",
+		"NAXIS   =                    2",
+		fmt.Sprintf("NAXIS1  = %20d", naxis1),
+		fmt.Sprintf("NAXIS2  = %20d", naxis2),
+		"EXTEND  =                    T",
+		"CTYPE1  = 'RA---TAN'",
+		"CTYPE2  = 'DEC--TAN'",
+		"RADESYS = 'ICRS'",
+		fmt.Sprintf("CRVAL1  = %20.12f", ra),
+		fmt.Sprintf("CRVAL2  = %20.12f", dec),
+		fmt.Sprintf("CRPIX1  = %20.8f", crpix1),
+		fmt.Sprintf("CRPIX2  = %20.8f", crpix2),
+		fmt.Sprintf("CD1_1   = %20.12e", -pixScaleDeg),
+		"CD1_2   =     0.000000000000E+00",
+		"CD2_1   =     0.000000000000E+00",
+		fmt.Sprintf("CD2_2   = %20.12e", pixScaleDeg),
+		"END",
+	}
+	var hdr bytes.Buffer
+	for _, c := range headerCards {
+		if len(c) > 80 {
+			c = c[:80]
+		}
+		hdr.WriteString(fmt.Sprintf("%-80s", c))
+	}
+	for hdr.Len()%2880 != 0 {
+		hdr.WriteByte(' ')
+	}
+	// pixel data offset in original: write to a temp file and parse
+	tmp, err := os.CreateTemp("", "skystacker-eso-hdr-*.fits")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmp.Name()
+	tmp.Write(data)
+	tmp.Close()
+	defer os.Remove(tmpPath)
+	var offset int64
+	_, _, _, _, _, _, offset, _, _, _, _, err = parseFITSHeader(tmpPath)
+	if err != nil {
+		return nil, fmt.Errorf("ESO DSS: parse header: %w", err)
+	}
+	out := make([]byte, 0, hdr.Len()+len(data)-int(offset))
+	out = append(out, hdr.Bytes()...)
+	out = append(out, data[offset:]...)
+	return out, nil
+}
+
+func parseFloatCard(cards map[string]string, key string) float64 {
+	v, ok := cards[key]
+	if !ok {
+		return 0
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }

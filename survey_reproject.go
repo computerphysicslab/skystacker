@@ -24,6 +24,29 @@ var dssSurveys = []string{
 	"poss1_red", "poss1_blue", "quickv", "phase2_gsc2", "phase2_gsc1",
 }
 
+// parseDSSSurveys accepts one survey or a comma-separated list and removes
+// duplicates while preserving order, so a single run can fetch several DSS
+// plates with deterministic output stems.
+func parseDSSSurveys(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return []string{"poss2ukstu_red"}, nil
+	}
+	out := make([]string, 0, 2)
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(value, ",") {
+		name := strings.TrimSpace(part)
+		if !validDSSSurvey(name) {
+			return nil, fmt.Errorf("unknown DSS survey %q", name)
+		}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
 func validDSSSurvey(name string) bool {
 	for _, s := range dssSurveys {
 		if strings.EqualFold(s, name) {
@@ -125,21 +148,37 @@ func parseFITSPrimaryCards(data []byte) map[string]string {
 // surveyAlignmentReport is written next to the reprojected FITS so a consumer
 // can audit which plate, service and licence produced the aligned pixels.
 type surveyAlignmentReport struct {
-	Source        string          `json:"source"`
-	Survey        string          `json:"survey"`
-	URL           string          `json:"url,omitempty"`
-	PlateID       string          `json:"plate_id,omitempty"`
-	Copyright     string          `json:"copyright,omitempty"`
-	Licence       string          `json:"licence"`
-	Attribution   string          `json:"attribution"`
-	Generated     string          `json:"generated"`
-	Width         int             `json:"width"`
-	Height        int             `json:"height"`
-	InvalidPixels int             `json:"invalid_pixels"`
-	SourceWCS     surveyWCSReport `json:"source_wcs"`
-	TargetWCS     surveyWCSReport `json:"target_wcs"`
-	FITS          string          `json:"fits"`
-	Preview       string          `json:"preview"`
+	Source        string             `json:"source"`
+	Survey        string             `json:"survey"`
+	URL           string             `json:"url,omitempty"`
+	PlateID       string             `json:"plate_id,omitempty"`
+	Copyright     string             `json:"copyright,omitempty"`
+	Licence       string             `json:"licence"`
+	Attribution   string             `json:"attribution"`
+	Generated     string             `json:"generated"`
+	Width         int                `json:"width"`
+	Height        int                `json:"height"`
+	InvalidPixels int                `json:"invalid_pixels"`
+	SourceWCS     surveyWCSReport    `json:"source_wcs"`
+	TargetWCS     surveyWCSReport    `json:"target_wcs"`
+	FITS          string             `json:"fits"`
+	Preview       string             `json:"preview"`
+	Tiles         []surveyTileReport `json:"tiles,omitempty"`
+}
+
+// surveyTileReport records one DSS GetImage request used by a mosaic. It
+// keeps the plate-level provenance that would otherwise be lost when several
+// tiles are averaged into one aligned frame.
+type surveyTileReport struct {
+	Index     int     `json:"index"`
+	RA        float64 `json:"ra_deg"`
+	Dec       float64 `json:"dec_deg"`
+	H         float64 `json:"h_arcmin"`
+	W         float64 `json:"w_arcmin"`
+	PlateID   string  `json:"plate_id,omitempty"`
+	Copyright string  `json:"copyright,omitempty"`
+	URL       string  `json:"url"`
+	FITS      string  `json:"fits"`
 }
 
 type surveyWCSReport struct {
@@ -171,8 +210,25 @@ func surveyWCSReportFrom(w *wcsTan) surveyWCSReport {
 // bilinearly sampled. Rows are split across workers; results are independent
 // of the worker count.
 func reprojectSurvey(src *frame, srcWCS, dstWCS *wcsTan, width, height, workers int) (*frame, int) {
-	if src == nil || srcWCS == nil || dstWCS == nil || width <= 0 || height <= 0 {
+	f, valid, _ := reprojectSurveyMasked(src, srcWCS, dstWCS, width, height, workers)
+	if f == nil {
 		return nil, 0
+	}
+	invalid := 0
+	for _, ok := range valid {
+		if !ok {
+			invalid++
+		}
+	}
+	return f, invalid
+}
+
+// reprojectSurveyMasked is reprojectSurvey with an explicit per-pixel validity
+// mask. The mask is required when several DSS tiles are merged into one mosaic:
+// a reprojected pixel with no source coverage must not be averaged as black.
+func reprojectSurveyMasked(src *frame, srcWCS, dstWCS *wcsTan, width, height, workers int) (*frame, []bool, int) {
+	if src == nil || srcWCS == nil || dstWCS == nil || width <= 0 || height <= 0 {
+		return nil, nil, 0
 	}
 	if workers < 1 {
 		workers = 1
@@ -181,8 +237,8 @@ func reprojectSurvey(src *frame, srcWCS, dstWCS *wcsTan, width, height, workers 
 		workers = height
 	}
 	pix := make([]float32, width*height*3)
+	valid := make([]bool, width*height)
 	invalid := 0
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {
 		wg.Add(1)
@@ -194,19 +250,22 @@ func reprojectSurvey(src *frame, srcWCS, dstWCS *wcsTan, width, height, workers 
 					sx, sy := wcsTanForward(srcWCS, ra, dec)
 					r, g, b, ok := sampleBilinear(src, sx, sy)
 					if !ok {
-						mu.Lock()
-						invalid++
-						mu.Unlock()
 						continue
 					}
 					i := (y*width + x) * 3
 					pix[i], pix[i+1], pix[i+2] = r, g, b
+					valid[y*width+x] = true
 				}
 			}
 		}(worker)
 	}
 	wg.Wait()
-	return &frame{Width: width, Height: height, Pix: pix}, invalid
+	for _, ok := range valid {
+		if !ok {
+			invalid++
+		}
+	}
+	return &frame{Width: width, Height: height, Pix: pix}, valid, invalid
 }
 
 // fitsStringCard formats a string header card with doubled quotes and a
@@ -301,7 +360,7 @@ func surveyCutoutCards(rep surveyAlignmentReport) []string {
 // writeAlignedSurveyProducts writes the aligned FITS, a JPEG preview and a
 // provenance report. It never modifies the downloaded source cutout.
 func writeAlignedSurveyProducts(dir, stem string, aligned *frame, dstWCS, srcWCS *wcsTan,
-	fitsData []byte, source, survey, sourceURL string, invalid int) error {
+	fitsData []byte, source, survey, sourceURL string, invalid int, tiles []surveyTileReport) error {
 	cards := parseFITSPrimaryCards(fitsData)
 	rep := surveyAlignmentReport{
 		Source: source, Survey: survey, URL: sourceURL,
@@ -311,7 +370,7 @@ func writeAlignedSurveyProducts(dir, stem string, aligned *frame, dstWCS, srcWCS
 		Generated:   time.Now().UTC().Format(time.RFC3339),
 		Width:       aligned.Width, Height: aligned.Height, InvalidPixels: invalid,
 		SourceWCS: surveyWCSReportFrom(srcWCS), TargetWCS: surveyWCSReportFrom(dstWCS),
-		FITS: stem + "_aligned.fits", Preview: stem + "_aligned.jpg",
+		FITS: stem + "_aligned.fits", Preview: stem + "_aligned.jpg", Tiles: tiles,
 	}
 	if source == "hips" {
 		rep.Licence = "Survey-dependent HiPS licence; consult the CDS HiPS collection metadata"
@@ -338,26 +397,40 @@ func writeAlignedSurveyProducts(dir, stem string, aligned *frame, dstWCS, srcWCS
 	return nil
 }
 
-// surveyGeometry computes the centre and the DSS half-widths in arcminutes
-// from a target WCS. It is pure so it can be unit-tested without a network.
-func surveyGeometry(w *wcsTan, width, height int) (ra, dec, hArcmin, wArcmin float64, err error) {
+// surveyFootprintArcmin returns the true sky extent of the target pixel grid
+// in arcminutes, including field rotation. The CD matrix maps pixel offsets to
+// intermediate world coordinates along RA*cos(Dec) and Dec, which are exactly
+// the units expected by the DSS GetImage h/w parameters. Using the rotation
+// terms matters for plate-solved fields: an M31 frame with ~88 deg rotation is
+// ~44.8 arcmin wide in RA but ~65.6 arcmin tall in Dec, not the other way
+// round.
+func surveyFootprintArcmin(w *wcsTan, width, height int) (raSpan, decSpan float64, err error) {
 	if w == nil || width <= 0 || height <= 0 {
+		return 0, 0, fmt.Errorf("survey geometry: invalid WCS or dimensions")
+	}
+	deg := 180 / math.Pi
+	raSpan = (math.Abs(w.CD[0][0])*float64(width) + math.Abs(w.CD[0][1])*float64(height)) * deg * 60
+	decSpan = (math.Abs(w.CD[1][0])*float64(width) + math.Abs(w.CD[1][1])*float64(height)) * deg * 60
+	if raSpan <= 0 || decSpan <= 0 || !isFiniteFloat(raSpan) || !isFiniteFloat(decSpan) {
+		return 0, 0, fmt.Errorf("survey geometry: invalid plate scale")
+	}
+	return raSpan, decSpan, nil
+}
+
+// surveyGeometry computes the DSS centre and the clamped h/w arcminutes from
+// a target WCS. It is pure so it can be unit-tested without a network.
+func surveyGeometry(w *wcsTan, width, height int) (ra, dec, hArcmin, wArcmin float64, err error) {
+	if w == nil {
 		return 0, 0, 0, 0, fmt.Errorf("survey geometry: invalid WCS or dimensions")
 	}
-	scale := math.Hypot(w.CD[0][0], w.CD[0][1]) * 180 / math.Pi
-	if scale <= 0 || !isFiniteFloat(scale) {
-		return 0, 0, 0, 0, fmt.Errorf("survey geometry: invalid plate scale")
+	raSpan, decSpan, err := surveyFootprintArcmin(w, width, height)
+	if err != nil {
+		return 0, 0, 0, 0, err
 	}
 	ra = w.CRVAL1 * 180 / math.Pi
 	dec = w.CRVAL2 * 180 / math.Pi
-	hArcmin = float64(height) * scale * 60
-	wArcmin = float64(width) * scale * 60
-	if hArcmin > 60 {
-		hArcmin = 60
-	}
-	if wArcmin > 60 {
-		wArcmin = 60
-	}
+	hArcmin = math.Min(60, decSpan)
+	wArcmin = math.Min(60, raSpan)
 	return ra, dec, hArcmin, wArcmin, nil
 }
 
@@ -396,5 +469,5 @@ func surveyAlignmentRun(dir, stem string, fitsData []byte, source, survey, sourc
 		return fmt.Errorf("survey align: reprojection failed")
 	}
 	return writeAlignedSurveyProducts(dir, stem, aligned, targetWCS, srcWCS,
-		fitsData, source, survey, sourceURL, invalid)
+		fitsData, source, survey, sourceURL, invalid, nil)
 }

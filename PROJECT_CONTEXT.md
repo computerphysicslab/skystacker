@@ -636,7 +636,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 322 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 329 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -2005,3 +2005,15 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   numeric type/byte-order cases and IFD cycles; embedded
   `testCR2ContainerCalibration` locks the end-to-end path. The real 40D oracle
   still decodes 3944x2622 @ 14 bits. Suite 322.
+
+- **Post-processing layout + histogram-matched preview (2026-11-23):** all survey
+  cutouts, mosaics and the synthetic RGB composite now live under `survey/`; all
+  annotation and sky maps live under `maps/` (`stacked_sky_map.svg`,
+  `stacked_annotated.svg/.png/.jpg`, `annotation_provenance.json`,
+  `anomalies.json`, `catalog_matches.json`). `stacked_mean.jpg` stays at the
+  output root. When the synthetic RGB composite is produced, `stacked_mean.jpg`
+  is matched to the rendered survey composite with a monotone per-channel LUT
+  (9 anchors: 0.5/2/10/25/50/75/90/98/99.5 percentiles) and written as
+  `survey/stacked_mean_survey_matched.jpg`, with its LUT anchors recorded in
+  `survey/survey_rgb_synthetic_provenance.json` under `stacked_stretch`. The
+  scientific stack is untouched. Suite 329 self-tests.

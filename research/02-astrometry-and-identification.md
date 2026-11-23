@@ -1030,3 +1030,130 @@ documentation, and `survey_reproject.go` design notes.
 pages for `messier`, `lbn`, `ldn`, `hiiregion`, `refnebulae`, `plnebulae`,
 `snrgreen`, `openclust` and `globclust`; HEASARC NGC 2000.0 licence note;
 USA.gov U.S. Government Work notice.
+
+## Map and survey-cutout hardening — items 130, 131, 165-167 (2026-11-23, append-only)
+
+- **Label placement (item 130):** the spatial hash introduced with items
+  141/143 was audited instead of rewritten. `annotationLabelPlacer` indexes
+  every box cell, reuses scratch buffers, checks neighbours with a generation
+  counter and ends with a priority filter that suppresses any label that
+  cannot be placed without overlap. The accepted M31 deep-sky maps (254
+  sources, 239 labels, six layers) remain the visual evidence; no new fixture
+  was needed because `testLayeredSVGAnnotation` and the six-layer acceptance
+  run already cover the deterministic ordering and zero-overlap guarantee.
+- **Cone failures (item 131):** `computeConeTruncationReport` now returns a
+  report with `cone_error` when a query fails or the catalogue name is
+  unknown. The field is emitted in `report.json` and printed in `report.txt`
+  next to the existing truncation counters. A failed query no longer looks
+  like a successful empty cone search. `TestConeErrorReport` checks the JSON
+  tag, the absence of fake coverage data and the unknown-catalogue path.
+- **DSS review pack (item 165):** the M31 plate solution in
+  `review/atlas-maps/20261123-0830-m31-dss-survey-cutouts/` was used to fetch
+  STScI/MAST `poss2ukstu_red` (plate A1HR) and `poss2ukstu_blue` (A066)
+  cutouts, reproject them onto the stack WCS and keep native FITS/JPG,
+  aligned FITS/JPG, provenance JSON and a four-panel comparison. The service
+  clamps width to 60 arcmin, leaving ~34 % of the rotated frame outside the
+  plate; this is reported in each alignment JSON. A CDS HiPS DSS2/color
+  request was attempted and failed with `connection reset by peer`; the
+  external outage is recorded in the review README, with no invented result.
+- **Survey timeouts and multi-plate runs (items 166/167):**
+  `--survey-timeout 0` selects 300 s for DSS frames above 1 Mpix (a real
+  1997x1318 plate needed ~76 s to download 18 MB), 120 s for smaller DSS
+  cutouts and 30 s for HiPS. `--dss-survey` accepts a comma-separated list;
+  `parseDSSSurveys` validates and deduplicates it, and each product gets a
+  `_<survey>` stem with its own alignment/licence JSON.
+
+## 48. Full-coverage DSS mosaics and synthetic RGB — items 168-170 (2026-11-23, append-only)
+
+**Geometry gap confirmed.** The earlier DSS review requested `h=42.21,
+w=60.00` arcmin because `surveyGeometry` multiplied pixel width/height by the
+plate scale. The M31 frame is rotated 87.6425 deg, so its sky footprint is
+44.80 arcmin in RA and 65.60 arcmin in Dec. Using the full CD matrix
+(`|CD1,1|*width + |CD1,2|*height` and the analogous Dec row) fixes the axis
+swap; the 60 arcmin DSS limit then applies to Dec, not RA.
+
+**Multi-tile acquisition.** `dssTileGrid` adds a 2 arcmin safety pad and lays
+out overlapping 60 arcmin tiles symmetrically around the field centre. Two
+tiles cover the Dec span in this field. Each tile is decoded, reprojected onto
+the stacked grid with an explicit per-pixel validity mask, and averaged with
+other tiles where they overlap. Pixels with no source coverage stay invalid
+and are reported instead of becoming black; the real M31 red/blue/IR mosaics
+reach 100 % coverage while Quick-V reaches 99.6 %.
+
+**Synthetic colour mapping.** DSS has no green plate, so the documented
+equivalent RGB uses R = `poss2ukstu_red` (RG610, A1HR), G = `quickv` (W12,
+plate 01JV, STScI/AURA) and B = `poss2ukstu_blue` (GG395, A066). The new
+`--survey-rgb` flag writes `survey_rgb_synthetic.png/.jpg` and a three-plane
+FITS cube on the stacked WCS, plus a provenance JSON with plate IDs,
+copyright, URLs, tile counts and fallback counts. Quick-V leaves 9,796 pixels
+uncovered; `--survey-rgb-fallback poss2ukstu_ir` (RG9, A25O) supplies exactly
+those pixels and the count is recorded in `fallback_pixels`. No colour value
+is interpolated or invented for a missing plate.
+
+**Verification.** The installed v0.6.1 binary (build 2026-11-23T08:27:47Z)
+processed the five bundled M31 JPGs in 86 s with `--dss-survey
+poss2ukstu_red,poss2ukstu_blue --survey-rgb --survey-timeout 0
+--survey-reproject`; the final composite reports 0 uncovered pixels. The
+gitignored review pack is
+`review/atlas-maps/20261123-0928-m31-dss-full-coverage-rgb/`. Three new
+embedded selftests (rotated footprint, tile grid, masked mosaic/RGB
+composition) and six Go regressions bring the suite to 326. CDS HiPS
+`CDS/P/DSS2/color` was not retried as a substitute: it remains an external
+connection reset on this machine, as recorded in the earlier review.
+
+## §49 — Survey cutout service investigation (2026-11-23)
+
+### Currently queryable
+
+- **HiPS (CDS hips2fits):** `--survey-source hips` (default). Any HiPS ID via
+  `--survey-hips ID`. Covers DSS, 2MASS, SDSS, AllWISE, Pan-STARRS, DES, Legacy
+  Surveys, Planck, IRAS, GALEX, Fermi. CDS is intermittently down (ESDC downtime).
+- **DSS (STScI/MAST):** `--survey-source dss`. 8 photographic plates
+  (`poss2ukstu_red/blue/ir`, `poss1_red/blue`, `quickv`, `phase2_gsc2/gsc1`).
+  Up and returning FITS with WCS.
+
+### Investigated for implementation
+
+- **ESO DSS** (`archive.eso.org/dss`): UP. Returns FITS with plate metadata
+  (PLTRAH/PLTRAM/PLTRAS, PLTDECSN/PLTDECD/PLTDECM/PLTDECS, PLTSCALE=67.2 "/mm,
+  CNPIX1/CNPIX2, NAXIS1/2) but **no WCS** (no CRVAL/CD). WCS must be derived:
+  RA/Dec centre from PLTRAH/PLTRAM/PLTRAS and PLTDECSN/PLTDECD/PLTDECM/PLTDECS;
+  pixel scale = PLTSCALE * 25.4e-3 / 3600 deg/px (25.4 um scan); cutout centre =
+  requested (ra, dec); CRPIX = (NAXIS/2)+0.5 (1-based). Orientation assumed
+  north-up (CD1_1=-scale, CD2_2=+scale). Implemented as `--survey-source eso`
+  (item 169, Done). Caveat: ESO DSS covers mainly the southern sky (UK Schmidt);
+  northern targets (e.g. M31) land on a distant plate (most pixels outside frame,
+  reported not faked).
+
+- **Legacy Surveys (DECaLS/DESI):** UP. FITS cutout API at
+  `legacysurvey.org/viewer/cutout.fits?ra=&dec=&size=&layer=ls-dr9` returns a
+  clean FITS with TAN WCS (CRPIX 1-based, CD diagonal, 0.262 arcsec/px).
+  Implemented as `--survey-source legacy` (item 170, Done). Out-of-footprint
+  regions return HTTP 500 (reported, not faked).
+
+- **Pan-STARRS (PS1):** **DOWN / hijacked.** `ps1images.stsci.org` resolves to a
+  parking page (103.224.182.253). The cutout service is unavailable. Item 171
+  blocked until the service returns.
+
+- **SDSS (SkyServer ImgCutout):** UP but returns **JPEG only** (not FITS). FITS
+  cutouts require the SAS frame archive (complex URL with run/camcol/field). Item 172
+  Open; a JPEG-based adapter (no reprojection) is feasible, or a SAS-frame adapter
+  for FITS.
+
+- **JWST/HST (MAST):** MAST cutout API exists
+  (`mast.stsci.edu/api/v0.1/Download/file?...`) but requires per-observation
+  product selection and authentication for proprietary data. Public JWST/HST
+  images are available via HiPS already. Item 175 Open; a MAST adapter would need
+  observation/product enumeration.
+
+- **ESO DSS WCS derivation caveat:** the derived WCS assumes north-up orientation
+  and a 25.4 um scan. Real ESO plates may have a small rotation (DSHEARED flag
+  indicates sheared scans). The `DSHEARED`/`DCHOPPED` header flags should be
+  checked; sheared plates need a rotation term in the CD matrix. Not yet handled.
+
+### Recommended priority for future work
+
+1. SDSS JPEG adapter (simple, useful for northern sky) — item 172.
+2. PS1 — wait for service restoration, or use HiPS (`CDS/P/PanSTARRS/DR1/color`).
+3. JWST/HST — MAST adapter with product enumeration — item 175.
+4. ESO DSS WCS: handle DSHEARED rotation.

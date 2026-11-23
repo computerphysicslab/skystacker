@@ -385,10 +385,13 @@ Gaia tiles and emit the layered SVG 2 map plus its raster twin:
   assets/2024-08-07-Riofrio-M31-refr150
 ```
 
-Results in `/tmp/skystacker-m31-demo/`: `plate_solution.json`,
-`stacked_annotated.jpg` (legacy overlay), `stacked_sky_map.svg` (legacy map),
-`stacked_annotated.svg` (SVG 2 layers), `stacked_annotated.png` and
-`annotation_provenance.json`. This example uses `--gaia-offline`, so it can
+Results in `/tmp/skystacker-m31-demo/`: `plate_solution.json`, plus two
+subfolders — `maps/` with `stacked_annotated.jpg` (legacy overlay),
+`stacked_sky_map.svg` (legacy map), `stacked_annotated.svg` (SVG 2 layers),
+`stacked_annotated.png`, `annotation_provenance.json`, `anomalies.json` and
+`catalog_matches.json`, and `survey/` with the DSS cutouts, mosaics and
+`survey_rgb_synthetic.*` plus `stacked_mean_survey_matched.jpg`. This example
+uses `--gaia-offline`, so it can
 only read tiles already in the Gaia cache; if part of the frame has no cached
 tile it will be empty. The provenance report now makes that explicit with a
 `gaia_coverage` block and a warning (on a fresh cache this field reports
@@ -405,14 +408,37 @@ J004057.98+414350.8`) and the number of matches is recorded in
 Bright Gaia stars additionally receive an `SAO n` identifier (with `HD`,
 `DM` and `GC` cross-IDs in the provenance) from a compact embedded V<=8.0 SAO
 subset; proper names and Bayer/Flamsteed labels always win a positional tie, and
-`--annotation-sao=false` disables this fallback. To compare a solved frame with
+`--annotation-sao=false` disables this fallback. Gaia positions are propagated
+to `--annotation-epoch` (default 2024.6, the plate epoch for the bundled M31
+frames) with proper motion before projection; high-proper-motion foreground
+stars that leave the frame are filtered, so SAO labels only appear for stars
+still in frame. Use `--annotation-epoch 2016` (the Gaia catalog epoch) to keep
+catalog positions and label high-proper-motion stars where they were recorded. To compare a solved frame with
 the sky survey it was taken from, `--survey-cutout --survey-source dss
 --survey-reproject` downloads a STScI/MAST DSS plate and resamples it onto the
 target WCS, producing a pixel-registered `*_aligned.fits` plus JPG and a
 provenance JSON that records the plate, its copyright and the CC BY-NC-SA 4.0
 licence (DSS is free for scientific/educational/non-profit use, not public
-domain). CDS HiPS remains the default source; its service was unreachable from
-this machine during verification, which is reported as an external outage.
+domain). Pass `--dss-survey poss2ukstu_red,poss2ukstu_blue` to fetch two plates
+in one run (their products get `_<survey>` suffixes); full-frame DSS cutouts
+are about 18 MB and need `--survey-timeout 300`, or `--survey-timeout 0` to
+select the automatic 300 s budget. Rotated fields wider than 60 arcmin on the
+sky are split into overlapping tiles and merged with a validity mask, so the
+whole stacked frame is covered. `--survey-rgb` builds a documented synthetic
+colour image from three plates: red -> R, `quickv` (V band, since DSS has no
+green plate) -> G and blue -> B; `--survey-rgb-fallback` names ordered plates
+that fill uncovered channel pixels (default `poss2ukstu_ir`). The result is
+`survey_rgb_synthetic.png/.jpg/.fits` plus a provenance JSON with per-channel
+plate IDs, copyright, tile counts and fallback counts. When the synthetic RGB
+composite is produced, `stacked_mean.jpg` is also matched to the survey
+histogram and written as `survey/stacked_mean_survey_matched.jpg`
+(luminance-only tone curve, preserves the original colour cast) and
+`survey/stacked_mean_survey_RGB_matched.jpg` (independent per-channel curves,
+matches the survey colour balance). Both LUT anchor sets are recorded in the
+same provenance JSON (`stacked_stretch` and `stacked_rgb_stretch`). CDS
+HiPS remains the
+default source; its service was unreachable from this machine during
+verification, which is reported as an external outage.
 Add `--annotation-vo simbad,vizier` to
 enrich the same model from VO services; network failures only add a redacted
 warning and keep the offline sources. Layered annotations also embed a
@@ -579,9 +605,11 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--sky-map` | Write `stacked_sky_map.svg` with Gaia sources in the solved frame | `false` |
 | `--annotate --sky-map` | Also write the unified layered products `stacked_annotated.svg`, `stacked_annotated.png` and `annotation_provenance.json` | `false` |
 | `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry (frames above the 50 Mpix service limit are refused locally) | `false` |
-| `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout` | `CDS/P/DSS2/color` / `30` |
-| `--survey-source hips\|dss` / `--dss-survey NAME` | Survey service and DSS plate survey (`poss2ukstu_red`, `poss2ukstu_blue`, `poss2ukstu_ir`, `poss1_red`, `poss1_blue`, `quickv`, `phase2_gsc2`, `phase2_gsc1`) | `hips` / `poss2ukstu_red` |
-| `--survey-reproject` | Resample the cutout onto the solved frame WCS; writes `*_aligned.fits` (target WCS, SIP), `*_aligned.jpg` and `*_alignment.json` with plate ID, copyright and CC BY-NC-SA 4.0 licence | `false` |
+| `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout`; `0` selects auto (DSS full frames 300 s, small cutouts 120 s, HiPS 30 s) | `CDS/P/DSS2/color` / `30` |
+| `--survey-source hips\|dss` / `--dss-survey LIST` | Survey service and DSS plate survey(s), comma-separated for several plates in one run (`poss2ukstu_red`, `poss2ukstu_blue`, `poss2ukstu_ir`, `poss1_red`, `poss1_blue`, `quickv`, `phase2_gsc2`, `phase2_gsc1`); multi-plate stems get a `_<survey>` suffix | `hips` / `poss2ukstu_red` |
+| `--survey-reproject` | Resample the cutout onto the solved frame WCS; writes `*_aligned.fits` (target WCS, SIP), `*_aligned.jpg` and `*_alignment.json` with plate ID, copyright and CC BY-NC-SA 4.0 licence. Fields above 60 arcmin use overlapping tiles merged with validity masks | `false` |
+| `--survey-rgb` / `--survey-rgb-surveys R,G,B` | Build a synthetic RGB image from three DSS plates (`survey_rgb_synthetic.png/.jpg/.fits` plus provenance); default mapping red, Quick-V, blue | `false` / `poss2ukstu_red,quickv,poss2ukstu_blue` |
+| `--survey-rgb-fallback LIST` | Ordered DSS plates used to fill uncovered RGB channel pixels, recorded per channel in the provenance JSON; empty disables | `poss2ukstu_ir` |
 | `--process-image PATH[,PATH...]` | Process existing JPG/PNG/FITS images without stacking; `resize` also accepts a directory | — |
 | `--image-op OP` | `resize`, `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve` (blind-capable) | — |
 | `--image-output DIR` | Output directory for image-mode products | `image_processing` |
@@ -864,7 +892,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 322 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (164 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 326 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (170 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 

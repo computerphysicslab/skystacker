@@ -135,3 +135,23 @@ func TestGaiaRateLimitSynctest(t *testing.T) {
 		}
 	})
 }
+
+func TestTileBufferBudgetAndEstimate(t *testing.T) {
+	if got := tileBufferBudgetMB(0); got != stackTileBufferMB {
+		t.Fatalf("unknown availability budget = %.0f, want %.0f", got, stackTileBufferMB)
+	}
+	if got := tileBufferBudgetMB(64); got != 32 {
+		t.Fatalf("low-memory budget = %.0f, want 32", got)
+	}
+	if got := tileBufferBudgetMB(512); got != 512.0/10 {
+		t.Fatalf("512 MB budget = %.1f, want %.1f", got, 512.0/10)
+	}
+	if got := tileBufferBudgetMB(8192); got != stackTileBufferMB {
+		t.Fatalf("high-memory budget = %.0f, want %.0f", got, stackTileBufferMB)
+	}
+	full := estimateStackMemoryWithBudget(6000, 4000, 5, "sigma", true, stackTileBufferMB)
+	small := estimateStackMemoryWithBudget(6000, 4000, 5, "sigma", true, 32)
+	if full.NaiveMB-small.NaiveMB != 224 || full.RequiredMB-small.RequiredMB < 300 {
+		t.Fatalf("budget delta not reflected: full=%+v small=%+v", full, small)
+	}
+}

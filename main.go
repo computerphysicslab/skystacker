@@ -288,6 +288,7 @@ type cliOptions struct {
 	AnnotationCache        string
 	AnnotationLabelCollar  bool
 	AnnotationStarStyle    string
+	AnnotationEpoch        float64
 	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
@@ -321,8 +322,14 @@ type cliOptions struct {
 	SurveyDSSSurvey        string
 	SurveyReproject        bool
 	SurveyTimeout          int
+	SurveyRGB              bool
+	SurveyRGBSurveys       string
+	SurveyRGBFallback      string
 	ProcessImage           string
 	ImageOp                string
+	ListSurveyHiPS         string
+	ListSurveyHiPSBool     bool
+	SurveyServiceHealth    bool
 	ImageOutput            string
 	ExportStars            string
 	ExportVotable          string
@@ -697,6 +704,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.AnnotationVO, "annotation-vo", "", "comma-separated VO catalogs for layered annotations: simbad,vizier (offline by default)")
 	fs.StringVar(&o.AnnotationNames, "annotation-names", "auto", "Gaia label names: auto (SIMBAD, AllWISE fallback), simbad, irsa, off (coordinate designations only)")
 	fs.BoolVar(&o.AnnotationSAO, "annotation-sao", true, "use the embedded SAO V<=8.0 catalog to name Gaia stars; use =false to disable")
+	fs.Float64Var(&o.AnnotationEpoch, "annotation-epoch", 2024.6, "target epoch (decimal year) for Gaia proper-motion correction of annotation positions (default: plate epoch 2024.6)")
 	fs.BoolVar(&o.AnnotationDeepSky, "annotation-deep-sky", true, "use the embedded OpenNGC/HEASARC deep-sky catalogues in layered annotations; use =false to disable")
 	fs.StringVar(&o.AnnotationCache, "annotation-cache", "", "disk cache directory for VO annotation queries (default: Gaia cache dir)")
 	fs.BoolVar(&o.AnnotationLabelCollar, "annotation-label-collar", true, "draw a dark contrast collar behind annotation labels; use =false for plain labels")
@@ -746,8 +754,14 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.SurveyDSSSurvey, "dss-survey", "poss2ukstu_red", "DSS survey for --survey-source=dss: poss2ukstu_red|blue|ir, poss1_red|blue, quickv, phase2_gsc2|gsc1")
 	fs.BoolVar(&o.SurveyReproject, "survey-reproject", false, "resample the survey FITS onto the target WCS pixel grid and write _aligned products")
 	fs.IntVar(&o.SurveyTimeout, "survey-timeout", 30, "HTTP timeout in seconds for --survey-cutout")
+	fs.BoolVar(&o.SurveyRGB, "survey-rgb", false, "build an RGB composite from three DSS plates (requires --survey-source=dss)")
+	fs.StringVar(&o.SurveyRGBSurveys, "survey-rgb-surveys", defaultSurveyRGB, "R,G,B DSS surveys for --survey-rgb (default red, Quick-V, blue)")
+	fs.StringVar(&o.SurveyRGBFallback, "survey-rgb-fallback", "poss2ukstu_ir", "ordered DSS surveys used to fill gaps in RGB channels (default IR; empty disables)")
 	fs.StringVar(&o.ProcessImage, "process-image", "", "comma-separated image paths or a directory to process without stacking (resize expands directories)")
 	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: resize, blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout, plate-solve")
+	fs.BoolVar(&o.ListSurveyHiPSBool, "list-survey-hips", false, "list available HiPS survey IDs from the CDS registry and exit")
+	fs.BoolVar(&o.SurveyServiceHealth, "survey-service-health", false, "probe survey service availability and exit")
+	fs.StringVar(&o.ListSurveyHiPS, "survey-hips-keyword", "", "optional keyword filter for --list-survey-hips")
 	fs.StringVar(&o.ImageOutput, "image-output", "image_processing", "output directory for --process-image results")
 	fs.StringVar(&o.ExportStars, "export-stars", "", "export the detected star list of --process-image as flux-sorted JSON or CSV")
 	fs.StringVar(&o.ExportVotable, "export-votable", "", "export cone/annotation catalogs as VOTable 1.3 BINARY2")
@@ -947,8 +961,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	if o.ProcessImage != "" && o.ExportStars == "" && o.ClassifyObjects == "" && !validImageOperation(o.ImageOp) {
 		return nil, fmt.Errorf("--image-op must be one of: %s", strings.Join(imageOperations, ", "))
 	}
-	if o.SurveyTimeout < 1 || o.SurveyTimeout > 300 {
-		return nil, fmt.Errorf("--survey-timeout must be in [1, 300], got %d", o.SurveyTimeout)
+	if o.SurveyTimeout < 0 || o.SurveyTimeout > 300 {
+		return nil, fmt.Errorf("--survey-timeout must be 0 (auto) or in [1, 300], got %d", o.SurveyTimeout)
 	}
 	if o.KeepSharpest < 0 || o.KeepSharpest > 100 {
 		return nil, fmt.Errorf("--keep-sharpest must be in [0, 100], got %d", o.KeepSharpest)
@@ -1031,12 +1045,18 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, fmt.Errorf("--cone-radius must be in (0, 180] arcsec, got %g", o.ConeRadiusArcsec)
 	}
 	switch strings.ToLower(strings.TrimSpace(o.SurveySource)) {
-	case "", "hips", "dss":
+	case "", "hips", "dss", "legacy", "eso":
 	default:
-		return nil, fmt.Errorf("--survey-source must be hips or dss, got %q", o.SurveySource)
+		return nil, fmt.Errorf("--survey-source must be hips, dss or legacy, got %q", o.SurveySource)
 	}
-	if o.SurveyDSSSurvey != "" && !validDSSSurvey(o.SurveyDSSSurvey) {
-		return nil, fmt.Errorf("--dss-survey is not a documented DSS survey: %q", o.SurveyDSSSurvey)
+	if _, err := parseDSSSurveys(o.SurveyDSSSurvey); err != nil {
+		return nil, fmt.Errorf("--dss-survey is not a documented DSS survey list: %w", err)
+	}
+	if _, err := parseSurveyRGBSurveys(o.SurveyRGBSurveys); err != nil {
+		return nil, fmt.Errorf("--survey-rgb-surveys is not a valid R,G,B DSS survey list: %w", err)
+	}
+	if _, err := parseSurveyRGBFallbacks(o.SurveyRGBFallback); err != nil {
+		return nil, fmt.Errorf("--survey-rgb-fallback is not a valid DSS survey list: %w", err)
 	}
 	switch strings.ToLower(strings.TrimSpace(o.AnnotationNames)) {
 	case "", "auto", "simbad", "irsa", "off":
@@ -1623,6 +1643,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --annotation-vo LIST       optional VO services: simbad,vizier (offline by default)")
 	fmt.Fprintln(w, "  --annotation-names MODE    Gaia names: auto, simbad, irsa, off (offline uses Gaia J designations)")
 	fmt.Fprintln(w, "  --annotation-sao           use embedded SAO V<=8.0 cross-IDs to name Gaia stars (default true; use =false to disable)")
+	fmt.Fprintln(w, "  --annotation-epoch         target epoch (decimal year) for Gaia proper-motion correction (default 2024.6)")
 	fmt.Fprintln(w, "  --annotation-cache DIR     disk cache for VO annotation queries (default: Gaia cache dir)")
 	fmt.Fprintln(w, "  --annotation-label-collar  dark contrast stroke behind labels (default true; use =false to disable)")
 	fmt.Fprintln(w, "  --annotation-star-style    point markers: filled (default) or open")
@@ -1659,10 +1680,16 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --survey-hips ID / --survey-timeout N  HiPS survey and HTTP timeout (30 s)")
 	fmt.Fprintln(w, "  --survey-source hips|dss      survey service (DSS = STScI photographic plates)")
 	fmt.Fprintln(w, "  --dss-survey NAME             DSS plate survey (default poss2ukstu_red)")
+	fmt.Fprintln(w, "  --survey-rgb                  build RGB composite from 3 DSS plates")
+	fmt.Fprintln(w, "  --survey-rgb-surveys R,G,B    channels for RGB (default red,quickv,blue)")
+	fmt.Fprintln(w, "  --survey-rgb-fallback LIST    DSS surveys filling RGB gaps (default poss2ukstu_ir)")
 	fmt.Fprintln(w, "  --survey-reproject            resample the cutout onto the target WCS grid; writes _aligned FITS/JPG/JSON")
 	fmt.Fprintln(w, "  --process-image PATH[,PATH...]  process image(s) without running the stacking pipeline")
 	fmt.Fprintln(w, "                                 a directory expands to its image files for --image-op resize")
 	fmt.Fprintln(w, "  --image-op OP / --image-output DIR  operation (see --help listing) and output directory")
+	fmt.Fprintln(w, "  --list-survey-hips                 list HiPS survey IDs from the CDS registry (cached; offline fallback to a built-in list) and exit")
+	fmt.Fprintln(w, "  --survey-service-health            probe HiPS/DSS/ESO survey service availability and exit")
+	fmt.Fprintln(w, "  --survey-hips-keyword KEYWORD      optional filter for --list-survey-hips")
 	fmt.Fprintln(w, "  --scale N                       downscale factor; --image-op resize --overwrite replaces originals")
 	fmt.Fprintln(w, "  --export-stars FILE            export detected stars (brightest first) as .json/.csv")
 	fmt.Fprintln(w, "  --export-votable FILE          export cone/annotation catalogs as VOTable 1.3 BINARY2")
@@ -1840,7 +1867,7 @@ func detectBlackLevel(path string) (float64, bool) {
 		e := readJPEGExif(path)
 		return e.BlackLevel, e.HasBlackLevel
 	case ".fits", ".fit":
-		return fitsBlackLevelFor(path)
+		return parseFITSBlackLevel(path)
 	default:
 		return 0, false
 	}
@@ -5608,6 +5635,7 @@ type processingReport struct {
 	ConeCoveredRadiusArcsec float64                     `json:"cone_covered_radius_arcsec,omitempty"`
 	ConeCoveredAreaDeg2     float64                     `json:"cone_covered_area_deg2,omitempty"`
 	ConeLimitReason         string                      `json:"cone_limit_reason,omitempty"`
+	ConeError               string                      `json:"cone_error,omitempty"`
 	ExtinctionReport        *extinctionReport           `json:"extinction_report,omitempty"`
 	StretchColorPreserving  bool                        `json:"stretch_color_preserving,omitempty"`
 	PSFAutoReport           *psfAutoReport              `json:"psf_auto,omitempty"`
@@ -5918,6 +5946,9 @@ func resolvedFlagLines(o runOptions) []string {
 		}
 		if !o.AnnotationSAO {
 			add("--annotation-sao=false")
+		}
+		if o.AnnotationEpoch != 2024.6 {
+			add(fmt.Sprintf("--annotation-epoch %g", o.AnnotationEpoch))
 		}
 		if !o.AnnotationDeepSky {
 			add("--annotation-deep-sky=false")
@@ -6373,7 +6404,7 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		ew.printf("  matches:  %d / %d stars\n", r.PlateSolution.NMatches, r.PlateSolution.NStars)
 		ew.printf("\n")
 	}
-	if r.ConeRows > 0 || r.ConeTruncated {
+	if r.ConeRows > 0 || r.ConeTruncated || r.ConeError != "" {
 		ew.printf("Cone-search coverage:\n")
 		ew.printf("  truncated: %v\n", r.ConeTruncated)
 		ew.printf("  rows:      %d\n", r.ConeRows)
@@ -6381,6 +6412,9 @@ func (r *processingReport) writeTo(w io.Writer) error {
 		ew.printf("  area:      %.6f deg^2\n", r.ConeCoveredAreaDeg2)
 		if r.ConeLimitReason != "" {
 			ew.printf("  reason:    %s\n", r.ConeLimitReason)
+		}
+		if r.ConeError != "" {
+			ew.printf("  error:     %s\n", r.ConeError)
 		}
 		ew.printf("\n")
 	}
@@ -6612,6 +6646,7 @@ type runOptions struct {
 	AnnotationCache        string
 	AnnotationLabelCollar  bool
 	AnnotationStarStyle    string
+	AnnotationEpoch        float64
 	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
@@ -6654,6 +6689,9 @@ type runOptions struct {
 	SurveyDSSSurvey        string
 	SurveyReproject        bool
 	SurveyTimeout          int
+	SurveyRGB              bool
+	SurveyRGBSurveys       string
+	SurveyRGBFallback      string
 	ProcessImage           string
 	ImageOp                string
 	ImageOutput            string
@@ -6972,9 +7010,38 @@ const (
 // low: a 5x6000x4000 sigma run peaked at 4302 MB RSS while it predicted
 // 2031 MB. The corrected model predicts ~4660 MB for the same run; observed
 // RSS on that workload was 4302-4912 MB across three instrumented runs.
+// tileBufferBudgetMB scales the reduceTilesStack gather buffer with the
+// memory actually available. It spends at most 1/10 of MemAvailable, keeps a
+// 32 MB floor for useful tile sizes, and never exceeds the calibrated 256 MB
+// cap. Unknown availability (non-Linux or unreadable /proc) keeps the original
+// conservative cap.
+func tileBufferBudgetMB(availableMB int) float64 {
+	if availableMB <= 0 {
+		return stackTileBufferMB
+	}
+	budget := float64(availableMB) / 10
+	if budget < 32 {
+		budget = 32
+	}
+	if budget > stackTileBufferMB {
+		budget = stackTileBufferMB
+	}
+	return budget
+}
+
 func estimateStackMemory(procW, procH, frames int, method string, registration bool) stackMemoryEstimate {
+	return estimateStackMemoryWithBudget(procW, procH, frames, method, registration, stackTileBufferMB)
+}
+
+// estimateStackMemoryWithBudget is estimateStackMemory with an explicit tile
+// gather buffer budget, so the pre-flight model can use the same dynamic
+// budget as reduceTilesStack.
+func estimateStackMemoryWithBudget(procW, procH, frames int, method string, registration bool, tileBudgetMB float64) stackMemoryEstimate {
 	frameMB := float64(procW*procH*3*4) / (1024 * 1024)
 	est := stackMemoryEstimate{FrameMB: frameMB}
+	if tileBudgetMB <= 0 {
+		tileBudgetMB = stackTileBufferMB
+	}
 	regSets := 1.0
 	if registration {
 		regSets = 2
@@ -6983,7 +7050,7 @@ func estimateStackMemory(procW, procH, frames int, method string, registration b
 	case "median", "sigma":
 		passLive := frameMB * (2 + 1.0/3 + 1 + 1)
 		reduction := frameMB * (2 + 2.0/3) * regSets
-		est.NaiveMB = int(passLive + reduction + stackTileBufferMB)
+		est.NaiveMB = int(passLive + reduction + tileBudgetMB)
 		est.SpillDiskMB = float64(max(frames, 0)) * frameMB * 2.0
 	default:
 		est.NaiveMB = int(frameMB * 5)
@@ -8685,8 +8752,8 @@ func reduceTilesStack(
 	if ts < 64 {
 		ts = 64
 	}
-	// Cap tile buffer to ~256 MB.
-	const maxTileBuf = 256 * 1024 * 1024
+	// Cap the gather buffer to at most 1/10 of available RAM (32-256 MB).
+	maxTileBuf := int(tileBufferBudgetMB(getAvailableMemoryMB()) * 1024 * 1024)
 	maxSide := max(int(math.Sqrt(float64(maxTileBuf/(nFrames*3*4)))), 64)
 	if ts > maxSide {
 		ts = maxSide
@@ -11142,15 +11209,16 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 	// Memory estimation. The model and its calibration are in
 	// estimateStackMemory; the old 4x+256 MB formula ignored the second
 	// (registered) reduction and under-reported the peak by ~2x.
-	memEst := estimateStackMemory(procW, procH, len(candidates), opts.Method,
-		opts.Register && len(candidates) > 1)
 	availMemMB := getAvailableMemoryMB()
+	tileBudgetMB := tileBufferBudgetMB(availMemMB)
+	memEst := estimateStackMemoryWithBudget(procW, procH, len(candidates), opts.Method,
+		opts.Register && len(candidates) > 1, tileBudgetMB)
 	if memEst.SpillDiskMB > 0 {
 		logf("Median/sigma: spilling %d frame(s) to disk (~%.0f MB peak)",
 			len(candidates), memEst.SpillDiskMB)
 	}
-	logf("Memory: naive estimate %d MB, real peak (GC-adjusted) %d MB, available %d MB",
-		memEst.NaiveMB, memEst.AdjustedPeakMB, availMemMB)
+	logf("Memory: naive estimate %d MB, real peak (GC-adjusted) %d MB, available %d MB, tile buffer %.0f MB",
+		memEst.NaiveMB, memEst.AdjustedPeakMB, availMemMB, tileBudgetMB)
 
 	if availMemMB > 0 && memEst.RequiredMB > availMemMB && !opts.Force {
 		hint := "--method mean (streaming, ~200 MB)"
@@ -13151,6 +13219,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 		rep.ConeCoveredRadiusArcsec = coneInfo.RadiusArcsec
 		rep.ConeCoveredAreaDeg2 = coneInfo.AreaDeg2
 		rep.ConeLimitReason = coneInfo.Reason
+		rep.ConeError = coneInfo.Error
 	}
 	rep.ExtinctionReport = extinctionInfo
 	rep.TransformationReport = transformationInfo
@@ -13410,6 +13479,7 @@ type coneTruncationReport struct {
 	RadiusArcsec float64 `json:"cone_covered_radius_arcsec"`
 	AreaDeg2     float64 `json:"cone_covered_area_deg2"`
 	Reason       string  `json:"cone_limit_reason,omitempty"`
+	Error        string  `json:"cone_error,omitempty"`
 }
 
 const coneServiceRowLimit = 200000
@@ -13867,6 +13937,10 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 		}
 		anomalies = append(anomalies, anomalyRecord{X: st.X, Y: st.Y, RA: ra, Dec: dec, Flux: st.Flux, SNR: snr})
 	}
+	mapsDir, err := ensureProductSubdir(outputDir, mapProductSubdir)
+	if err != nil {
+		return err
+	}
 	jpgPath := filepath.Join(outputDir, "stacked_mean.jpg")
 	if f, err := os.Open(jpgPath); err == nil {
 		if src, jerr := jpeg.Decode(f); jerr == nil {
@@ -13918,7 +13992,7 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 					}
 				}
 			}
-			outPath := filepath.Join(outputDir, "stacked_annotated.jpg")
+			outPath := filepath.Join(mapsDir, "stacked_annotated.jpg")
 			if of, err := os.Create(outPath); err == nil {
 				if e := jpeg.Encode(of, rgba, &jpeg.Options{Quality: 92}); e != nil {
 					logf("Catalog annotation: overlay encode: %v", e)
@@ -13933,10 +14007,10 @@ func runCatalogAnnotation(outputDir string, opts runOptions) error {
 			logf("Catalog annotation: jpeg decode: %v", jerr)
 		}
 	}
-	if err := writeJSON(filepath.Join(outputDir, "anomalies.json"), anomalies); err != nil {
+	if err := writeJSON(filepath.Join(mapsDir, "anomalies.json"), anomalies); err != nil {
 		logf("Catalog annotation: anomalies.json: %v", err)
 	}
-	if err := writeJSON(filepath.Join(outputDir, "catalog_matches.json"), matches); err != nil {
+	if err := writeJSON(filepath.Join(mapsDir, "catalog_matches.json"), matches); err != nil {
 		logf("Catalog annotation: catalog_matches.json: %v", err)
 	}
 	return nil
@@ -19252,6 +19326,32 @@ func testFrameFromYCbCr() error {
 	return nil
 }
 
+// testTileBufferBudget checks the dynamic gather-buffer budget bounds and
+// that the pre-flight estimate uses the same budget as the reduction.
+func testTileBufferBudget() error {
+	cases := []struct {
+		available int
+		want      float64
+	}{
+		{0, stackTileBufferMB},
+		{64, 32},
+		{512, 512.0 / 10},
+		{2048, 2048.0 / 10},
+		{4096, stackTileBufferMB},
+	}
+	for _, tc := range cases {
+		if got := tileBufferBudgetMB(tc.available); got != tc.want {
+			return fmt.Errorf("tileBufferBudgetMB(%d) = %.0f, want %.0f", tc.available, got, tc.want)
+		}
+	}
+	base := estimateStackMemory(6000, 4000, 5, "sigma", true)
+	small := estimateStackMemoryWithBudget(6000, 4000, 5, "sigma", true, 32)
+	if small.NaiveMB >= base.NaiveMB || small.RequiredMB >= base.RequiredMB {
+		return fmt.Errorf("smaller tile budget did not lower the estimate: %+v vs %+v", small, base)
+	}
+	return nil
+}
+
 // testGetAvailableMemoryMB is a smoke test.
 func testGetAvailableMemoryMB() error {
 	mb := getAvailableMemoryMB()
@@ -22606,6 +22706,7 @@ func runSelfTests() int {
 		{"discover files recursive and exclude", testDiscoverFilesRecursiveAndExclude},
 		{"stack calibration folder", testStackCalibrationFolder},
 		{"frame from YCbCr", testFrameFromYCbCr},
+		{"tile buffer budget", testTileBufferBudget},
 		{"get available memory MB", testGetAvailableMemoryMB},
 		{"memory estimate vs measured RSS", testMemoryEstimateVsMeasured},
 		{"get available disk bytes", testGetAvailableDiskBytes},
@@ -22683,6 +22784,12 @@ func runSelfTests() int {
 		{"DSS cutout URL", testDSSCutoutURL},
 		{"survey geometry", testSurveyGeometry},
 		{"survey reprojection", testSurveyReprojection},
+		{"survey rotated footprint", testSurveyRotatedFootprint},
+		{"DSS mosaic tiling", testDSSMosaicTiling},
+		{"survey mosaic and RGB composition", testSurveyMosaicAndRGBComposition},
+		{"survey tone curve", testSurveyToneCurve},
+		{"stacked mean survey stretch", testStackedMeanSurveyStretch},
+		{"product subfolders", testProductSubfolders},
 		{"reprojected FITS header", testReprojectedFITSHeader},
 		{"vendor example corpus", testVendorExampleCorpus},
 		{"PGC designation normalisation", testPGCDestinationNormalisation},
@@ -32594,20 +32701,11 @@ func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
 // POST-PROCESSING SELF-TESTS
 // =========================================================================
 
-var fitsBlackLevelMu sync.Mutex
-var lastFITSBlackLevel float64
-var lastFITSHasBlackLvl bool
-
 func parseFITSHeader(path string) (width, height, naxis3, bitpix int, bscale, bzero float64, offset int64, baypat, roworder string, raRad, decRad float64, err error) {
-	fitsBlackLevelMu.Lock()
-	defer fitsBlackLevelMu.Unlock()
 	return parseFITSHeaderLocked(path)
 }
 
 func parseFITSHeaderLocked(path string) (width, height, naxis3, bitpix int, bscale, bzero float64, offset int64, baypat, roworder string, raRad, decRad float64, err error) {
-	lastFITSBlackLevel, lastFITSHasBlackLvl = 0, false
-	var blackLvl float64
-	var hasBlackLvl bool
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -32642,10 +32740,6 @@ func parseFITSHeaderLocked(path string) (width, height, naxis3, bitpix int, bsca
 			bscale, _ = strconv.ParseFloat(val, 64)
 		case "BZERO":
 			bzero, _ = strconv.ParseFloat(val, 64)
-		case "BLACK_LVL":
-			if v, e := strconv.ParseFloat(strings.Trim(val, "'"), 64); e == nil {
-				blackLvl, hasBlackLvl = v, true
-			}
 		case "BAYERPAT":
 			baypat = strings.TrimSpace(strings.Trim(val, "'"))
 		case "ROWORDER":
@@ -32663,15 +32757,35 @@ func parseFITSHeaderLocked(path string) (width, height, naxis3, bitpix int, bsca
 	if width <= 0 || height <= 0 {
 		return 0, 0, 0, 0, 1, 0, 0, "", "", 0, 0, fmt.Errorf("invalid FITS header")
 	}
-	lastFITSBlackLevel, lastFITSHasBlackLvl = blackLvl, hasBlackLvl
 	return
 }
 
-func fitsBlackLevelFor(path string) (float64, bool) {
-	fitsBlackLevelMu.Lock()
-	defer fitsBlackLevelMu.Unlock()
-	_, _, _, _, _, _, _, _, _, _, _, _ = parseFITSHeaderLocked(path)
-	return lastFITSBlackLevel, lastFITSHasBlackLvl
+// parseFITSBlackLevel is a pure, order-independent reader for the BLACK_LVL
+// FITS keyword. It does not touch any shared state, so two files with
+// different levels never contaminate each other.
+func parseFITSBlackLevel(path string) (float64, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	buf := make([]byte, 80)
+	for {
+		if _, err = io.ReadFull(f, buf); err != nil {
+			break
+		}
+		card := string(buf)
+		if strings.HasPrefix(card, "END") {
+			break
+		}
+		if strings.HasPrefix(card, "BLACK_LVL") || strings.HasPrefix(card, "BLACKLVL") {
+			val := strings.TrimSpace(strings.ReplaceAll(card[10:30], "\x00", ""))
+			if v, e := strconv.ParseFloat(strings.Trim(val, "'"), 64); e == nil {
+				return v, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func decodeFITSNative(path string, targetW, targetH int) (*frame, error) {
@@ -34925,6 +35039,20 @@ func main() {
 		}
 		return
 	}
+	if opts.SurveyServiceHealth {
+		if err := runSurveyServiceHealth(); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if opts.ListSurveyHiPSBool {
+		if err := runListSurveyHiPS(opts.ListSurveyHiPS); err != nil {
+			fmt.Fprintln(os.Stderr, "skystacker:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if opts.SelfTest {
 		if runSelfTests() > 0 {
 			os.Exit(1)
@@ -35040,6 +35168,7 @@ func main() {
 		AnnotationNames:        opts.AnnotationNames,
 		AnnotationSAO:          opts.AnnotationSAO,
 		AnnotationDeepSky:      opts.AnnotationDeepSky,
+		AnnotationEpoch:        opts.AnnotationEpoch,
 		SurveySource:           opts.SurveySource,
 		SurveyDSSSurvey:        opts.SurveyDSSSurvey,
 		SurveyReproject:        opts.SurveyReproject,
@@ -35085,6 +35214,9 @@ func main() {
 		SurveyCutout:           opts.SurveyCutout,
 		SurveyHIPS:             opts.SurveyHIPS,
 		SurveyTimeout:          opts.SurveyTimeout,
+		SurveyRGB:              opts.SurveyRGB,
+		SurveyRGBSurveys:       opts.SurveyRGBSurveys,
+		SurveyRGBFallback:      opts.SurveyRGBFallback,
 		ProcessImage:           opts.ProcessImage,
 		ImageOp:                opts.ImageOp,
 		ImageOutput:            opts.ImageOutput,

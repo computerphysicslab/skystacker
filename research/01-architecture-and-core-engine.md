@@ -848,3 +848,18 @@ Corpus check: on the 14 `assets/Blind-Plate-Solving/` frames the exporter recove
   equal a fresh detection and differ from the stale cached positions, a new
   keyed JSON entry was written and a fourth load is a hit. `matchedFilterEnabled`
   is saved and restored so the test is independent of other cases.
+
+## Dynamic reduce-tile budget — item 133 (2026-11-23, append-only)
+
+- `tileBufferBudgetMB(availableMB)` caps the `reduceTilesStack` gather buffer
+  at one tenth of `MemAvailable`, with a 32 MB floor for useful tile sizes and
+  the previously calibrated 256 MB ceiling. Unknown availability keeps the
+  conservative 256 MB cap.
+- The pre-flight model calls the same helper through
+  `estimateStackMemoryWithBudget`, so the reported naive/GC-adjusted peaks
+  now track what the reduction actually allocates; the estimate log includes
+  the chosen tile-buffer size. The default `estimateStackMemory` wrapper
+  remains deterministic for the historical calibration tests.
+- Regressions: `testTileBufferBudget` in the embedded suite and
+  `TestTileBufferBudgetAndEstimate` in Go cover unknown, low, medium and high
+  memory availability plus the lower peak estimate when the budget shrinks.

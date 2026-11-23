@@ -62,7 +62,7 @@ func testAnnotationBundle() error {
 		return fmt.Errorf("golden sources: got %d, want 40", len(golden))
 	}
 	w := rotatedWCS(10.0*math.Pi/180, 41.0*math.Pi/180, 60, 0, false)
-	projected := projectAnnotationSources(w, 512, 512, golden)
+	projected := projectAnnotationSources(w, 512, 512, 2024.6, golden)
 	if len(projected) < int(math.Ceil(float64(len(golden))*0.95)) {
 		return fmt.Errorf("golden field projection: %d/%d sources in frame", len(projected), len(golden))
 	}
@@ -397,7 +397,7 @@ func annotationSpreadSources(n, width, height int) []annotationSource {
 // constellations, scale bar, finding chart and the 2 MiB budget.
 func testAnnotationSVG() error {
 	w := rotatedWCS(10.0*math.Pi/180, 41.0*math.Pi/180, 60, 0, false)
-	sources := projectAnnotationSources(w, 512, 512, annotationGoldenSources(nilTestReporter{}))
+	sources := projectAnnotationSources(w, 512, 512, 2024.6, annotationGoldenSources(nilTestReporter{}))
 	opts := annotationRenderOptions{Layers: annotationAllLayers, WCS: w}
 	svg := buildAnnotationSVG(512, 512, sources, nil, opts)
 	for _, want := range []string{
@@ -659,9 +659,10 @@ func testLayeredAnnotationEndToEnd() error {
 	if err := runLayeredAnnotation(dir, runOptions{GaiaOffline: true}); err != nil {
 		return err
 	}
-	svgPath := filepath.Join(dir, "stacked_annotated.svg")
-	pngPath := filepath.Join(dir, "stacked_annotated.png")
-	provPath := filepath.Join(dir, "annotation_provenance.json")
+	mapsDir := filepath.Join(dir, mapProductSubdir)
+	svgPath := filepath.Join(mapsDir, "stacked_annotated.svg")
+	pngPath := filepath.Join(mapsDir, "stacked_annotated.png")
+	provPath := filepath.Join(mapsDir, "annotation_provenance.json")
 	for _, path := range []string{svgPath, pngPath, provPath} {
 		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
 			return fmt.Errorf("missing or empty %s: %v", path, err)

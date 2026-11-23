@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -78,13 +79,13 @@ func TestConeTruncationDetection(t *testing.T) {
 }
 
 func TestConeReportJSONTags(t *testing.T) {
-	rep := &processingReport{ConeTruncated: true, ConeRows: 42, ConeCoveredRadiusArcsec: 30, ConeCoveredAreaDeg2: 0.1, ConeLimitReason: "service_row_limit"}
+	rep := &processingReport{ConeTruncated: true, ConeRows: 42, ConeCoveredRadiusArcsec: 30, ConeCoveredAreaDeg2: 0.1, ConeLimitReason: "service_row_limit", ConeError: "cone search HTTP 503"}
 	data, err := json.Marshal(rep)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, key := range []string{"cone_truncated", "cone_rows", "cone_covered_radius_arcsec", "cone_covered_area_deg2", "cone_limit_reason"} {
+	for _, key := range []string{"cone_truncated", "cone_rows", "cone_covered_radius_arcsec", "cone_covered_area_deg2", "cone_limit_reason", "cone_error"} {
 		if !strings.Contains(text, "\""+key+"\"") {
 			t.Fatalf("missing %s in %s", key, text)
 		}
@@ -104,5 +105,29 @@ func TestConeCoverageGuard(t *testing.T) {
 	}
 	if coneCoverageAllows(true, centerRA, centerDec, covered, outsideRA, outsideDec) {
 		t.Fatal("outside coverage accepted")
+	}
+}
+
+func TestConeErrorReport(t *testing.T) {
+	err := errors.New("cone search HTTP 503")
+	info := coneTruncationErrorReport(err)
+	if info == nil || info.Error != err.Error() {
+		t.Fatalf("error report = %+v", info)
+	}
+	if info.Truncated || info.Rows != 0 {
+		t.Fatalf("failed query must not look like coverage data: %+v", info)
+	}
+	rep := &processingReport{ConeError: info.Error}
+	data, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"cone_error":"cone search HTTP 503"`) {
+		t.Fatalf("missing cone_error in %s", data)
+	}
+	opts := &runOptions{ConeCatalog: "not-a-service"}
+	sol := &plateSolution{}
+	if got := computeConeTruncationReport(opts, sol); got == nil || !strings.Contains(got.Error, "unknown cone catalogue") {
+		t.Fatalf("unknown catalogue report = %+v", got)
 	}
 }

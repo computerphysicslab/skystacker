@@ -127,7 +127,12 @@ use with attribution; the data are **not** public domain and individual plate
 rights vary. Every aligned product preserves the source `PLATEID` and
 `COPYRGHT` cards (for example `Caltech/Palomar` for POSS-II) in the FITS header
 and records the retrieval URL, licence and attribution in `<stem>_alignment.json`.
-Verify rights with the plate holder before any commercial use.
+Verify rights with the plate holder before any commercial use. The synthetic
+RGB product uses `poss2ukstu_red` (A1HR), `quickv` (01JV, STScI/AURA) and
+`poss2ukstu_blue` (A066) for R/G/B, with `poss2ukstu_ir` (A25O) filling only
+uncovered green-channel pixels; `survey_rgb_synthetic_provenance.json` keeps
+all four plate IDs, copyrights and fallback counts. No synthetic colour value
+is invented where a plate has no data.
 
 ## Other catalogues
 

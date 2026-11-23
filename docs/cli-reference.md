@@ -108,10 +108,12 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--sso-ephemeris FILE` | — | MPC-style SSO ephemeris with site header and mandatory `DATE-OBS`; velocity-vector layer. |
 | `--cone-catalog NAME` / `--cone-radius N` | — / `60` | SDSS/IRSA/VizieR cone search (arcsec). |
 | `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. With `--annotate`, also emits layered SVG + raster + provenance. |
-| `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | HiPS survey selection and HTTP timeout. |
+| `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | HiPS survey selection and HTTP timeout. `0` = auto: 300 s for >1 Mpix DSS cutouts, 120 s for small DSS, 30 s for HiPS. |
 | `--survey-source hips\|dss` | `hips` | Survey service: `hips` (CDS HiPS) or `dss` (STScI/MAST photographic plates). |
-| `--dss-survey NAME` | `poss2ukstu_red` | DSS plate survey: `poss2ukstu_red\|blue\|ir`, `poss1_red\|blue`, `quickv`, `phase2_gsc2\|gsc1`. |
-| `--survey-reproject` | off | Resample the survey FITS onto the target WCS (SIP aware); writes `*_aligned.fits`, `*_aligned.jpg` and `*_alignment.json` with plate/provenance/licence metadata. |
+| `--dss-survey LIST` | `poss2ukstu_red` | DSS plate survey(s): `poss2ukstu_red\|blue\|ir`, `poss1_red\|blue`, `quickv`, `phase2_gsc2\|gsc1`. A comma-separated list fetches several plates per run; outputs use `_<survey>` suffixes. |
+| `--survey-reproject` | off | Resample the survey FITS onto the target WCS (SIP aware); writes `*_aligned.fits`, `*_aligned.jpg` and `*_alignment.json` with plate/provenance/licence metadata. Rotated fields wider than 60 arcmin are fetched as overlapping tiles and merged with a validity mask. |
+| `--survey-rgb` / `--survey-rgb-surveys R,G,B` | off / `poss2ukstu_red,quickv,poss2ukstu_blue` | Build a synthetic RGB image from three DSS plates: red -> R, Quick-V (V band, DSS has no green plate) -> G, blue -> B. Writes `survey_rgb_synthetic.png/.jpg/.fits` and a per-channel provenance report. |
+| `--survey-rgb-fallback LIST` | `poss2ukstu_ir` | Ordered DSS plates used only where a primary RGB channel has no data; each substitution is counted in `fallback_pixels`. Empty value disables fallback. |
 | `--photometry` | off | Ensemble Gaia aperture photometry. |
 | `--aperture-photometry` | off | Local annulus sky, Kron/FLUX_RADIUS and neighbour masking in `--photometry`. |
 | `--matched-filter` | off | Matched-filter star detection (`T = αC⁻¹S`) instead of the high-pass threshold. |

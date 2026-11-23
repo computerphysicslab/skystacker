@@ -144,7 +144,7 @@ func testVendorExampleCorpus() error {
 			field = append(field, s)
 		}
 	}
-	projected := projectAnnotationSources(w, 600, 600, field)
+	projected := projectAnnotationSources(w, 600, 600, 2024.6, field)
 	if len(projected) != len(ids) {
 		return fmt.Errorf("Andromeda field projection: %d/%d sources", len(projected), len(ids))
 	}

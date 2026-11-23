@@ -172,7 +172,7 @@ func testExtendedDeepSkyLayeredOutput() error {
 		return err
 	}
 	var report layeredAnnotationReport
-	if err := json.Unmarshal(mustReadFile(filepath.Join(dir, "annotation_provenance.json")), &report); err != nil {
+	if err := json.Unmarshal(mustReadFile(filepath.Join(dir, mapProductSubdir, "annotation_provenance.json")), &report); err != nil {
 		return err
 	}
 	found := false

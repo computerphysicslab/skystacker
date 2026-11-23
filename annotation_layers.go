@@ -363,7 +363,7 @@ func annotationArcsecPerPixel(w *wcsTan) float64 {
 	return math.Sqrt(det) * (180 / math.Pi) * 3600
 }
 
-// applyProperMotion propagates a source from its catalog epoch to 2026.0.
+// applyProperMotion propagates a source from its catalog epoch to the target epoch.
 func applyProperMotion(s annotationSource, targetEpoch float64) annotationSource {
 	if s.Epoch == 0 || (s.PMRA == 0 && s.PMDec == 0) {
 		return s
@@ -377,14 +377,17 @@ func applyProperMotion(s annotationSource, targetEpoch float64) annotationSource
 
 // projectAnnotationSources filters sources to the frame and fills pixel
 // geometry: the single place where sky coordinates become pixels.
-func projectAnnotationSources(w *wcsTan, width, height int, in []annotationSource) []annotationSource {
+func projectAnnotationSources(w *wcsTan, width, height int, epoch float64, in []annotationSource) []annotationSource {
 	if w == nil || width <= 0 || height <= 0 {
 		return nil
 	}
 	scale := annotationArcsecPerPixel(w)
 	out := make([]annotationSource, 0, len(in))
+	if epoch == 0 {
+		epoch = 2024.6
+	}
 	for _, src := range in {
-		s := applyProperMotion(src, 2026.0)
+		s := applyProperMotion(src, epoch)
 		x, y := wcsTanForward(w, s.RA, s.Dec)
 		if x < 0 || y < 0 || x >= float64(width) || y >= float64(height) {
 			continue
@@ -2357,7 +2360,7 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 			pgcMatch.Matched, pgcMatch.Candidates)
 	}
 
-	sources = projectAnnotationSources(&ww, w, h, sources)
+	sources = projectAnnotationSources(&ww, w, h, opts.AnnotationEpoch, sources)
 
 	var vectors []skyVelocityVector
 	if strings.TrimSpace(opts.SsoEphemeris) != "" {
@@ -2380,14 +2383,18 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 	labels := placeAnnotationLabels(w, h, sources, 1)
 	raster := renderAnnotationRasterWithOptions(annotationBaseImage(outputDir, w, h), sources, vectors, labels, renderOpts)
 
-	svgPath := filepath.Join(outputDir, "stacked_annotated.svg")
+	mapsDir, err := ensureProductSubdir(outputDir, mapProductSubdir)
+	if err != nil {
+		return err
+	}
+	svgPath := filepath.Join(mapsDir, "stacked_annotated.svg")
 	if err := writeFileAtomic(svgPath, func(out io.Writer) error {
 		_, err := io.WriteString(out, svg)
 		return err
 	}); err != nil {
 		return err
 	}
-	pngPath := filepath.Join(outputDir, "stacked_annotated.png")
+	pngPath := filepath.Join(mapsDir, "stacked_annotated.png")
 	if err := writeFileAtomic(pngPath, func(out io.Writer) error {
 		return png.Encode(out, raster)
 	}); err != nil {
@@ -2433,7 +2440,7 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 		Geometry:     &geometry,
 		Overlays:     &overlays,
 	}
-	if err := writeJSON(filepath.Join(outputDir, "annotation_provenance.json"), report); err != nil {
+	if err := writeJSON(filepath.Join(mapsDir, "annotation_provenance.json"), report); err != nil {
 		return err
 	}
 	logf("Layered annotation: wrote %s + %s (%d sources, %d labels, %d layers)",
