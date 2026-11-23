@@ -2,6 +2,13 @@
 # SkyStacker - Git ignore rules
 # -----------------------------------------------------------------------------
 
+# Local visual review outputs (generated maps, never committed)
+/review/
+
+# Local test datasets (copyright/vendor material, never distributed)
+/assets/2024-08-07-Riofrio-M31-refr150/
+/assets/2024.08-18-Riofrio-50mm/
+
 # Local/private AI prompts and working notes
 /prompts-ia.txt
 /prompts-ia-*.txt

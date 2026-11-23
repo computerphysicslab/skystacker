@@ -13,6 +13,25 @@ are used only for visual comparison; no pixel-level assertion is made against
 them. They are gitignored (copyrighted local reference material); only the
 synthetic fixture and this README are versioned.
 
+## M31 examples (2026-11-23)
+
+Two new local WEBP references were added by the user. They are gitignored like
+the vendor JPGs and are used for visual acceptance only (no pixel assertions):
+
+- `m31camera-annotated.webp` (640x572) — wide field around Andromeda. Readable
+  labels mix proper names (`Mirach`, `Alpheratz / Sirrah`) with Flamsteed
+  numbers (`45 And`, `65 Psc`, `69 Psc`) and the constellation name
+  `Andromeda`; stars are small open circles. Acceptance mapping: roadmap item
+  155 (offline proper-name/Bayer/Flamsteed catalogue and cross-match priority).
+- `bc9374_cacccbac9cb2432e9061aae64f812dfd.webp` (860x552) — dense galaxy
+  field labelled by PGC number (`PGC 2167368`, `PGC 2183568`, `PGC 21991`,
+  ...). Acceptance mapping: roadmap item 156 (PGC catalogue support, still
+  Open); it is the reference for the next density/label-collision wave.
+
+`testVendorExampleCorpus` checks that these files are documented, carry a valid
+WebP header when present locally, and that the bundled name catalogue can
+produce the Andromeda-field labels seen in the first example.
+
 ## Synthetic fixture
 
 - `synthetic-field.json` — 40 deterministic sources in an M31-like field

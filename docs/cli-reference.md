@@ -95,7 +95,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--resample-sip` | off | Apply stored SIP in the stacking resampler. |
 | `--annotate` | off | Gaia projection + anomaly flags. |
 | `--annotation-catalogs LIST` | — | Extra JSON catalogues. |
-| `--annotation-layers LIST` | all | Comma-separated SVG 2 layers (`grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, plus aliases). |
+| `--annotation-layers LIST` | all | Comma-separated SVG 2 layers (`grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, `legend` (`key`), plus aliases). |
 | `--annotation-vo LIST` | — | Optional SIMBAD/VizieR cone queries for layered annotations; offline bundle by default. |
 | `--annotation-names MODE` | `auto` | Gaia labels: `auto` (SIMBAD full-field query, AllWISE/IRSA fallback), `simbad`, `irsa` or `off` (unique `Gaia J…` designations only). |
 | `--annotation-cache DIR` | Gaia cache dir | Disk cache for VO annotation queries. |

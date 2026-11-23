@@ -14,10 +14,17 @@ skystacker --post-only --sky-map --plate-solve \
 `stacked_sky_map.svg` at the exact image size and orientation. The SVG is
 **layered**: independent `<g id="..." class="skystacker-layer">` groups are
 emitted for `background`, `gaia-stars`, `extended-objects`, `sso-vectors`,
-`labels` and `footer`. Each group carries a stable `data-layer` key so another
+`legend`, `labels` and `footer`. Each group carries a stable `data-layer` key so another
 application can toggle, restyle or recompose it without re-solving. Point
-sources are circles sized by magnitude; extended objects are drawn only when an
-external catalogue supplies major/minor axes and position angle. Ellipse PAs are
+sources are circles sized by magnitude (with dashed rings for variables and
+resolved pairs for double stars) and can be tinted by a colour index or
+`spectral_class`; extended objects use type-aware atlas contours when an
+external catalogue supplies major/minor axes and position angle. The `motion`
+layer adds 50-year proper-motion arrows and amplitude-scaled variability
+brackets. A stable `data-symbol` attribute identifies every marker family and the
+`legend` layer explains them in both SVG and PNG. The root advertises the
+families in `data-symbol-families`, and `skystacker-hide-<family>` toggles a
+family in browsers without re-rendering. Ellipse PAs are
 corrected for field rotation from the CD matrix and negated for mirrored WCS
 solutions. Labels use eight selectable fields, sixteen candidate anchors (eight
 directions × two radii) and twenty deterministic collision passes. Standalone

@@ -132,7 +132,7 @@ min separation, null fraction, hole risk).
 | `stacked_sky_map.svg` | `--sky-map` (layered `<g>` groups: background, gaia-stars, extended-objects, sso-vectors, labels, footer; Gaia stars from every tile crossing the frame, fetched when online) |
 | `stacked_annotated.svg` | `--annotate --sky-map` (SVG 2, stable `<g data-layer>` groups for RA/Dec, galactic and ecliptic grids, constellations, point/extended sources with magnitude-encoded literal colours, motion vectors, scale bar, finder chart, labels and footer) |
 | `stacked_annotated.png` | `--annotate --sky-map` (same unified source model and label placement as the SVG, with anti-aliasing, halos and colour-blind-safe palettes) |
-| `annotation_provenance.json` | `--annotate --sky-map` (renderer version, frame size, layer list, source/label counts, per-source catalogue provenance/warnings, `gaia_coverage` and `name_matches`: `designated`/`matched` Gaia sources plus example names from SIMBAD or AllWISE; unmatched stars keep a unique `Gaia J…` designation) |
+| `annotation_provenance.json` | `--annotate --sky-map` (renderer version, frame size, layer list, source/label counts, per-source catalogue provenance/warnings, `gaia_coverage` and `name_matches`: `designated`/`matched` Gaia sources plus example names from SIMBAD or AllWISE; unmatched stars keep a unique `Gaia J…` designation). The offline bundle version is `2026-11-23-1` and includes the named-star table described in [catalog-attribution.md](catalog-attribution.md). |
 | `survey_reference.fits/.jpg` | `--survey-cutout` |
 | `diagnostics.txt/.json` | `--diagnose`, `--diagnose-integrated` |
 | `stacked_wht.f32raw`, `stacked_ctx.u32raw` | `--wht-ctx` (per-pixel weights and 32-bit contributor mask, versioned headers) |
@@ -163,10 +163,30 @@ the WCS:
 | Group id | `data-layer` | Content |
 |---|---|---|
 | `background` | `background` | Frame rectangle. |
-| `gaia-stars` | `point-sources` | Magnitude-sized `<circle>` elements with `<title>`. |
-| `extended-objects` | `extended-sources` | `<ellipse>` with `data-pa` (pixel-frame degrees). |
-| `sso-vectors` | `motion` | `<line>` with `data-object` and `data-site`, arrow marker `sso-arrow`. |
+| `gaia-stars` | `point-sources` | Magnitude-sized `<circle>` elements with `<title>`; indexed stars add `data-spectral` and `data-colour-mode="index"`. |
+| `extended-objects` | `extended-sources` | Type-aware `<ellipse>` (galaxy) or irregular `<path>` (nebula, remnant, dark cloud) with `data-pa` and `data-symbol`; planetary nebulae add a core dot, clusters use a dashed contour. Catalog axes set the ellipse dimensions. |
+| `sso-vectors` | `motion` | `<line>` with `data-object` and `data-site`, arrow marker `sso-arrow`; also carries `data-overlay="proper-motion"` arrows and `data-overlay="variability"` brackets with `data-amplitude`. |
 | `labels` | `labels` | `<text>` from deterministic collision placement; group declares `data-fields="8"`, `data-candidates="16"`, `data-passes="20"`. |
+| `legend` | `legend` | `ATLAS KEY` panel with the same symbol vocabulary in SVG and raster. Each swatch has `class="skystacker-key skystacker-key-<family>"`, `data-key-symbol` and an accessible `<title>`. |
+
+The root element is `<svg class="skystacker-atlas-map" data-symbol-families="...">`.
+The embedded stylesheet includes one inert CSS rule per family:
+
+```css
+svg.skystacker-hide-variable [data-symbol="variable"],
+svg.skystacker-hide-variable .skystacker-key-variable { display: none }
+```
+
+Add `skystacker-hide-<family>` to the root class to hide a family without
+re-rendering; remove it to show it again. The selector list is generated for
+`galaxy`, `nebula`, `dark-nebula`, `planetary`, `cluster`, `remnant`, `sso`,
+`star`, `variable` and `double`. Literal colours and geometry stay in the
+attributes, so librsvg and ImageMagick ignore the CSS and still render the full
+map. Proper-motion arrows start beyond the marker radius, use a 50-year
+baseline and are capped at 240 vectors; variability brackets grow with
+`data-amplitude` in magnitudes. `annotation_provenance.json` includes
+`geometry.catalog`/`geometry.fallback` and
+`overlays.proper_motion`/`overlays.variability`/`overlays.pm_cap` counters.
 | `footer` | `footer` | Source and vector counts. |
 
 Every group also carries `class="skystacker-layer"` and

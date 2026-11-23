@@ -9,7 +9,12 @@ gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:
 go install .
 ```
 
-**Self-test count: 287 passing.** Update this number after any test change.
+After **every** build, run `scripts/build-install.sh`: it formats, vets,
+builds with a fresh build date, installs `skystacker` in `~/.local/bin` and
+`~/go/bin`, refreshes `./skystacker`, runs the selftest and `go test ./...`,
+then prints the active PATH binary and its build date.
+
+**Self-test count: 298 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -1789,7 +1794,11 @@ rejection and disk spill. `--scale N` downsamples.
 ### Layered annotation subsystem — roadmap items 137–141 and 143 (2026-11-22)
 
 - New `annotation_layers.go` introduces one `annotationSource` model shared by the SVG 2 and raster renderers. It carries RA/Dec in radians, band/magnitude, axes/PA, epoch/proper motion, priority, label text and per-source provenance. An offline bundle (<2 MB) supplies bright stars, Messier/NGC/IC objects, LDN/Sh2 regions and constellation lines.
-- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **287**.
+- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **298**. `annotation_atlas_selftests.go` adds eight
+cases for the atlas symbol vocabulary, type-aware contours, variable/double
+markers, SVG/raster legend parity, the interactive legend/toggle contract,
+spectral/index-aware tints, catalog-driven footprints and proper-motion /
+variability overlays.
 - `--annotation-layers`, `--annotation-vo` and `--annotation-cache` were added to `cliOptions`, `runOptions`, `parseArgs`, `resolvedFlagLines` and the main `runOptions` literal. With `--annotate --sky-map` the pipeline now also writes `stacked_annotated.svg`, `stacked_annotated.png` and `annotation_provenance.json`.
 - Label placement uses a dense spatial grid with cell-local collision queries and a deterministic priority/magnitude/ID order; 10 000 labels are placed in ~45 ms and 20 fixtures have zero overlaps. A bug in `annotationGridStep` (ascending step order) and the rad→arcsec conversion in `annotationArcsecPerPixel` were fixed, reducing a 10k-source SVG from 11 MB to ~1.8 MB (<2 MiB budget).
 - Roadmap: 137–141 and 143 are Done; item 142 (per-tile WCS + distortion-aware projection) remains Blocked by item 13, so goal 144 stays Open. Examples and visual references are documented in `assets/annotation-examples/README.md`.

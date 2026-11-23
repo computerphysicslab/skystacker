@@ -13210,8 +13210,9 @@ type annotationCatalogEntry struct {
 }
 
 type coneSource struct {
-	RA, Dec, Mag float64
-	Name         string
+	RA, Dec, Mag     float64
+	Name, Type       string
+	Major, Minor, PA float64 // arcsec, arcsec, degrees
 }
 
 type coneVOTable struct {
@@ -13344,6 +13345,17 @@ func coneSearchDetailed(service coneService, baseURL string, raDeg, decDeg, radi
 		return coneResult{}, errors.New("cone search: VOTable has no ra/dec columns")
 	}
 	iMag, iName := col(names, "mag"), col(names, "name", "id")
+	iType := col(names, "otype", "class", "type")
+	iMajor := col(names, "dim_major", "semi_major", "major", "fwhm_major")
+	iMinor := col(names, "dim_minor", "semi_minor", "minor", "fwhm_minor")
+	iPA := col(names, "posang", "pa_deg", "pa")
+	cellFloat := func(row []string, idx int) (float64, bool) {
+		if idx < 0 || idx >= len(row) {
+			return 0, false
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(row[idx]), 64)
+		return v, err == nil && !math.IsNaN(v) && !math.IsInf(v, 0)
+	}
 	out := make([]coneSource, 0, len(table.Rows))
 	for _, row := range table.Rows {
 		if iRA >= len(row.Cells) || iDec >= len(row.Cells) {
@@ -13360,6 +13372,18 @@ func coneSearchDetailed(service coneService, baseURL string, raDeg, decDeg, radi
 		}
 		if iName >= 0 && iName < len(row.Cells) {
 			s.Name = strings.TrimSpace(row.Cells[iName])
+		}
+		if iType >= 0 && iType < len(row.Cells) {
+			s.Type = strings.TrimSpace(row.Cells[iType])
+		}
+		if v, ok := cellFloat(row.Cells, iMajor); ok && v > 0 {
+			s.Major = v
+		}
+		if v, ok := cellFloat(row.Cells, iMinor); ok && v > 0 {
+			s.Minor = v
+		}
+		if v, ok := cellFloat(row.Cells, iPA); ok {
+			s.PA = v
 		}
 		out = append(out, s)
 	}
@@ -22380,6 +22404,17 @@ func runSelfTests() int {
 		{"gaia field tile border coverage", testGaiaFieldTileSamplesCoversBorders},
 		{"gaia field coverage and fetch", testGaiaStarsForFieldCoverage},
 		{"annotation SVG raster parity", testAnnotationRasterParity},
+		{"atlas symbol vocabulary", testAtlasSymbolVocabulary},
+		{"atlas extended contours", testAtlasExtendedContours},
+		{"atlas variable and double markers", testAtlasStarMarkers},
+		{"atlas legend parity", testAtlasLegendParity},
+		{"atlas interactive legend", testAtlasInteractiveLegend},
+		{"atlas spectral markers", testAtlasSpectralMarkers},
+		{"atlas catalog footprints", testAtlasCatalogFootprints},
+		{"atlas motion and variability", testAtlasMotionVariabilityOverlays},
+		{"named star catalogue", testNamedStarCatalogue},
+		{"named star crossmatch priority", testNamedStarCrossmatchPriority},
+		{"vendor example corpus", testVendorExampleCorpus},
 		{"layered annotation end to end", testLayeredAnnotationEndToEnd},
 	}
 	failures := 0

@@ -23,7 +23,7 @@ go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 cp -f /home/jips/.local/bin/skystacker ./skystacker
 ln -sf /home/jips/.local/bin/skystacker /home/jips/go/bin/skystacker
 which skystacker && skystacker --version
-skystacker --selftest        # expect: all 287 self-tests passed
+skystacker --selftest        # expect: all 298 self-tests passed
 go test ./...
 ```
 
@@ -55,7 +55,7 @@ to `dcraw`/ImageMagick. CR3 still requires an external decoder.
 1. `gofmt -l *.go` prints nothing.
 2. `go vet ./...` is clean.
 3. `go test ./...` passes (Go `testing/synctest` rate-limiter test included).
-4. `skystacker --selftest` prints `all 287 self-tests passed`.
+4. `skystacker --selftest` prints `all 298 self-tests passed`.
 5. `skystacker --version` shows v0.6.1 and the current build date.
 
 See [quickstart.md](quickstart.md) for the first real run and

@@ -379,7 +379,7 @@ Gaia tiles and emit the layered SVG 2 map plus its raster twin:
   --output /tmp/skystacker-m31-demo --overwrite \
   --plate-solve --plate-center 10.6847,41.2690 --gaia-offline \
   --annotate --sky-map \
-  --annotation-layers grid-radec,grid-galactic,constellations,scale-bar,finder-chart \
+  --annotation-layers grid-radec,grid-galactic,constellations,scale-bar,finder-chart,legend \
   --annotation-cache /tmp/skystacker-m31-demo/vo-cache \
   --no-donation \
   assets/2024-08-07-Riofrio-M31-refr150
@@ -407,11 +407,41 @@ enrich the same model from VO services; network failures only add a redacted
 warning and keep the offline sources. Star markers use renderer-safe literal
 colours (white → amber → brown by magnitude) with matching opacity, so the SVG
 stays visible in browsers, librsvg and ImageMagick instead of rendering
-black-on-black. Both sky maps union every tile crossing the frame, cached or
+black-on-black. Extended sources use an atlas-style vocabulary shared by both
+outputs: a solid ellipse for a galaxy, a deterministic irregular contour for a
+diffuse nebula, supernova remnant or dark cloud, a ring plus core for a
+planetary nebula and a dashed circle for a cluster. Catalog `variable` and
+`double` flags (explicit JSON fields, SIMBAD object types or metadata aliases)
+draw a dashed surrounding ring or a resolved pair of stars. Every marker carries
+a stable `data-symbol` attribute, and the `legend` layer draws the same
+`ATLAS KEY` panel in the SVG and PNG. The root `<svg class="skystacker-atlas-map">`
+advertises the vocabulary in `data-symbol-families`; adding a
+`skystacker-hide-<family>` class to that root hides both the map markers and the
+matching key swatch using pure CSS (for example `skystacker-hide-variable`). Each
+swatch also has a `skystacker-key-<family>` class, a `data-key-symbol` and an
+accessible `<title>`. The key covers all seven map families: galaxy, nebula,
+planetary nebula, cluster, star, variable and double.
+
+Point-source markers can also be tinted from a colour index (`B-V`, `BP-RP`,
+`G-R`) or `spectral_class` metadata using an Okabe-Ito colour-blind-safe
+palette; magnitude still controls radius and opacity, and Gaia's `G` passband
+deliberately keeps the magnitude-only fallback. Indexed markers expose
+`data-spectral` and `data-colour-mode="index"`. When a VO row supplies major,
+minor and position-angle columns, those catalog axes drive the shared atlas
+contour; `annotation_provenance.json` records `geometry.catalog` and
+`geometry.fallback` counts. The `motion` layer adds deterministic 50-year
+proper-motion arrows and compact variability brackets sized from `amplitude`
+or `min_mag`/`max_mag`, with `overlays` counts in the provenance report.
+
+Both sky maps union every tile crossing the frame, cached or
 fetched when online, not only the CRVAL tile. Local adaptive star
 detection (box-blur high pass) is already used by the solver and stack.
-The vendor-style reference images and the synthetic golden field are in
-`assets/annotation-examples/`.
+The offline bundle also carries 3,241 bright-star proper names, Bayer letters and
+Flamsteed designations (V <= 6.5, BSD-2-Clause attribution in
+[docs/catalog-attribution.md](docs/catalog-attribution.md)); a readable name wins
+a cross-match inside the positional tolerance, while unique `Gaia J...`
+designations remain the offline fallback. The vendor-style reference images and
+the synthetic golden field are in `assets/annotation-examples/`.
 
 ### Comet Tracking Example
 
@@ -482,7 +512,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--hfr-quality` | Use median star HFR (`FWHM ≈ 1.995·HFR`) instead of blob size for advanced frame-quality weighting | `false` |
 | `--annotate` | Project cached Gaia stars through the plate solution into `stacked_annotated.jpg`; write unmatched detections to `anomalies.json` (offline) | `false` |
 | `--annotation-catalogs LIST` | Comma-separated JSON catalogs (RA/Dec degrees; optional name/type/mag/major/minor/pa) for multi-catalog cross-match | — |
-| `--annotation-layers LIST` | Comma-separated SVG 2 annotation layers: `grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart` (plus `grid`, `gaia-stars`/`stars`, `extended-objects`/`dso`, `sso-vectors`) | all |
+| `--annotation-layers LIST` | Comma-separated SVG 2 annotation layers: `grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, `legend`/`key` (plus `grid`, `gaia-stars`/`stars`, `extended-objects`/`dso`, `sso-vectors`) | all |
 | `--annotation-vo LIST` | Optional online VO services for layered annotations: `simbad`, `vizier` (offline bundle by default) | — |
 | `--annotation-cache DIR` | Disk cache directory for VO annotation queries | Gaia cache dir |
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
@@ -799,7 +829,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 287 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (145 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 298 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (158 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 
@@ -853,7 +883,8 @@ Shipped items (SER input, pixel/RA-Dec/ephemeris comet stacking, `--bpm`, `--bpm
 
 ### Tier 3 — Large, multi-day (`L`)
 
-- **Astrometric catalog annotation & unassociated-source flagging (extended)**: a basic offline version is shipped via `--annotate` (cached Gaia stars, SIP projection, annotated JPEG, `anomalies.json`). Extended with `--annotation-catalogs` JSON catalogs, elliptical apertures, `catalog_matches.json` and an SNR>5 unassociated-source gate. A unified annotation model now also drives layered SVG 2 and raster products (`stacked_annotated.svg/.png` plus `annotation_provenance.json`) when `--annotate --sky-map` is used: RA/Dec, galactic and ecliptic grids, constellations, scale bar, finder chart, deterministic label placement, optional SIMBAD/VizieR cone queries with cache and credential-safe errors. The offline bundle and vendor-style/synthetic examples live in `assets/annotation-examples/`. Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`, `testAnnotationBundle`, `testAnnotationVO`, `testAnnotationPlacement`, `testAnnotationSVG`, `testAnnotationMultiTileCoverage`, `testAnnotationRasterParity`, `testLayeredAnnotationEndToEnd`. Remaining gap: per-tile WCS/distortion-aware projection (roadmap item 142, blocked by item 13).
+- **Astrometric catalog annotation & unassociated-source flagging (extended)**: a basic offline version is shipped via `--annotate` (cached Gaia stars, SIP projection, annotated JPEG, `anomalies.json`). Extended with `--annotation-catalogs` JSON catalogs, elliptical apertures, `catalog_matches.json` and an SNR>5 unassociated-source gate. A unified annotation model now also drives layered SVG 2 and raster products (`stacked_annotated.svg/.png` plus `annotation_provenance.json`) when `--annotate --sky-map` is used: RA/Dec, galactic and ecliptic grids, constellations, scale bar, finder chart, deterministic label placement, optional SIMBAD/VizieR cone queries with cache and credential-safe errors. The offline bundle includes named bright stars (proper names, Bayer and Flamsteed) and the vendor-style/synthetic examples live in `assets/annotation-examples/`. Tests: `testWCSCatalogOverlay`, `testUnassociatedSourceFlagging`, `testAnnotationBundle`, `testAnnotationVO`, `testAnnotationPlacement`, `testAnnotationSVG`, `testAnnotationMultiTileCoverage`, `testAnnotationRasterParity`, `testLayeredAnnotationEndToEnd`, `testNamedStarCatalogue`,
+`testNamedStarCrossmatchPriority` and `testVendorExampleCorpus`. Remaining gap: per-tile WCS/distortion-aware projection (roadmap item 142, blocked by item 13).
 - **Drizzle & Bayer drizzle integration**: `drizzleUpsample` + `--drizzle-upsample/--drizzle-pixfrac` write a diagnostic drizzled upsample of the final stack (`testDrizzleUpsample`). True per-frame drizzle resampling (weight/coverage accumulator replacing `resampleToReference`) and Bayer drizzle remain.
 - **Multiscale background modelling**: `--bg-multiscale` removes a coarse, object-protected 20th-percentile background grid before the polynomial fit (a first step; wavelet-scale processing remains). Test: `testMultiscaleBackground`.
 - **PSF-based deconvolution**: `--deconvolve` provides Gaussian-PSF Richardson–Lucy (tested on a synthetic star); `--deconvolve-grid` estimates a local PSF from star HFR over a 3×3/4×4 grid with blended tiles. Wiener/regularized variants remain.

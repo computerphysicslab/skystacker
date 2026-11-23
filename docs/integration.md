@@ -98,11 +98,19 @@ Values may be strings, numbers, booleans or arrays:
 ## Consuming layered SVG products
 
 The sky-map SVG is designed for machine consumption: select groups by
-`#gaia-stars`, `#extended-objects`, `#sso-vectors`, `#labels` or `#footer`, or
-filter on `data-layer`/`class="skystacker-layer"`. Group ids and `data-*`
+`#gaia-stars`, `#extended-objects`, `#sso-vectors`, `#legend`, `#labels` or
+`#footer`, individual symbol families through `[data-symbol="<family>"]`, key
+swatches through `.skystacker-key-<family>`, proper-motion arrows and
+variability brackets through `[data-overlay="proper-motion"]` and
+`[data-overlay="variability"]`, or filter on
+`data-layer`/`class="skystacker-layer"`. Indexed stars also expose
+`data-spectral` and `data-colour-mode="index"`. Group ids and `data-*`
 attributes are stable; text content and styling may change. A web frontend can
 therefore hide the label layer, restyle point sources or render SSO arrows in a
-different colour without invoking SkyStacker again. The exact group schema is
+different colour without invoking SkyStacker again. The companion
+`annotation_provenance.json` reports `geometry`, `overlays` and `name_matches`
+counts for the
+same products. The exact group schema is
 listed in [output-formats.md](output-formats.md).
 
 ## Limits

@@ -70,6 +70,8 @@ type annotationSource struct {
 	Epoch      float64              `json:"epoch,omitempty"`
 	PMRA       float64              `json:"pmra_mas_yr,omitempty"`
 	PMDec      float64              `json:"pmdec_mas_yr,omitempty"`
+	Variable   bool                 `json:"variable,omitempty"`
+	Double     bool                 `json:"double,omitempty"`
 	Priority   int                  `json:"priority"`
 	Provenance annotationProvenance `json:"provenance"`
 	Metadata   map[string]string    `json:"metadata,omitempty"`
@@ -215,7 +217,7 @@ Taurus|Elnath|Aldebaran
 Taurus|Aldebaran|Hyadum I
 Taurus|Hyadum I|Hyadum II`
 
-const offlineBundleVersion = "2026-11-22-1"
+const offlineBundleVersion = "2026-11-23-1"
 
 func parseBrightStarTable(table string, provenance annotationProvenance) []annotationSource {
 	out := make([]annotationSource, 0, 64)
@@ -295,8 +297,20 @@ func parseConstellationTable(table string) []constellationSegment {
 func offlineAnnotationBundle() annotationBundle {
 	bundleOnce.Do(func() {
 		prov := annotationProvenance{Catalog: offlineBundleVersion, Service: "offline-bundle", Offline: true}
-		sources := make([]annotationSource, 0, 100)
+		sources := make([]annotationSource, 0, 4096)
 		sources = append(sources, parseBrightStarTable(offlineBrightStars, prov)...)
+		known := make(map[string]bool, len(sources))
+		for _, src := range sources {
+			known[strings.ToLower(src.Name)] = true
+		}
+		for _, src := range parseNamedStarTable(offlineNamedStars, prov) {
+			key := strings.ToLower(src.Name)
+			if known[key] {
+				continue
+			}
+			known[key] = true
+			sources = append(sources, src)
+		}
 		sources = append(sources, parseDeepSkyTable(offlineDeepSky, prov, 90)...)
 		sources = append(sources, parseDeepSkyTable(offlineDarkNebulae, prov, 60)...)
 		bundleData = annotationBundle{
@@ -521,6 +535,7 @@ func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec flo
 		name string
 		ra   float64
 		dec  float64
+		rank int
 	}
 	candidates := make([]candidate, 0, len(sources))
 	seen := make(map[string]bool)
@@ -537,7 +552,8 @@ func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec flo
 			continue
 		}
 		seen[key] = true
-		candidates = append(candidates, candidate{id: key, name: s.Name, ra: s.RA, dec: s.Dec})
+		candidates = append(candidates, candidate{id: key, name: s.Name, ra: s.RA, dec: s.Dec,
+			rank: annotationNameRank(s)})
 	}
 	matchedCandidate := make(map[string]bool)
 	matchedByName := make(map[string]bool)
@@ -568,6 +584,7 @@ func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec flo
 			}
 			best := -1
 			bestSep := math.Inf(1)
+			bestScore := math.Inf(1)
 			for ci, c := range candidates {
 				if matchedCandidate[c.id] {
 					continue
@@ -576,8 +593,12 @@ func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec flo
 				if sep > tol {
 					continue
 				}
-				if sep < bestSep || (sep == bestSep && ci < best) {
-					best, bestSep = ci, sep
+				// A readable name wins only inside a very small positional
+				// advantage (0.5 arcsec per rank), so a genuinely closer
+				// anonymous source is never displaced by a distant named star.
+				score := sep - 0.5*float64(c.rank)
+				if score < bestScore || (score == bestScore && (sep < bestSep || (sep == bestSep && ci < best))) {
+					best, bestSep, bestScore = ci, sep, score
 				}
 			}
 			if best >= 0 {
@@ -915,10 +936,19 @@ func simbadTAPCone(ctx context.Context, baseURL string, raDeg, decDeg, radiusArc
 			kind = "cone"
 		}
 		mag, _ := numericField(row, "mag", "V", "flux")
+		major, _ := numericField(row, "major", "dim_major", "semi_major")
+		minor, _ := numericField(row, "minor", "dim_minor", "semi_minor")
+		pa, _ := numericField(row, "pa", "posang", "pa_deg")
+		kindLower := strings.ToLower(kind)
+		variable := strings.Contains(kindLower, "variable") || strings.Contains(kindLower, "v*")
+		double := strings.Contains(kindLower, "double") || strings.Contains(kindLower, "binary")
 		sources = append(sources, annotationSource{
 			ID: "simbad-" + name, Name: name, Type: kind, RA: ra * math.Pi / 180,
 			Dec: dec * math.Pi / 180, Mag: mag, Priority: 75, Provenance: prov,
-			Extended: isExtendedAnnotationType(kind),
+			Extended: isExtendedAnnotationType(kind) || (major > 0 && minor > 0),
+			Major:    major, Minor: minor, PA: pa,
+			Variable: variable, Double: double,
+			Metadata: atlasGeometryMetadata(major, minor),
 		})
 	}
 	return sources, truncated, nil
@@ -953,6 +983,23 @@ func stringField(row map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// annotationSourceFromCone converts a parsed VOTable row into the unified
+// annotation model, preserving catalog geometry and its provenance flag.
+func annotationSourceFromCone(s coneSource, prov annotationProvenance) annotationSource {
+	kind := strings.TrimSpace(s.Type)
+	if kind == "" {
+		kind = "cone"
+	}
+	extended := isExtendedAnnotationType(kind) || (s.Major > 0 && s.Minor > 0)
+	return annotationSource{
+		ID: "vizier-" + s.Name, Name: s.Name, Type: kind,
+		RA: s.RA, Dec: s.Dec, Mag: s.Mag,
+		Major: s.Major, Minor: s.Minor, PA: s.PA,
+		Priority: 50, Provenance: prov, Extended: extended,
+		Metadata: atlasGeometryMetadata(s.Major, s.Minor),
+	}
 }
 
 // acquireAnnotationSources assembles offline and optional online sources with
@@ -1011,12 +1058,7 @@ func acquireAnnotationSources(ctx context.Context, o annotationAcquisitionOption
 			}
 			prov := result.Provenance[len(result.Provenance)-1]
 			for _, s := range res.Sources {
-				result.Sources = append(result.Sources, annotationSource{
-					ID: "vizier-" + s.Name, Name: s.Name, Type: "cone",
-					// coneSearchDetailed already stores RA/Dec in radians.
-					RA: s.RA, Dec: s.Dec, Mag: s.Mag,
-					Priority: 50, Provenance: prov,
-				})
+				result.Sources = append(result.Sources, annotationSourceFromCone(s, prov))
 			}
 		default:
 			return annotationAcquisition{}, fmt.Errorf("unknown annotation VO service %q", service)
@@ -1484,10 +1526,10 @@ func annotationStarStyle(mag float64) (string, float64) {
 // preserved so existing consumers and selftests keep working.
 func buildAnnotationSVG(width, height int, sources []annotationSource, velocities []skyVelocityVector, opts annotationRenderOptions) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"2\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\">\n", width, height, width, height)
+	fmt.Fprintf(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"2\" class=\"skystacker-atlas-map\" data-symbol-families=\"%s\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\">\n", strings.Join(atlasSymbolFamilies, ","), width, height, width, height)
 	b.WriteString("<title>SkyStacker annotated sky map</title>\n")
 	fmt.Fprintf(&b, "<desc>Layered astronomical annotation: %d catalogued sources, %d motion vectors. Layers are independently toggleable.</desc>\n", len(sources), len(velocities))
-	b.WriteString("<style>:root{--skystacker-star:#ffe9b0;--skystacker-extended:#55ccff;--skystacker-motion:#ff8f6b;--skystacker-label:#d7e3f4;--skystacker-grid:#3f5976} .skystacker-layer{isolation:isolate} .skystacker-hidden{display:none}</style>\n")
+	fmt.Fprintf(&b, "<style>:root{--skystacker-star:#ffe9b0;--skystacker-extended:#55ccff;--skystacker-motion:#ff8f6b;--skystacker-label:#d7e3f4;--skystacker-grid:#3f5976} .skystacker-layer{isolation:isolate} .skystacker-hidden{display:none} %s</style>\n", atlasToggleCSS())
 	fmt.Fprintf(&b, "<g id=\"background\" class=\"skystacker-layer\" data-layer=\"background\"><rect width=\"%d\" height=\"%d\" fill=\"#05070d\"/></g>\n", width, height)
 	if opts.WCS != nil {
 		step := annotationGridStep(opts.WCS, width, height)
@@ -1522,23 +1564,57 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 	b.WriteString("<g id=\"gaia-stars\" class=\"skystacker-layer\" data-layer=\"point-sources\">\n")
 	titles := true
 	for _, s := range sources {
-		if s.Extended && s.Major > 0 && s.Minor > 0 {
+		if s.Extended && (s.PixelA > 0 || s.Major > 0) {
 			continue
 		}
-		r := 1.5 + (18-s.Mag)*0.35
-		if r < 1.2 {
-			r = 1.2
-		}
-		if r > 10 {
-			r = 10
-		}
-		label := html.EscapeString(s.Name)
+		r := annotationStarRadius(s.Mag)
 		fill, opacity := annotationStarStyle(s.Mag)
-		fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\"", s.X, s.Y, r, fill, opacity)
-		if titles && label != "" {
-			fmt.Fprintf(&b, "><title>%s (%s, G=%.2f)</title></circle>\n", label, html.EscapeString(s.Type), s.Mag)
-		} else {
-			b.WriteString("/>\n")
+		tint, coloured := atlasStarTint(s)
+		if coloured {
+			fill = tint
+		}
+		spectral := ""
+		colourAttrs := ""
+		if coloured {
+			if index, ok := atlasColourIndex(s); ok {
+				spectral = atlasSpectralClass(index)
+			}
+			colourAttrs = fmt.Sprintf(" data-spectral=\"%s\" data-colour-mode=\"index\"", spectral)
+		}
+		symbol := atlasSymbol(s)
+		label := html.EscapeString(s.Name)
+		titleText := fmt.Sprintf("%s (%s, G=%.2f)", label, html.EscapeString(s.Type), s.Mag)
+		if coloured && spectral != "" {
+			titleText += fmt.Sprintf(" [%s]", spectral)
+		}
+		if titles && label == "" {
+			titleText = ""
+		}
+		switch symbol {
+		case "variable":
+			if titleText != "" {
+				fmt.Fprintf(&b, "<g data-symbol=\"variable\"%s><title>%s</title><circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\"/>", colourAttrs, titleText, s.X, s.Y, r, fill, opacity)
+			} else {
+				fmt.Fprintf(&b, "<g data-symbol=\"variable\"%s><circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\"/>", colourAttrs, s.X, s.Y, r, fill, opacity)
+			}
+			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"none\" stroke=\"%s\" stroke-width=\"0.8\" stroke-dasharray=\"2 2\" opacity=\"0.85\"/></g>\n", s.X, s.Y, r+3, atlasStroke("variable"))
+		case "double":
+			pa := s.PixelPA * math.Pi / 180
+			dx, dy := 2.6*math.Cos(pa), 2.6*math.Sin(pa)
+			if titleText != "" {
+				fmt.Fprintf(&b, "<g data-symbol=\"double\"%s><title>%s</title>", colourAttrs, titleText)
+			} else {
+				fmt.Fprintf(&b, "<g data-symbol=\"double\"%s>", colourAttrs)
+			}
+			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\"/><circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\"/></g>\n",
+				s.X-dx, s.Y-dy, r*0.8, fill, opacity, s.X+dx, s.Y+dy, r*0.8, fill, opacity)
+		default:
+			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\" data-symbol=\"%s\"%s", s.X, s.Y, r, fill, opacity, symbol, colourAttrs)
+			if titleText != "" {
+				fmt.Fprintf(&b, "><title>%s</title></circle>\n", titleText)
+			} else {
+				b.WriteString("/>\n")
+			}
 		}
 		if titles && b.Len() > 1<<20 {
 			titles = false
@@ -1548,19 +1624,35 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 	b.WriteString("<g id=\"extended-objects\" class=\"skystacker-layer\" data-layer=\"extended-sources\">\n")
 	titles = true
 	for _, s := range sources {
-		if !s.Extended || s.Major <= 0 || s.Minor <= 0 {
+		if !s.Extended || (s.PixelA <= 0 && s.Major <= 0) {
 			continue
 		}
 		a, bb := s.Major/2, s.Minor/2
 		if s.PixelA > 0 {
 			a, bb = s.PixelA/2, s.PixelB/2
 		}
-		label := html.EscapeString(s.Name)
-		fmt.Fprintf(&b, "<ellipse cx=\"%.2f\" cy=\"%.2f\" rx=\"%.2f\" ry=\"%.2f\" transform=\"rotate(%.1f %.2f %.2f)\" fill=\"none\" stroke=\"#55ccff\" stroke-width=\"1.2\" data-pa=\"%.1f\"", s.X, s.Y, a, bb, s.PixelPA, s.X, s.Y, s.PixelPA)
-		if titles && label != "" {
-			fmt.Fprintf(&b, "><title>%s (%s)</title></ellipse>\n", label, html.EscapeString(s.Type))
-		} else {
-			b.WriteString("/>\n")
+		symbol := atlasSymbol(s)
+		col := atlasStroke(symbol)
+		dash := atlasDash(symbol)
+		dashAttr := ""
+		if dash != "" {
+			dashAttr = fmt.Sprintf(" stroke-dasharray=\"%s\"", dash)
+		}
+		title := ""
+		if titles && s.Name != "" {
+			title = fmt.Sprintf("<title>%s (%s)</title>", html.EscapeString(s.Name), html.EscapeString(s.Type))
+		}
+		switch symbol {
+		case "nebula", "dark-nebula", "remnant":
+			fmt.Fprintf(&b, "<path d=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.1\" data-pa=\"%.1f\" data-symbol=\"%s\"%s>%s</path>\n",
+				annotationBlobPath(s.X, s.Y, a, bb, s.PixelPA, s.ID), col, s.PixelPA, symbol, dashAttr, title)
+		case "planetary":
+			fmt.Fprintf(&b, "<g data-symbol=\"planetary\">%s<ellipse cx=\"%.2f\" cy=\"%.2f\" rx=\"%.2f\" ry=\"%.2f\" transform=\"rotate(%.1f %.2f %.2f)\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.2\" data-pa=\"%.1f\"/>",
+				title, s.X, s.Y, a, bb, s.PixelPA, s.X, s.Y, col, s.PixelPA)
+			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"1\" fill=\"%s\"/></g>\n", s.X, s.Y, col)
+		default:
+			fmt.Fprintf(&b, "<ellipse cx=\"%.2f\" cy=\"%.2f\" rx=\"%.2f\" ry=\"%.2f\" transform=\"rotate(%.1f %.2f %.2f)\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.2\" data-pa=\"%.1f\" data-symbol=\"%s\"%s>%s</ellipse>\n",
+				s.X, s.Y, a, bb, s.PixelPA, s.X, s.Y, col, s.PixelPA, symbol, dashAttr, title)
 		}
 		if titles && b.Len() > 1<<20 {
 			titles = false
@@ -1572,8 +1664,11 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 		fmt.Fprintf(&b, "<line x1=\"%.2f\" y1=\"%.2f\" x2=\"%.2f\" y2=\"%.2f\" stroke=\"#ff8f6b\" stroke-width=\"1.4\" marker-end=\"url(#sso-arrow)\" data-object=\"%s\" data-site=\"%s\"><title>%s velocity vector</title></line>\n",
 			v.X1, v.Y1, v.X2, v.Y2, html.EscapeString(v.Name), html.EscapeString(v.Observatory), html.EscapeString(v.Name))
 	}
+	if opts.enabled("motion") {
+		appendAtlasOverlaysSVG(&b, sources, opts.WCS)
+	}
 	b.WriteString("</g>\n")
-	b.WriteString("<defs><marker id=\"sso-arrow\" markerWidth=\"6\" markerHeight=\"6\" refX=\"5\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L6,3 L0,6 Z\" fill=\"#ff8f6b\"/></marker></defs>\n")
+	b.WriteString("<defs><marker id=\"sso-arrow\" markerWidth=\"6\" markerHeight=\"6\" refX=\"5\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L6,3 L0,6 Z\" fill=\"#ff8f6b\"/></marker><marker id=\"skystacker-pm-arrow\" markerWidth=\"6\" markerHeight=\"6\" refX=\"5\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L6,3 L0,6 Z\" fill=\"#ff8f6b\"/></marker></defs>\n")
 	if opts.WCS != nil && opts.enabled("scale-bar") {
 		px, label := annotationScaleBar(opts.WCS, width)
 		x0, y0 := 14.0, float64(height)-34.0
@@ -1595,6 +1690,9 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 			fmt.Fprintf(&b, "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"0.8\" fill=\"#ffe9b0\"/>", ix, iy)
 		}
 		fmt.Fprintf(&b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"#d7e3f4\" font-family=\"monospace\" font-size=\"9\">N</text></g>\n", x0+size-10, y0+11)
+	}
+	if opts.enabled("legend") {
+		b.WriteString(atlasLegendSVG(width, height))
 	}
 	fields := opts.LabelFields
 	if fields <= 0 || fields > skyLabelFields {
@@ -1777,32 +1875,66 @@ const (
 )
 
 func renderAnnotationRaster(base *image.RGBA, sources []annotationSource, velocities []skyVelocityVector, labels []labelBox) *image.RGBA {
+	return renderAnnotationRasterWithOptions(base, sources, velocities, labels,
+		annotationRenderOptions{Layers: annotationAllLayers})
+}
+
+// renderAnnotationRasterWithOptions mirrors the SVG layer selection and uses
+// the shared atlas symbol helpers so both products stay geometrically aligned.
+func renderAnnotationRasterWithOptions(base *image.RGBA, sources []annotationSource, velocities []skyVelocityVector, labels []labelBox, opts annotationRenderOptions) *image.RGBA {
 	if base == nil {
 		return nil
 	}
 	out := image.NewRGBA(base.Bounds())
 	copy(out.Pix, base.Pix)
 	for _, s := range sources {
-		col := annotationColour(s.Type)
+		symbol := atlasSymbol(s)
+		col := atlasRasterColour(symbol)
 		if s.Extended && s.PixelA > 0 && s.PixelB > 0 {
-			drawAAEllipse(out, s.X, s.Y, s.PixelA/2, s.PixelB/2, s.PixelPA, col)
-		} else {
-			r := 1.5 + (18-s.Mag)*0.35
-			if r < 1.2 {
-				r = 1.2
+			a, bb := s.PixelA/2, s.PixelB/2
+			switch symbol {
+			case "nebula", "dark-nebula", "remnant":
+				drawAAPolyline(out, annotationBlobPoints(s.X, s.Y, a, bb, s.PixelPA, s.ID),
+					1.1, col, atlasDashed(symbol))
+			case "planetary":
+				drawAAEllipseOutline(out, s.X, s.Y, a, bb, s.PixelPA, 1.2, col, false)
+				drawAAFilledEllipse(out, s.X, s.Y, 1, 1, 0, col, 1)
+			default:
+				drawAAEllipseOutline(out, s.X, s.Y, a, bb, s.PixelPA, 1.2, col, atlasDashed(symbol))
 			}
-			if r > 10 {
-				r = 10
-			}
-			drawAAEllipse(out, s.X, s.Y, r, r, 0, col)
+			continue
+		}
+		r := annotationStarRadius(s.Mag)
+		starCol := annotationStarColour(s.Mag)
+		if tint, ok := atlasStarTint(s); ok {
+			starCol = atlasHexColour(tint)
+		}
+		alpha := annotationStarOpacity(s.Mag)
+		switch symbol {
+		case "variable":
+			drawAAFilledEllipse(out, s.X, s.Y, r, r, 0, starCol, alpha)
+			drawAAEllipseOutline(out, s.X, s.Y, r+3, r+3, 0, 0.8, col, true)
+		case "double":
+			pa := s.PixelPA * math.Pi / 180
+			dx, dy := 2.6*math.Cos(pa), 2.6*math.Sin(pa)
+			drawAAFilledEllipse(out, s.X-dx, s.Y-dy, r*0.8, r*0.8, 0, starCol, alpha)
+			drawAAFilledEllipse(out, s.X+dx, s.Y+dy, r*0.8, r*0.8, 0, starCol, alpha)
+		default:
+			drawAAFilledEllipse(out, s.X, s.Y, r, r, 0, starCol, alpha)
 		}
 	}
 	for _, v := range velocities {
 		drawAALine(out, v.X1, v.Y1, v.X2, v.Y2, 1.2, annotationColour("sso"))
 	}
+	if opts.enabled("motion") {
+		drawAtlasOverlaysRaster(out, sources, opts.WCS)
+	}
 	textCol := color.RGBA{215, 227, 244, 255}
 	for _, l := range labels {
 		drawBitmapText(out, l.Text, l.X, l.Y+annotationGlyphTopOffset, textCol)
+	}
+	if opts.enabled("legend") {
+		renderAtlasLegendRaster(out)
 	}
 	return out
 }
@@ -1856,7 +1988,7 @@ func annotationSSIM(a, b *image.RGBA) float64 {
 var annotationAllLayers = []string{
 	"background", "grid-radec", "grid-galactic", "grid-ecliptic", "constellations",
 	"point-sources", "extended-sources", "motion", "scale-bar", "finder-chart",
-	"labels", "footer",
+	"legend", "labels", "footer",
 }
 
 // parseAnnotationLayers maps user-facing layer aliases to the names consumed
@@ -1879,6 +2011,8 @@ func parseAnnotationLayers(spec string) []string {
 			name = "extended-sources"
 		case "sso-vectors", "vectors":
 			name = "motion"
+		case "key":
+			name = "legend"
 		case "grid":
 			out = append(out, "grid-radec", "grid-galactic", "grid-ecliptic")
 			continue
@@ -1891,6 +2025,21 @@ func parseAnnotationLayers(spec string) []string {
 // layeredAnnotationReport is the provenance report written next to the SVG and
 // raster products. It records the exact model, layers and sources used so a
 // downstream consumer can audit or reproduce the annotation.
+// annotationOverlayReport records the proper-motion and variability overlays
+// drawn in the motion layer.
+type annotationOverlayReport struct {
+	ProperMotion int `json:"proper_motion"`
+	Variability  int `json:"variability"`
+	PMCap        int `json:"pm_cap,omitempty"`
+}
+
+// annotationGeometryReport records whether extended footprints used catalog
+// axes or the procedural fallback.
+type annotationGeometryReport struct {
+	Catalog  int `json:"catalog"`
+	Fallback int `json:"fallback"`
+}
+
 type layeredAnnotationReport struct {
 	Version      string                     `json:"version"`
 	Width        int                        `json:"width"`
@@ -1904,6 +2053,8 @@ type layeredAnnotationReport struct {
 	Warnings     []string                   `json:"warnings,omitempty"`
 	GaiaCoverage *gaiaFieldCoverage         `json:"gaia_coverage,omitempty"`
 	NameMatches  *annotationNameMatchReport `json:"name_matches,omitempty"`
+	Geometry     *annotationGeometryReport  `json:"geometry,omitempty"`
+	Overlays     *annotationOverlayReport   `json:"overlays,omitempty"`
 }
 
 // annotationBaseImage loads the stacked JPEG as RGBA. A missing or invalid
@@ -2102,7 +2253,7 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 	}
 	svg := buildAnnotationSVG(w, h, sources, vectors, renderOpts)
 	labels := placeAnnotationLabels(w, h, sources, 1)
-	raster := renderAnnotationRaster(annotationBaseImage(outputDir, w, h), sources, vectors, labels)
+	raster := renderAnnotationRasterWithOptions(annotationBaseImage(outputDir, w, h), sources, vectors, labels, renderOpts)
 
 	svgPath := filepath.Join(outputDir, "stacked_annotated.svg")
 	if err := writeFileAtomic(svgPath, func(out io.Writer) error {
@@ -2117,6 +2268,26 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 	}); err != nil {
 		return err
 	}
+	overlays := annotationOverlayReport{PMCap: atlasMotionVectorLimit}
+	for _, o := range atlasMotionOverlays(sources, &ww) {
+		if o.ProperMotion {
+			overlays.ProperMotion++
+		}
+		if o.Variability > 0 {
+			overlays.Variability++
+		}
+	}
+	geometry := annotationGeometryReport{}
+	for _, src := range sources {
+		if !src.Extended {
+			continue
+		}
+		if atlasGeometrySource(src) == "catalog" {
+			geometry.Catalog++
+		} else {
+			geometry.Fallback++
+		}
+	}
 	report := layeredAnnotationReport{
 		Version:      bundle.Version,
 		Width:        w,
@@ -2130,6 +2301,8 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 		Warnings:     acq.Warnings,
 		GaiaCoverage: &coverage,
 		NameMatches:  &nameMatch,
+		Geometry:     &geometry,
+		Overlays:     &overlays,
 	}
 	if err := writeJSON(filepath.Join(outputDir, "annotation_provenance.json"), report); err != nil {
 		return err
