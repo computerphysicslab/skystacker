@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -53,8 +54,22 @@ func TestBinaryIndexRoundTrip(t *testing.T) {
 		}
 	}
 	for key, hits := range idx.Quads {
-		if len(got.Quads[key]) != len(hits) || got.Quads[key][0].Band != hits[0].Band {
-			t.Fatalf("quad %s mismatch: %+v", key, got.Quads[key])
+		gotHits := got.Quads[key]
+		if len(gotHits) != len(hits) {
+			t.Fatalf("quad %s hit count: %d vs %d", key, len(gotHits), len(hits))
+		}
+		for i := range hits {
+			if gotHits[i].Band != hits[i].Band || gotHits[i].Ipix != hits[i].Ipix ||
+				math.Abs(gotHits[i].Longest-hits[i].Longest) > 1e-12 {
+				t.Fatalf("quad %s hit %d mismatch: %+v vs %+v", key, i, gotHits[i], hits[i])
+			}
+			for j := range hits[i].Stars {
+				if math.Abs(gotHits[i].Stars[j][0]-hits[i].Stars[j][0]) > 1e-12 ||
+					math.Abs(gotHits[i].Stars[j][1]-hits[i].Stars[j][1]) > 1e-12 {
+					t.Fatalf("quad %s hit %d star %d RA/Dec mismatch: %+v vs %+v",
+						key, i, j, gotHits[i].Stars[j], hits[i].Stars[j])
+				}
+			}
 		}
 	}
 }
@@ -207,5 +222,84 @@ func TestSubDegreeIndexWithProperMotion(t *testing.T) {
 	}
 	if math.Abs(stars[0].PMRA-120) > 1e-6 || math.Abs(stars[0].PMDec+45) > 1e-6 {
 		t.Fatalf("proper motion not preserved: %+v", stars[0])
+	}
+}
+
+func TestValidateNativeIndexCounts(t *testing.T) {
+	cases := []struct {
+		name                       string
+		bands, tiles, quads, stars uint64
+		wantErr                    bool
+	}{
+		{"all at limit", maxNativeIndexBands, maxNativeIndexTiles, maxNativeIndexQuads, maxNativeIndexStars, false},
+		{"bands above limit", maxNativeIndexBands + 1, 0, 0, 0, true},
+		{"tiles above limit", 0, maxNativeIndexTiles + 1, 0, 0, true},
+		{"quads above limit", 0, 0, maxNativeIndexQuads + 1, 0, true},
+		{"stars above limit", 0, 0, 0, maxNativeIndexStars + 1, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateNativeIndexCounts(c.bands, c.tiles, c.quads, c.stars)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("validateNativeIndexCounts(%d,%d,%d,%d) = %v, wantErr=%v",
+					c.bands, c.tiles, c.quads, c.stars, err, c.wantErr)
+			}
+		})
+	}
+	if err := validateNativeIndexSectionCount("tile stars", uint32(maxNativeIndexTileStars), maxNativeIndexTileStars); err != nil {
+		t.Fatalf("tile star count at limit rejected: %v", err)
+	}
+	if err := validateNativeIndexSectionCount("tile stars", uint32(maxNativeIndexTileStars+1), maxNativeIndexTileStars); err == nil {
+		t.Fatal("tile star count above limit accepted")
+	}
+}
+
+func sbiHeaderBytes(bands, tiles uint32, quads uint64) []byte {
+	var b bytes.Buffer
+	h := nativeIndexHeader{Magic: nativeBinaryMagic, Version: nativeBinaryVersion,
+		Nside: 8, Bin: nativeQuadBin, Brightest: 4, Bands: bands, Tiles: tiles, Quads: quads}
+	if err := binary.Write(&b, binary.LittleEndian, h); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
+
+func TestReadNativeIndexBinaryRejectsHostileCounts(t *testing.T) {
+	cases := []struct {
+		name         string
+		bands, tiles uint32
+		quads        uint64
+		tail         func() []byte
+	}{
+		{"bands", uint32(maxNativeIndexBands + 1), 0, 0, func() []byte { return nil }},
+		{"tiles", 0, uint32(maxNativeIndexTiles + 1), 0, func() []byte { return nil }},
+		{"quads", 0, 0, maxNativeIndexQuads + 1, func() []byte { return nil }},
+		{"stars", 0, 0, 0, func() []byte {
+			var b bytes.Buffer
+			_ = binary.Write(&b, binary.LittleEndian, maxNativeIndexStars+1)
+			return b.Bytes()
+		}},
+		{"tile stars", 0, 1, 0, func() []byte {
+			var b bytes.Buffer
+			_ = binary.Write(&b, binary.LittleEndian, uint64(0)) // star table
+			_ = binary.Write(&b, binary.LittleEndian, int32(7))  // ipix
+			_ = binary.Write(&b, binary.LittleEndian, uint32(maxNativeIndexTileStars+1))
+			return b.Bytes()
+		}},
+		{"quad hits", 0, 0, 1, func() []byte {
+			var b bytes.Buffer
+			_ = binary.Write(&b, binary.LittleEndian, uint64(0)) // star table
+			_ = writeString(&b, "wide|1:2:3:4")
+			_ = binary.Write(&b, binary.LittleEndian, uint32(maxNativeIndexQuadHits+1))
+			return b.Bytes()
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			data := append(sbiHeaderBytes(c.bands, c.tiles, c.quads), c.tail()...)
+			if _, err := readNativeIndexBinary(bytes.NewReader(data)); err == nil {
+				t.Fatalf("hostile %s count accepted", c.name)
+			}
+		})
 	}
 }

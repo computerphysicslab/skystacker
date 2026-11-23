@@ -1932,3 +1932,14 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   oversized SOF3 stream, the Bayer cap and a `ReaderAt` advertising a 512 MiB+
   tail. Existing ljpeg tests, `TestFindLosslessJPEGSkipsStrayFFC3` and the real
   Orion EOS 40D oracle (3944x2622 @ 14 bits) stay green. Suite unchanged at 309.
+
+### SBI1 allocation bounds — item 121 (2026-11-23)
+
+- The SBI1 writer and reader now share a single `nativeIndexHeader` struct and
+  the same count validation. Bands are capped at 1024, tiles at 1 Mi, quads and
+  stars at 16 Mi, stars per tile at 1 Mi and hits per quad key at 1 Mi. All
+  checks happen before map/slice allocation or loops driven by file counters.
+- `TestReadNativeIndexBinaryRejectsHostileCounts` covers each rejected count
+  with a tiny crafted stream; `TestValidateNativeIndexCounts` locks the exact
+  boundaries; `TestBinaryIndexRoundTrip` now compares quad IPix, band, longest
+  edge and the four RA/Dec star pairs after a write/read cycle.

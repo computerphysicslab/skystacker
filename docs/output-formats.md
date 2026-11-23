@@ -143,7 +143,9 @@ min separation, null fraction, hole risk).
 `blind_index.sbi` (SBI1) is the compact binary index produced when
 `--build-blind-index` targets a `.sbi` path: a fixed header, band table,
 deduplicated star table (RA/Dec/mag/`pmra`/`pmdec`), tile table and quad table
-referencing star IDs. JSON/`.gz` catalogs remain readable and interchangeable.
+referencing star IDs. The reader rejects oversized table counts before
+allocating (1024 bands, 1 Mi tiles, 16 Mi quads/stars, 1 Mi stars per tile or
+hits per quad key). JSON/`.gz` catalogs remain readable and interchangeable.
 `blind_index.json` (produced by `--build-blind-index`) is a compact JSON
 artefact (version 2) with `version`, `nside`, `bin`, `brightest`, `bands`,
 `tiles` (brightest Gaia stars per HEALPix tile) and `quads`. Quad keys are

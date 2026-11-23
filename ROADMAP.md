@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-23):** 121 Done · 18 Open · 7 Blocked · 5 Executed/not accepted
+**Summary (2026-11-23):** 122 Done · 17 Open · 7 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 137–141 and 143 were closed on 2026-11-22 with the layered
 annotation subsystem; item 145 (standalone `resize`) was closed the same day;
 items 146-149 closed the first atlas-style annotation iteration; item 150
@@ -18,7 +18,7 @@ items 146-149 closed the first atlas-style annotation iteration; item 150
 spectral/colour, catalog-footprint and motion-overlay wave; items 155-158
 closed the named-star, PGC, label-collar/open-circle and vendor example corpus
 waves on 2026-11-23; items 116–119 closed the diagnostics privacy/network-safety wave and item 106
-hardened the Linux diagnostics collector, item 109 made positional parsing flag-registry driven and item 120 bounded SOF3/CR2 allocations; the next Open work is item 121; item 142 stays Blocked by item 13 and goal 144 stays Open.
+hardened the Linux diagnostics collector, item 109 made positional parsing flag-registry driven, item 120 bounded SOF3/CR2 allocations and item 121 capped SBI1 table counts; the next Open work is item 122; item 142 stays Blocked by item 13 and goal 144 stays Open.
 Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
 items 104 and 105 were investigated the same day and **closed as false
@@ -85,7 +85,7 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 118 | **Archive HTTP context and redirect policy without `Authorization` leak** | S (~1 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `queryArchiveAdapter` takes a caller context (cancelled queries never dial) and clears `Authorization` on every cross-host redirect; the first hop still sends `Bearer <token>` and VOTable truncation parsing is unchanged. Tests cover a two-host redirect, cancellation and the original fixture. |
 | 119 | **Refuse survey cutouts above the 50 Mpix service limit** | S (~30 min) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `fetchHiPSCutout` validates positive dimensions and `width*height <= 50_000_000` with int64 arithmetic before parsing the URL or dialing; a 100 Mpix request makes zero HTTP requests and a 64x64 request still succeeds. |
 | 120 | **Cap `ljpeg.Decode` pixel count and CR2 decode allocation** | S (~1 h) | **Done 2026-11-23** | [research/07-native-cr2-decoding.md](research/07-native-cr2-decoding.md) | Shared `ljpeg.ValidateGeometry` caps planes at 200 Mpix and total samples at 400 M with int64 arithmetic; `ErrTooLarge` is returned from SOF3 parsing before `make`. CR2 also caps the Bayer raster at 200 Mpix and the stream tail at 512 MiB before allocation. `TestOversizedSOF3RejectedBeforeAllocation`, `TestOversizedSOF3RejectedByCR2`, `TestValidateBayerGeometry` and `TestFindLosslessJPEGCapsStreamTail` pass; existing ljpeg tests and the real `PURERAW_CR2` oracle still pass. |
-| 121 | **Cap SBI1 tile and quad counts before allocation** | S (~1 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A header with counts above a documented bound is rejected; small-fixture round-trip still passes and compares quad star RA/Dec, not only band id. |
+| 121 | **Cap SBI1 tile and quad counts before allocation** | S (~1 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A single `nativeIndexHeader` type and `validateNativeIndexCounts`/`validateNativeIndexSectionCount` reject bands >1024, tiles >1 Mi, quads/stars >16 Mi, tile stars >1 Mi and quad hits >1 Mi before any loop allocation. Writer and reader share the checks; hostile-header and inner-count Go tests pass, and the small round-trip now compares quad hit IPix, band, longest edge and all four RA/Dec pairs. |
 | 122 | **Use a circular mean in `selectDensityUniformStars`** | S (~1 h) | **Open** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | Stars at RA 0.01 and 6.27 rad are not split across a tile centre near pi; a non-wrapping tile still returns a subset under the quota. |
 | 123 | **Expose the embedded suite through `go test` without splitting main.go** | S (~1 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | `go test -run TestEmbeddedSelftest -count=1` calls `runSelfTests` and fails on any failure; the 274 cases are not deleted or rewritten (P4-1 remains separate). |
 | 124 | **Kahan summation for the streaming mean stack** | S (~1 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | Stack 100000 random float32 values; result within 1 LSB of a float64 reference. |

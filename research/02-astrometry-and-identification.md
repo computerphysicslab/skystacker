@@ -841,3 +841,19 @@ profile run (2026-11-22), <https://siril.readthedocs.io/en/stable/astrometry/ann
 <https://www.hnsky.org/astap.htm>, <https://pixinsight.com/doc/scripts/AnnotateImage/AnnotateImage.html>
 (vendor docs), and the four provider design files in `/tmp/opencode/annotation-research-*.md`
 (ephemeral; conclusions folded here).
+
+## 42. SBI1 allocation bounds — item 121 (2026-11-23)
+
+- `blind_index.go` now has one `nativeIndexHeader` definition for both writer
+  and reader. `validateNativeIndexCounts` checks bands (≤1024), tiles (≤1 Mi),
+  quads and stars (≤16 Mi) before `readNativeIndexBinary` creates its maps or
+  ranges over attacker-controlled `uint32`/`uint64` headers. The writer applies
+  the same function so it cannot emit an index its own reader rejects.
+- `validateNativeIndexSectionCount` also bounds the per-tile star count and the
+  per-key quad hit count at 1 Mi. These inner loops previously could allocate
+  from a single hostile `uint32` even when the header was small.
+- `TestReadNativeIndexBinaryRejectsHostileCounts` builds tiny streams for each
+  oversized count (including inner loops), `TestValidateNativeIndexCounts`
+  checks exact boundaries without large allocations, and `TestBinaryIndexRoundTrip`
+  now verifies quad IPix, band, longest edge and all four RA/Dec pairs, not
+  only the band id. The 309 embedded self-tests are unchanged.

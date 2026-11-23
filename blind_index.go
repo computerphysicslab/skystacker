@@ -30,6 +30,57 @@ var nativeBinaryMagic = [4]byte{'S', 'B', 'I', '1'}
 
 const nativeBinaryVersion = 1
 
+// SBI1 parser bounds. They are generous enough for the published Gaia quad
+// indexes but keep a hostile header from driving unbounded allocations. The
+// star cap was already enforced in the reader; the other limits are the new
+// item-121 gate applied before any band/tile/quad loop.
+const (
+	maxNativeIndexBands     = uint64(1) << 10
+	maxNativeIndexTiles     = uint64(1) << 20
+	maxNativeIndexQuads     = uint64(1) << 24
+	maxNativeIndexStars     = uint64(1) << 24
+	maxNativeIndexTileStars = uint64(1) << 20
+	maxNativeIndexQuadHits  = uint64(1) << 20
+)
+
+// nativeIndexHeader is the fixed SBI1 header. Keeping one definition for the
+// writer and reader prevents a silent layout drift.
+type nativeIndexHeader struct {
+	Magic     [4]byte
+	Version   uint16
+	Nside     uint16
+	Bin       float64
+	Brightest uint32
+	Bands     uint32
+	Tiles     uint32
+	Quads     uint64
+}
+
+// validateNativeIndexCounts rejects implausible table sizes with int64-safe
+// values, before callers create slices or range over attacker-controlled
+// uint32/uint64 counts.
+func validateNativeIndexCounts(bands, tiles, quads, stars uint64) error {
+	switch {
+	case bands > maxNativeIndexBands:
+		return fmt.Errorf("native index: %d bands exceeds limit %d", bands, maxNativeIndexBands)
+	case tiles > maxNativeIndexTiles:
+		return fmt.Errorf("native index: %d tiles exceeds limit %d", tiles, maxNativeIndexTiles)
+	case quads > maxNativeIndexQuads:
+		return fmt.Errorf("native index: %d quads exceeds limit %d", quads, maxNativeIndexQuads)
+	case stars > maxNativeIndexStars:
+		return fmt.Errorf("native index: %d stars exceeds limit %d", stars, maxNativeIndexStars)
+	}
+	return nil
+}
+
+// validateNativeIndexSectionCount bounds inner loops and their allocations.
+func validateNativeIndexSectionCount(name string, count uint32, limit uint64) error {
+	if uint64(count) > limit {
+		return fmt.Errorf("native index: %s count %d exceeds limit %d", name, count, limit)
+	}
+	return nil
+}
+
 func writeString(w io.Writer, s string) error {
 	if len(s) > 65535 {
 		return fmt.Errorf("index string too long: %d", len(s))
@@ -82,16 +133,11 @@ func writeNativeIndexBinary(w io.Writer, idx *nativeBlindIndex) error {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	header := struct {
-		Magic     [4]byte
-		Version   uint16
-		Nside     uint16
-		Bin       float64
-		Brightest uint32
-		Bands     uint32
-		Tiles     uint32
-		Quads     uint64
-	}{nativeBinaryMagic, nativeBinaryVersion, uint16(idx.Nside), idx.Bin,
+	if err := validateNativeIndexCounts(uint64(len(idx.Bands)), uint64(len(tileIDs)),
+		uint64(len(keys)), uint64(len(flat))); err != nil {
+		return err
+	}
+	header := nativeIndexHeader{nativeBinaryMagic, nativeBinaryVersion, uint16(idx.Nside), idx.Bin,
 		uint32(idx.Brightest), uint32(len(idx.Bands)), uint32(len(tileIDs)), uint64(len(keys))}
 	if err := binary.Write(w, binary.LittleEndian, header); err != nil {
 		return err
@@ -184,21 +230,16 @@ func writeNativeIndexBinary(w io.Writer, idx *nativeBlindIndex) error {
 }
 
 func readNativeIndexBinary(r io.Reader) (*nativeBlindIndex, error) {
-	header := struct {
-		Magic     [4]byte
-		Version   uint16
-		Nside     uint16
-		Bin       float64
-		Brightest uint32
-		Bands     uint32
-		Tiles     uint32
-		Quads     uint64
-	}{}
+	var header nativeIndexHeader
 	if err := binary.Read(r, binary.LittleEndian, &header); err != nil {
 		return nil, err
 	}
 	if header.Magic != nativeBinaryMagic || header.Version != nativeBinaryVersion {
 		return nil, fmt.Errorf("unsupported native index header %q v%d", header.Magic, header.Version)
+	}
+	if err := validateNativeIndexCounts(uint64(header.Bands), uint64(header.Tiles),
+		header.Quads, 0); err != nil {
+		return nil, err
 	}
 	idx := &nativeBlindIndex{Version: nativeIndexVersion, Nside: int(header.Nside),
 		Bin: header.Bin, Brightest: int(header.Brightest),
@@ -222,8 +263,8 @@ func readNativeIndexBinary(r io.Reader) (*nativeBlindIndex, error) {
 	if err := binary.Read(r, binary.LittleEndian, &starCount); err != nil {
 		return nil, err
 	}
-	if starCount > 1<<24 {
-		return nil, fmt.Errorf("implausible star count %d", starCount)
+	if err := validateNativeIndexCounts(0, 0, 0, starCount); err != nil {
+		return nil, err
 	}
 	stars := make([]gaiaStar, starCount)
 	for i := range stars {
@@ -253,6 +294,9 @@ func readNativeIndexBinary(r io.Reader) (*nativeBlindIndex, error) {
 		if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
 			return nil, err
 		}
+		if err := validateNativeIndexSectionCount("tile stars", count, maxNativeIndexTileStars); err != nil {
+			return nil, err
+		}
 		list := make([]gaiaStar, 0, count)
 		for range count {
 			var id uint32
@@ -272,6 +316,9 @@ func readNativeIndexBinary(r io.Reader) (*nativeBlindIndex, error) {
 		}
 		var count uint32
 		if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
+			return nil, err
+		}
+		if err := validateNativeIndexSectionCount("quad hits", count, maxNativeIndexQuadHits); err != nil {
 			return nil, err
 		}
 		hits := make([]nativeIndexEntry, 0, count)
