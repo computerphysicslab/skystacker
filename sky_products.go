@@ -449,7 +449,14 @@ func runSurveyForImage(f *frame, sol *plateSolution, dir, base string, opts runO
 	return writeSurveyCutout(f.Width, f.Height, &sol.WCS, opts, dir, stem, f)
 }
 
+// maxHiPSCoutPixels is the published CDS hips2fits service limit. Refusing
+// larger frames before dialing avoids a guaranteed 400 and a wasteful upload.
+const maxHiPSCoutPixels = 50_000_000
+
 func fetchHiPSCutout(ctx context.Context, baseURL, hips string, width, height int, ra, dec, fov, rotation float64) ([]byte, error) {
+	if width <= 0 || height <= 0 || int64(width)*int64(height) > maxHiPSCoutPixels {
+		return nil, fmt.Errorf("survey cutout: %dx%d exceeds the %d Mpix service limit", width, height, maxHiPSCoutPixels/1_000_000)
+	}
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, err

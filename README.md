@@ -559,7 +559,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--streak-detect` | Detect linear satellite streaks and write `stacked_streak_mask.f32raw` | `false` |
 | `--sky-map` | Write `stacked_sky_map.svg` with Gaia sources in the solved frame | `false` |
 | `--annotate --sky-map` | Also write the unified layered products `stacked_annotated.svg`, `stacked_annotated.png` and `annotation_provenance.json` | `false` |
-| `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry | `false` |
+| `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry (frames above the 50 Mpix service limit are refused locally) | `false` |
 | `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout` | `CDS/P/DSS2/color` / `30` |
 | `--process-image PATH[,PATH...]` | Process existing JPG/PNG/FITS images without stacking; `resize` also accepts a directory | — |
 | `--image-op OP` | `resize`, `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve` (blind-capable) | — |
@@ -842,7 +842,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 308 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (158 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 309 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (158 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 

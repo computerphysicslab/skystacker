@@ -46,7 +46,7 @@ skystacker --post-only --survey-cutout \
 `--survey-cutout` calls CDS `hips2fits` with the solved image's width, height,
 FOV, rotation and centre, writing `survey_reference.fits` and
 `survey_reference.jpg` plus a star-match diagnostic. It requires a plate
-solution, respects the 50 Mpix service limit and never blocks offline runs.
+solution, refuses frames above the CDS 50 Mpix service limit before dialing and never blocks offline runs.
 The standalone variant is `--image-op survey-cutout`.
 
 ## Annotation and anomaly detection

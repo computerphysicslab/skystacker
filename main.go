@@ -22154,6 +22154,7 @@ func runSelfTests() int {
 		{"provenance DM graph", testProvenanceDM},
 		{"goDiagnostics module", testDiagnosticsCollect},
 		{"goDiagnostics redaction and CPU label", testDiagnosticsReportRedaction},
+		{"archive redirect and survey size limits", testArchiveAndSurveySafety},
 		{"frame metrics and culling", testFrameMetricsCulling},
 		{"frame expression engine", testFrameExpressionEngine},
 		{"matched-filter source detection", testMatchedFilterDetection},

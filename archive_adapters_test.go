@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ func TestArchiveAdapterQuery(t *testing.T) {
 		_, _ = w.Write([]byte(`<?xml version="1.0"?><VOTable xmlns="http://www.ivoa.net/xml/VOTable/v1.3"><INFO name="QUERY_STATUS" value="OVERFLOW"/><RESOURCE><TABLE><FIELD name="ra"/><FIELD name="dec"/><DATA><TABLEDATA><TR><TD>10</TD><TD>20</TD></TR><TR><TD>10.1</TD><TD>20.1</TD></TR></TABLEDATA></DATA></TABLE></RESOURCE></VOTable>`))
 	}))
 	defer server.Close()
-	result, err := queryArchiveAdapter("mast", server.URL, "secret", 10, 20, 60)
+	result, err := queryArchiveAdapter(context.Background(), "mast", server.URL, "secret", 10, 20, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,5 +55,52 @@ func TestArchiveAdaptersFlagAndJSON(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"archive_adapters"`) {
 		t.Fatalf("missing json tag: %s", data)
+	}
+}
+
+func TestArchiveAdapterRedirectDropsAuth(t *testing.T) {
+	var firstAuth, redirectAuth string
+	var redirectHits int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectAuth = r.Header.Get("Authorization")
+		redirectHits++
+		_, _ = w.Write([]byte(`<VOTable><RESOURCE><TABLE><DATA><TABLEDATA><TR><TD>1</TD></TR></TABLEDATA></DATA></TABLE></RESOURCE></VOTable>`))
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstAuth = r.Header.Get("Authorization")
+		http.Redirect(w, r, target.URL+"/target", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	result, err := queryArchiveAdapter(context.Background(), "mast", origin.URL, "secret", 10, 20, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rows != 1 || redirectHits != 1 {
+		t.Fatalf("redirect not followed: %+v hits=%d", result, redirectHits)
+	}
+	if firstAuth != "Bearer secret" {
+		t.Fatalf("first hop lost its token: %q", firstAuth)
+	}
+	if redirectAuth != "" {
+		t.Fatalf("token leaked to cross-host redirect: %q", redirectAuth)
+	}
+}
+
+func TestArchiveAdapterCancelledBeforeDial(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`<VOTable/>`))
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := queryArchiveAdapter(ctx, "mast", server.URL, "secret", 10, 20, 60); err == nil {
+		t.Fatal("cancelled archive query succeeded")
+	}
+	if hits != 0 {
+		t.Fatalf("handler was reached with a cancelled context: %d hits", hits)
 	}
 }

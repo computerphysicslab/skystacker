@@ -14,7 +14,7 @@ builds with a fresh build date, installs `skystacker` in `~/.local/bin` and
 `~/go/bin`, refreshes `./skystacker`, runs the selftest and `go test ./...`,
 then prints the active PATH binary and its build date.
 
-**Self-test count: 308 passing.** Update this number after any test change.
+**Self-test count: 309 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -636,7 +636,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 308 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 309 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -1794,7 +1794,7 @@ rejection and disk spill. `--scale N` downsamples.
 ### Layered annotation subsystem — roadmap items 137–141 and 143 (2026-11-22)
 
 - New `annotation_layers.go` introduces one `annotationSource` model shared by the SVG 2 and raster renderers. It carries RA/Dec in radians, band/magnitude, axes/PA, epoch/proper motion, priority, label text and per-source provenance. An offline bundle (<2 MB) supplies bright stars, Messier/NGC/IC objects, LDN/Sh2 regions and constellation lines.
-- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **308**. `annotation_atlas_selftests.go` adds eight
+- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **309**. `annotation_atlas_selftests.go` adds eight
 cases for the atlas symbol vocabulary, type-aware contours, variable/double
 markers, SVG/raster legend parity, the interactive legend/toggle contract,
 spectral/index-aware tints, catalog-driven footprints and proper-motion /
@@ -1819,7 +1819,7 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   The `open-star` family has legend swatch, CSS toggle and raster twin; label
   placement is unchanged. Both flags are wired through `parseArgs`, the
   positional-input preprocessor, `resolvedFlagLines` and `annotationRenderOptions`.
-- Verified with `go build`, `go vet ./...`, `go test ./...`, 308 embedded
+- Verified with `go build`, `go vet ./...`, `go test ./...`, 309 embedded
   self-tests and a real M31 plate-solved run in
   `review/atlas-maps/20261123-0125-m31-pgc-style/` (253 sources, 238 labels,
   4 Gaia tiles, `label_collar=true`, `star_style=open`, 253 open-star markers).
@@ -1827,7 +1827,7 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
 
 ### Documentation and blind-solver correction wave — items 112–115 (2026-11-23)
 
-- Item 112: current-section recovery line now expects the authoritative 308
+- Item 112: current-section recovery line now expects the authoritative 309
   selftests, the spike table keeps the real defaults (length 10, intensity
   0.3) and the opening describes the multi-file Go module; historical session
   logs were left untouched.
@@ -1844,7 +1844,7 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   consensus and an in-cluster anchor gates the final match set. Invalid
   indices are skipped, ordering is stable, and a false first correspondence
   is rejected. `blind_engine_selftests.go` adds the embedded regression and
-  `blind_index_test.go` the Go unit test; both pass and the suite is 308.
+  `blind_index_test.go` the Go unit test; both pass and the suite is 309.
 
 
 ### Diagnostics privacy and labels — items 116–117 (2026-11-23)
@@ -1863,4 +1863,18 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
 - Unit tests in `goDiagnostics/diagnostics_test.go` cover redaction, report
   collection, swap parsing, the clamp/formula and the text/JSON labels;
   `diagnostics_selftests.go` locks the public contract in the shipped binary.
-  Suite 308.
+  Suite 309.
+
+
+### Network safety — items 118–119 (2026-11-23)
+
+- `queryArchiveAdapter` now accepts a caller context; cancelled queries return
+  before any dial. A `CheckRedirect` hook removes `Authorization` whenever the
+  redirect host differs from the original host, while the first hop still
+  carries `Bearer <MAST token>`. Tests cover a two-host httptest redirect,
+  cancellation with zero handler hits and the original truncation fixture.
+- `fetchHiPSCutout` rejects non-positive dimensions and any frame whose
+  `width*height` exceeds 50,000,000 pixels (int64 arithmetic) before even
+  parsing the URL, so the service receives zero requests for oversized frames;
+  64x64 cutouts remain unaffected.
+- `network_selftests.go` locks both contracts in the shipped binary; suite 309.

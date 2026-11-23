@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,7 +46,11 @@ func archiveToken() string {
 	return ""
 }
 
-func queryArchiveAdapter(name, baseURL, token string, raDeg, decDeg, radiusArcsec float64) (archiveAdapterResult, error) {
+// queryArchiveAdapter queries one VO service. The caller owns ctx so a
+// cancelled operation returns before any network dial. Authorization is only
+// ever sent to the original host; an explicit redirect hook clears it for
+// cross-host hops in addition to net/http's default sensitivity checks.
+func queryArchiveAdapter(ctx context.Context, name, baseURL, token string, raDeg, decDeg, radiusArcsec float64) (archiveAdapterResult, error) {
 	adapter, ok := archiveAdapters[name]
 	if !ok {
 		return archiveAdapterResult{}, fmt.Errorf("unknown archive adapter %q", name)
@@ -62,14 +68,28 @@ func queryArchiveAdapter(name, baseURL, token string, raDeg, decDeg, radiusArcse
 	q.Set("RADIUS", strconv.FormatFloat(radiusArcsec, 'g', -1, 64))
 	q.Set("MAXREC", strconv.Itoa(adapter.MaxRows))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return archiveAdapterResult{}, err
 	}
 	if adapter.TokenHeader && token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if len(via) == 0 {
+				return errors.New("archive redirect without an original request")
+			}
+			if next.URL.Host != via[0].URL.Host {
+				next.Header.Del("Authorization")
+			}
+			if len(via) >= 10 {
+				return errors.New("archive redirect loop")
+			}
+			return nil
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return archiveAdapterResult{}, err
@@ -125,7 +145,9 @@ func computeArchiveAdaptersReport(opts *runOptions, sol *plateSolution, baseURLs
 		if name == "" {
 			continue
 		}
-		result, err := queryArchiveAdapter(name, baseURLs[name], token, ra, dec, opts.ConeRadiusArcsec)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result, err := queryArchiveAdapter(ctx, name, baseURLs[name], token, ra, dec, opts.ConeRadiusArcsec)
+		cancel()
 		if err != nil {
 			result = archiveAdapterResult{Adapter: name, Error: err.Error()}
 		}
