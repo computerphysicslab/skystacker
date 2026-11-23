@@ -22189,6 +22189,7 @@ func runSelfTests() int {
 		{"blind solve benchmark harness", testBlindBenchmark},
 		{"native Gaia quad blind solver", testNativeBlindIndex},
 		{"native solver noisy field", testNativeBlindNoisy},
+		{"scale gate false first anchor", testScaleConsistentMatchesRobust},
 		{"blind catalog manifest and download", testBlindCatalogManifest},
 		{"astrometry web API adapter", testAstrometryWebSolver},
 		{"blind solver fallback chain", testBlindSolverFallback},

@@ -131,6 +131,31 @@ func TestScaleConsistentMatches(t *testing.T) {
 	}
 }
 
+func TestScaleConsistentMatchesFalseAnchorFirst(t *testing.T) {
+	frameStars := []star{
+		{X: 10, Y: 10, HFR: 2},
+		{X: 20, Y: 20, HFR: 2},
+		{X: 30, Y: 30, HFR: 2},
+		{X: 40, Y: 40, HFR: 2},
+	}
+	catalog := []gaiaStar{
+		{RA: 1.050, Dec: 0.550}, // false correspondence at index 0
+		{RA: 1.001, Dec: 0.501},
+		{RA: 1.002, Dec: 0.502},
+		{RA: 1.003, Dec: 0.503},
+	}
+	matches := []matchPair{{0, 0}, {1, 1}, {2, 2}, {3, 3}}
+	pruned := scaleConsistentMatches(matches, frameStars, catalog, 0.2)
+	if len(pruned) != 3 {
+		t.Fatalf("false first anchor: got %d matches %+v, want 3", len(pruned), pruned)
+	}
+	for _, m := range pruned {
+		if m.FrameIdx == 0 || m.GaiaIdx == 0 {
+			t.Fatalf("false correspondence survived: %+v", m)
+		}
+	}
+}
+
 func TestExponentialDescriptorKey(t *testing.T) {
 	a := nativeExpKeyFromFine("b20|10:2:8:3")
 	b := nativeExpKeyFromFine("b20|10:2:8:3")

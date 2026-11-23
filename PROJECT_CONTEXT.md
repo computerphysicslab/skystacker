@@ -1,4 +1,4 @@
-# SkyStacker — project context (last updated 2026-11-22)
+# SkyStacker — project context (last updated 2026-11-23)
 
 ## Version
 v0.6.1 (Go module: `main.go` plus first-party files such as `annotation_layers.go` and the `goTiff/` module)
@@ -14,7 +14,7 @@ builds with a fresh build date, installs `skystacker` in `~/.local/bin` and
 `~/go/bin`, refreshes `./skystacker`, runs the selftest and `go test ./...`,
 then prints the active PATH binary and its build date.
 
-**Self-test count: 298 passing.** Update this number after any test change.
+**Self-test count: 307 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -40,7 +40,7 @@ Outputs: `post_step1_background_removed.jpg` … `post_step8_4.jpg`.
 
 ## Registration / stacking pipeline
 
-- Discovery + decode (JPG, CR2/CR3 via dcraw+ImageMagick, FITS via ImageMagick)
+- Discovery + decode (JPG, CR2 native via `goPureRaw`, CR3 via dcraw/ImageMagick, FITS native with ImageMagick fallback)
 - Optional calibration: `--dark`, `--flat`, `--bias`, or `--calib-root` auto-detect
 - Reference frame = frame with the most detected stars
 - **Adaptive high-pass radius**: `clamp(min(W,H)/200, 8, 24)`. Was fixed 12;
@@ -636,7 +636,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 169 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 307 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -1794,7 +1794,7 @@ rejection and disk spill. `--scale N` downsamples.
 ### Layered annotation subsystem — roadmap items 137–141 and 143 (2026-11-22)
 
 - New `annotation_layers.go` introduces one `annotationSource` model shared by the SVG 2 and raster renderers. It carries RA/Dec in radians, band/magnitude, axes/PA, epoch/proper motion, priority, label text and per-source provenance. An offline bundle (<2 MB) supplies bright stars, Messier/NGC/IC objects, LDN/Sh2 regions and constellation lines.
-- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **306**. `annotation_atlas_selftests.go` adds eight
+- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **307**. `annotation_atlas_selftests.go` adds eight
 cases for the atlas symbol vocabulary, type-aware contours, variable/double
 markers, SVG/raster legend parity, the interactive legend/toggle contract,
 spectral/index-aware tints, catalog-driven footprints and proper-motion /
@@ -1819,7 +1819,29 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   The `open-star` family has legend swatch, CSS toggle and raster twin; label
   placement is unchanged. Both flags are wired through `parseArgs`, the
   positional-input preprocessor, `resolvedFlagLines` and `annotationRenderOptions`.
-- Verified with `go build`, `go vet ./...`, `go test ./...`, 306 embedded
+- Verified with `go build`, `go vet ./...`, `go test ./...`, 307 embedded
   self-tests and a real M31 plate-solved run in
   `review/atlas-maps/20261123-0125-m31-pgc-style/` (253 sources, 238 labels,
   4 Gaia tiles, `label_collar=true`, `star_style=open`, 253 open-star markers).
+
+
+### Documentation and blind-solver correction wave — items 112–115 (2026-11-23)
+
+- Item 112: current-section recovery line now expects the authoritative 307
+  selftests, the spike table keeps the real defaults (length 10, intensity
+  0.3) and the opening describes the multi-file Go module; historical session
+  logs were left untouched.
+- Item 113: README badge reads Go 1.27.4, the grid self-flat section no longer
+  claims Phase 4 is pending (it is complete and the registered model is the
+  default, with a loaded master flat still taking precedence), and
+  `COMPARISON.md` names the shipped `--deconvolve`/`--drizzle-upsample` flags
+  without denying them.
+- Item 114: troubleshooting lists all four plate-solver backends and
+  `TECHNICAL_SPEC.md` §2 Excluded no longer denies native CR2 decoding.
+- Item 115: `scaleConsistentMatches` no longer anchors on `matches[0]` or
+  reads a quartile as a median. Each correspondence votes with the median of
+  its pairwise implied scales; the largest tolerance cluster determines the
+  consensus and an in-cluster anchor gates the final match set. Invalid
+  indices are skipped, ordering is stable, and a false first correspondence
+  is rejected. `blind_engine_selftests.go` adds the embedded regression and
+  `blind_index_test.go` the Go unit test; both pass and the suite is 307.

@@ -138,9 +138,17 @@ func bayesianLogOdds(matches, nFrame, nCatalog int, toleranceRad, fovSqDeg float
 }
 
 // scaleConsistentMatches keeps only quad correspondences whose implied pixel
-// scale agrees with the median within maxDeviation. ASTAP uses the same gate
-// to reject descriptor collisions that happen to share a quad shape but not a
-// common scale.
+// scale agrees with the dominant scale cluster within maxDeviation. ASTAP uses
+// the same gate to reject descriptor collisions that happen to share a quad
+// shape but not a common scale.
+//
+// The naive version used scales[len/4] (a quartile, not a median) and anchored
+// every comparison to matches[0]. When the anchor itself was a false match,
+// all genuine correspondences were rejected. Here each match gets a robust
+// representative from its own pairwise scales, the largest tolerance cluster
+// of representatives selects the consensus, and a member of that cluster
+// becomes the anchor. It runs in O(n^2 log n) time with O(n) live scratch
+// space; the number of input correspondences is small (one quad hit).
 func scaleConsistentMatches(matches []matchPair, frameStars []star, catalog []gaiaStar, maxDeviation float64) []matchPair {
 	if len(matches) < 3 {
 		return matches
@@ -148,62 +156,136 @@ func scaleConsistentMatches(matches []matchPair, frameStars []star, catalog []ga
 	if maxDeviation <= 0 || maxDeviation > 1 {
 		maxDeviation = 0.35
 	}
-	// Every pair of correspondences implies a pixel scale: angular separation
-	// of the catalogue stars divided by their pixel separation. The median of
-	// those estimates is robust to a minority of false quads.
-	scales := make([]float64, 0, len(matches)*len(matches)/2)
-	for i := 0; i < len(matches); i++ {
-		a := matches[i]
-		_, ga := matchStar(a, frameStars, catalog)
-		if ga == nil {
+	// Cache index lookups once; matchStar is a bounds check plus a slice index.
+	gaia := make([]*gaiaStar, len(matches))
+	px, py := make([]float64, len(matches)), make([]float64, len(matches))
+	for i, m := range matches {
+		_, g := matchStar(m, frameStars, catalog)
+		gaia[i] = g
+		px[i], py[i] = math.NaN(), math.NaN()
+		if m.FrameIdx >= 0 && m.FrameIdx < len(frameStars) {
+			px[i], py[i] = frameStars[m.FrameIdx].X, frameStars[m.FrameIdx].Y
+		}
+	}
+
+	// A scale vote needs at least two other correspondences to be meaningful.
+	// Count usable pairs without retaining the O(n^2) scale matrix: the robust
+	// representatives below recompute the same separations with O(n) scratch.
+	validPairs := 0
+	for i := range matches {
+		if gaia[i] == nil || math.IsNaN(px[i]) {
 			continue
 		}
 		for j := i + 1; j < len(matches); j++ {
-			b := matches[j]
-			_, gb := matchStar(b, frameStars, catalog)
-			if gb == nil {
+			if gaia[j] == nil || math.IsNaN(px[j]) {
 				continue
 			}
-			dPix := math.Hypot(frameStars[a.FrameIdx].X-frameStars[b.FrameIdx].X,
-				frameStars[a.FrameIdx].Y-frameStars[b.FrameIdx].Y)
+			if math.Hypot(px[i]-px[j], py[i]-py[j]) < 1 {
+				continue
+			}
+			if angularSeparation(gaia[i].RA, gaia[i].Dec, gaia[j].RA, gaia[j].Dec) > 0 {
+				validPairs++
+			}
+		}
+	}
+	if validPairs < 3 {
+		return matches
+	}
+
+	// A representative per match: the median of the scales measured against
+	// all other matches. With a single false match among genuine ones, every
+	// genuine representative is unaffected while the false one is isolated.
+	type scaleVote struct {
+		scale float64
+		index int
+	}
+	votes := make([]scaleVote, 0, len(matches))
+	local := make([]float64, 0, len(matches)-1)
+	for i := range matches {
+		if gaia[i] == nil || math.IsNaN(px[i]) {
+			continue
+		}
+		local = local[:0]
+		for j := range matches {
+			if i == j || gaia[j] == nil || math.IsNaN(px[j]) {
+				continue
+			}
+			dPix := math.Hypot(px[i]-px[j], py[i]-py[j])
 			if dPix < 1 {
 				continue
 			}
-			dSky := angularSeparation(ga.RA, ga.Dec, gb.RA, gb.Dec)
+			dSky := angularSeparation(gaia[i].RA, gaia[i].Dec, gaia[j].RA, gaia[j].Dec)
 			if dSky > 0 {
-				scales = append(scales, dSky/dPix)
+				local = append(local, dSky/dPix)
 			}
 		}
-	}
-	if len(scales) < 3 {
-		return matches
-	}
-	sort.Float64s(scales)
-	median := scales[len(scales)/4]
-	out := make([]matchPair, 0, len(matches))
-	for _, m := range matches {
-		_, ga := matchStar(m, frameStars, catalog)
-		_, gb := matchStar(matches[0], frameStars, catalog)
-		if ga == nil || gb == nil {
+		if len(local) == 0 {
 			continue
 		}
-		dPix := math.Hypot(frameStars[m.FrameIdx].X-frameStars[matches[0].FrameIdx].X,
-			frameStars[m.FrameIdx].Y-frameStars[matches[0].FrameIdx].Y)
+		sort.Float64s(local)
+		votes = append(votes, scaleVote{scale: local[len(local)/2], index: i})
+	}
+	if len(votes) == 0 {
+		return matches
+	}
+	sort.Slice(votes, func(i, j int) bool {
+		if votes[i].scale == votes[j].scale {
+			return votes[i].index < votes[j].index
+		}
+		return votes[i].scale < votes[j].scale
+	})
+
+	// Choose the largest tolerance cluster. Ties prefer the cluster with the
+	// lower first match index so the result stays deterministic.
+	bestStart, bestEnd := 0, 1
+	for start := range votes {
+		if votes[start].scale <= 0 {
+			continue
+		}
+		end := start + 1
+		for end < len(votes) &&
+			math.Abs(votes[end].scale-votes[start].scale)/votes[start].scale <= maxDeviation {
+			end++
+		}
+		if end-start > bestEnd-bestStart ||
+			(end-start == bestEnd-bestStart && votes[start].index < votes[bestStart].index) {
+			bestStart, bestEnd = start, end
+		}
+	}
+	consensus := votes[bestStart].scale
+
+	// Anchor inside the consensus cluster, closest to its centre, so a false
+	// first match can never define the gate.
+	anchor := votes[bestStart].index
+	bestDelta := math.Abs(votes[bestStart].scale - consensus)
+	for _, v := range votes[bestStart:bestEnd] {
+		if delta := math.Abs(v.scale - consensus); delta < bestDelta ||
+			(delta == bestDelta && v.index < anchor) {
+			anchor, bestDelta = v.index, delta
+		}
+	}
+	if gaia[anchor] == nil {
+		return matches
+	}
+	out := make([]matchPair, 0, len(matches))
+	for i, m := range matches {
+		if gaia[i] == nil || math.IsNaN(px[i]) {
+			continue
+		}
+		dPix := math.Hypot(px[i]-px[anchor], py[i]-py[anchor])
 		if dPix < 1 {
 			out = append(out, m)
 			continue
 		}
-		dSky := angularSeparation(ga.RA, ga.Dec, gb.RA, gb.Dec)
+		dSky := angularSeparation(gaia[i].RA, gaia[i].Dec, gaia[anchor].RA, gaia[anchor].Dec)
 		scale := dSky / dPix
-		if median <= 0 || math.Abs(scale-median)/median <= maxDeviation {
+		if consensus <= 0 || math.Abs(scale-consensus)/consensus <= maxDeviation {
 			out = append(out, m)
 		}
 	}
-
 	return out
 }
 
-// matchStar resolves a match pair into its frame star and catalogue star.
 func matchStar(m matchPair, frameStars []star, catalog []gaiaStar) (*star, *gaiaStar) {
 	if m.FrameIdx < 0 || m.FrameIdx >= len(frameStars) || m.GaiaIdx < 0 || m.GaiaIdx >= len(catalog) {
 		return nil, nil

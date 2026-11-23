@@ -8,7 +8,7 @@
 | `only N stars detected; cannot plate-solve` | Fewer than three centroids. | Use the linear frame; avoid heavily stretched JPEGs. |
 | `no pointing seed` | `--plate-solver gaia` without a seed. | Use `--plate-center`, FITS RA/DEC, EXIF GPS, or switch to `auto`/blind. |
 | `no consistent transform (0 matched pairs)` | Gaia tile has stars but none match the detected centroids. | Verify the seed, add `--solver-focal-length/--solver-pixel-size`, or use a blind backend. |
-| `solve-field not found` | astrometry.net CLI missing. | Install it plus indexes, or use `--plate-solver astap|astrometry-web`. |
+| `solve-field not found` | astrometry.net CLI missing. | Install it plus indexes, or use `--plate-solver native|astrometry-local|astap|astrometry-web`. |
 | `astap: "astap" not found` | ASTAP missing. | Install ASTAP and a D05–D80 database. |
 | `no API key` | nova credentials missing. | Export `AN_API_KEY` or pass `--astrometry-api-key`. |
 | `Gaia refinement skipped` | External solve centre has no matching cached Gaia tile. | Keep external WCS or pre-cache the tile with `--test-gaia R,D`. |
@@ -87,7 +87,7 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
 
 ## Self-test and build
 
-- `--selftest` must print `all 306 self-tests passed`; a failure exits `1`.
+- `--selftest` must print `all 307 self-tests passed`; a failure exits `1`.
 - `gofmt -l *.go` must print nothing and `go vet ./...` must be clean.
 - Always install the rebuilt binary on `PATH` and verify `which skystacker` and
   `skystacker --version` before running a production batch.
