@@ -18,6 +18,11 @@ import (
 	"github.com/computerphysicslab/skystacker/goPureRaw/raw"
 )
 
+// maxCR2StreamBytes bounds the tail copied from a candidate CR2. It is far
+// above any known camera raw stream and prevents a crafted size from forcing
+// a multi-gigabyte allocation before ljpeg validates SOF3.
+const maxCR2StreamBytes = int64(512) << 20
+
 // Decoder decodes Canon CR2 files.
 type Decoder struct{}
 
@@ -103,6 +108,18 @@ func findLosslessJPEG(r io.ReaderAt, size int64) ([]byte, error) {
 				if precision < 8 || precision > 16 || height <= 0 || width <= 0 || components < 1 || components > 4 {
 					continue
 				}
+				if err := validateBayerGeometry(width, height, precision, components); err != nil {
+					// A structurally valid but oversized SOF3 is a real refusal,
+					// not a stray FFC3 byte pair; report it instead of scanning on.
+					if errors.Is(err, ljpeg.ErrTooLarge) {
+						return nil, fmt.Errorf("cr2: %w", err)
+					}
+					continue
+				}
+				if size-start > maxCR2StreamBytes {
+					return nil, fmt.Errorf("%w: CR2 stream tail %d bytes exceeds %d",
+						ljpeg.ErrTooLarge, size-start, maxCR2StreamBytes)
+				}
 				rest := make([]byte, size-start)
 				if _, err := r.ReadAt(rest, start); err != nil && !errors.Is(err, io.EOF) {
 					return nil, err
@@ -125,6 +142,9 @@ func (Decoder) Decode(r io.ReaderAt, size int64) (*raw.Image, error) {
 	lj, err := ljpeg.Decode(stream)
 	if err != nil {
 		return nil, fmt.Errorf("cr2: lossless JPEG: %w", err)
+	}
+	if err := validateBayerGeometry(lj.Width, lj.Height, lj.Precision, lj.CompCount); err != nil {
+		return nil, fmt.Errorf("cr2: %w", err)
 	}
 	if lj.CompCount != 2 {
 		return nil, fmt.Errorf("%w: %d components", raw.ErrUnsupportedVariant, lj.CompCount)

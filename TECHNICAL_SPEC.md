@@ -23,7 +23,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 309 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
-- Native decoding for RAW formats other than CR2 (delegated to ImageMagick / dcraw at runtime); CR2 is decoded natively through the embedded `goPureRaw` module. FITS decoding is native with ImageMagick fallback.
+- Native decoding for RAW formats other than CR2 (delegated to ImageMagick / dcraw at runtime); CR2 is decoded natively through the embedded `goPureRaw` module. `internal/ljpeg.ValidateGeometry` rejects SOF3 planes above 200 Mpix or more than 400 M samples before allocation, and the CR2 adapter caps the Bayer raster at 200 Mpix and the stream tail at 512 MiB. FITS decoding is native with ImageMagick fallback.
 - Drizzle and Bayer drizzle not wired. SIP order-2 is supported in `wcsTanForward`/`wcsTanInverseSIP` (WCS/plate-solve paths); `--resample-sip` also applies stored order-2 SIP in the stacking resampler (see §4.5), otherwise the warp is linear TAN/affine.
 - Higher-order distortion models beyond SIP order 2.
 - Native whole-sky blind plate solving. `--plate-solve` now has a genuine blind fallback through astrometry.net (local `solve-field` or the nova web API), so no pointing seed is required; only a dependency-free in-process all-sky index remains out of scope (roadmap item 73).

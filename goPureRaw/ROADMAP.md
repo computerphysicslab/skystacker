@@ -19,6 +19,7 @@ usable and testable, even if the overall decoder is incomplete.
 
 - [x] CR2 `Probe` and CR2 format constant
 - [x] Pure-Go lossless JPEG decoder (`internal/ljpeg`, SOF3, Huffman, predictors 1–7)
+- [x] SOF3/CR2 allocation guards (200 Mpix per plane, 400 M samples, 200 Mpix Bayer raster, 512 MiB stream tail)
 - [x] CR2 sensor decode: locate SOF3 stream, reconstruct two sample planes into a Bayer mosaic
 - [x] Oracle smoke test with `PURERAW_CR2` (dimensions, bit depth, plausible mean)
 - [ ] Bit-exact oracle comparison against `dcraw -D -4` including orientation/crop (2026-11-17: mean matches 1181.0 vs 1181.8, but downsampled cross-correlation across dihedral+crop variants <0.1 — mapping still unresolved)

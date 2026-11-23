@@ -1916,3 +1916,19 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   `--tiff-compression`, `--tiff-depth` and `--test-debayer` value flags, plus
   `-workers 2`, `--tiff-compression=lzw`, `--spikes=false` and
   `--stf-shadows -3.5`. Suite remains 309.
+
+### SOF3/CR2 allocation guards — item 120 (2026-11-23)
+
+- `internal/ljpeg.ValidateGeometry` is now the single SOF3 gate shared by
+  `ljpeg.Decode`, `cr2.Config`, `cr2.findLosslessJPEG` and `cr2.Decoder.Decode`.
+  It caps each uint16 plane at 200 Mpix, all samples at 400 M, precision at
+  1..16 and components at 1..4 with int64 arithmetic. `ljpeg.Decode` validates
+  every SOF3 marker before its plane allocations, so oversized headers return
+  `ErrTooLarge` without `make`.
+- The CR2 layer caps the Bayer raster at 200 Mpix and the copied stream tail at
+  512 MiB. Structurally valid oversized headers are refused with `ErrTooLarge`;
+  malformed stray `FFC3` pairs are still skipped (P3-3 preserved).
+- Regression tests cover exact limits and one step above them, a tiny
+  oversized SOF3 stream, the Bayer cap and a `ReaderAt` advertising a 512 MiB+
+  tail. Existing ljpeg tests, `TestFindLosslessJPEGSkipsStrayFFC3` and the real
+  Orion EOS 40D oracle (3944x2622 @ 14 bits) stay green. Suite unchanged at 309.

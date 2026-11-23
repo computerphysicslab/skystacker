@@ -158,6 +158,28 @@ For module path, tags, `go.work` and release mechanics see **C5**. CR2-specific 
 
 ---
 
+## 8. Allocation guards — item 120 (2026-11-23)
+
+- `internal/ljpeg.ValidateGeometry` is the single SOF3 gate used by the decoder,
+  `cr2.Config`, `cr2.findLosslessJPEG` and `cr2.Decoder.Decode`. It uses int64
+  arithmetic and caps each uint16 plane at **200 Mpix** (the same order as
+  `goTiff.maxPixels`), all planes together at **400 M samples**, precision to
+  1..16 and components to 1..4. `ljpeg.Decode` validates every SOF3 marker
+  before its `make([][]uint16, ncomp)` calls, so a hostile header returns
+  `ljpeg.ErrTooLarge` / `ErrCorrupt` without allocating planes.
+- The CR2 layer adds two caps: the interleaved Bayer raster is limited to
+  200 Mpix, and the tail copied by `findLosslessJPEG` to 512 MiB. Structurally
+  valid but oversized SOF3 headers produce `ErrTooLarge` instead of scanning
+  past them; malformed stray `FFC3` pairs are still skipped, preserving P3-3.
+- Regression tests cover the exact limit and one above it for planes and
+  samples, an oversized synthetic SOF3 stream, the Bayer output cap and a
+  `ReaderAt` advertising a 512 MiB+ tail. `TestMinimalStream`,
+  `TestRestartMarkers`, `TestFindLosslessJPEGSkipsStrayFFC3` and the real
+  asset oracle (`PURERAW_CR2=assets/OrionNebula/biases/IMG_7276.CR2`,
+  3944x2622 @ 14 bits) remain green.
+
+---
+
 ## Sources absorbed
 
 - `GEMINI_CR2_BITEXACT_PROMPT.md` — archived Deep Research prompt (verified facts, 7 questions, deliverables, guardrails).

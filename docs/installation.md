@@ -47,7 +47,9 @@ New modules must follow the `go<Name>` naming convention.
 
 ## Native decoding
 
-Pure-Go CR2 decoding is enabled by default. Use `--no-native-cr2` to fall back
+Pure-Go CR2 decoding is enabled by default; hostile SOF3 headers are rejected
+before sample planes are allocated (200 Mpix per plane, 400 M samples,
+200 Mpix Bayer raster, 512 MiB stream tail). Use `--no-native-cr2` to fall back
 to `dcraw`/ImageMagick. CR3 still requires an external decoder.
 
 ## Verification checklist

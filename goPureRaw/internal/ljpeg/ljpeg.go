@@ -11,7 +11,36 @@ import (
 var (
 	ErrUnsupported = errors.New("ljpeg: unsupported feature")
 	ErrCorrupt     = errors.New("ljpeg: corrupt stream")
+	ErrTooLarge    = errors.New("ljpeg: image too large")
 )
+
+const (
+	// MaxPixels is the cap for a single uint16 plane and for the final Bayer
+	// raster assembled by the CR2 decoder. It matches goTiff's input cap.
+	MaxPixels = 200_000_000
+	// maxSamples bounds the total decoded uint16 samples. Four 200 Mpix
+	// planes would otherwise ask for 1.6 GiB before any entropy is read.
+	maxSamples = 400_000_000
+)
+
+// ValidateGeometry checks SOF3 geometry before callers allocate sample planes.
+// It uses int64 arithmetic so hostile 16-bit dimensions cannot overflow on
+// 32-bit builds. The limits are deliberately shared with the CR2 container,
+// which validates the same header before reading the whole stream tail.
+func ValidateGeometry(width, height, precision, ncomp int) error {
+	if width <= 0 || height <= 0 || precision < 1 || precision > 16 || ncomp < 1 || ncomp > 4 {
+		return fmt.Errorf("%w: invalid SOF3 geometry %dx%d @ %d bits, %d components",
+			ErrCorrupt, width, height, precision, ncomp)
+	}
+	planePixels := int64(width) * int64(height)
+	if planePixels > MaxPixels {
+		return fmt.Errorf("%w: plane %dx%d exceeds %d pixels", ErrTooLarge, width, height, MaxPixels)
+	}
+	if planePixels*int64(ncomp) > maxSamples {
+		return fmt.Errorf("%w: %d samples exceed %d", ErrTooLarge, planePixels*int64(ncomp), maxSamples)
+	}
+	return nil
+}
 
 // Image holds lossless JPEG sample planes (one []uint16 per component).
 type Image struct {
@@ -202,6 +231,12 @@ func Decode(data []byte) (*Image, error) {
 			if len(payload) < 6+3*ncomp {
 				return nil, ErrCorrupt
 			}
+			// Reject hostile dimensions here, before the plane allocations
+			// at the end of Decode. Every SOF3 marker is validated, so a
+			// later oversized marker cannot bypass this check.
+			if err := ValidateGeometry(width, height, precision, ncomp); err != nil {
+				return nil, err
+			}
 			comps = nil
 			for i := 0; i < ncomp; i++ {
 				comps = append(comps, compInfo{id: payload[6+3*i], table: payload[8+3*i]})
@@ -224,7 +259,10 @@ func Decode(data []byte) (*Image, error) {
 		}
 		pos += length
 	}
-	if width <= 0 || height <= 0 || ncomp <= 0 || len(comps) == 0 {
+	if err := ValidateGeometry(width, height, precision, ncomp); err != nil {
+		return nil, err
+	}
+	if len(comps) == 0 {
 		return nil, ErrCorrupt
 	}
 	if len(entropy) == 0 {

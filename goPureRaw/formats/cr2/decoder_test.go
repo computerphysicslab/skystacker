@@ -2,9 +2,12 @@ package cr2
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"testing"
 
+	"github.com/computerphysicslab/skystacker/goPureRaw/internal/ljpeg"
 	"github.com/computerphysicslab/skystacker/goPureRaw/raw"
 )
 
@@ -100,5 +103,72 @@ func TestFindLosslessJPEGSkipsStrayFFC3(t *testing.T) {
 	}
 	if _, err := findLosslessJPEG(bytes.NewReader(data), int64(len(data))); err != nil {
 		t.Fatalf("valid stream after stray FFC3 not found: %v", err)
+	}
+}
+
+// oversizedSOF3Stream is a structurally valid 50,000 x 5,000 single-plane
+// stream. It is only a few dozen bytes: the guard must reject it from SOF3
+// before decoding or allocating sample planes.
+func oversizedSOF3Stream() []byte {
+	return []byte{
+		0xFF, 0xD8,
+		0xFF, 0xC4, 0x00, 0x14, 0x00,
+		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0,
+		0xFF, 0xC3, 0x00, 0x0B, 0x0E, 0x13, 0x88, 0xC3, 0x50, 0x01, 0x01, 0x11, 0x00,
+		0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00,
+		0x00, 0x00,
+		0xFF, 0xD9,
+	}
+}
+
+func smallSOF3Stream() []byte {
+	b := oversizedSOF3Stream()
+	copy(b[29:34], []byte{0x08, 0x00, 0x02, 0x00, 0x02})
+	return b
+}
+
+func TestOversizedSOF3RejectedByCR2(t *testing.T) {
+	stream := oversizedSOF3Stream()
+	if _, _, _, err := Config(bytes.NewReader(stream), int64(len(stream))); !errors.Is(err, ljpeg.ErrTooLarge) {
+		t.Fatalf("Config error = %v, want ErrTooLarge", err)
+	}
+	if _, err := findLosslessJPEG(bytes.NewReader(stream), int64(len(stream))); !errors.Is(err, ljpeg.ErrTooLarge) {
+		t.Fatalf("findLosslessJPEG error = %v, want ErrTooLarge", err)
+	}
+	if _, err := (Decoder{}).Decode(bytes.NewReader(stream), int64(len(stream))); !errors.Is(err, ljpeg.ErrTooLarge) {
+		t.Fatalf("Decode error = %v, want ErrTooLarge", err)
+	}
+}
+
+func TestValidateBayerGeometry(t *testing.T) {
+	if err := validateBayerGeometry(ljpeg.MaxPixels/2, 1, 14, 2); err != nil {
+		t.Fatalf("Bayer raster at limit rejected: %v", err)
+	}
+	err := validateBayerGeometry(ljpeg.MaxPixels/2+1, 1, 14, 2)
+	if !errors.Is(err, ljpeg.ErrTooLarge) {
+		t.Fatalf("oversized Bayer raster error = %v, want ErrTooLarge", err)
+	}
+}
+
+// reportedReaderAt advertises a large file while only serving a small stream.
+// It lets the tail cap be tested without allocating the advertised size.
+type reportedReaderAt struct {
+	data []byte
+	size int64
+}
+
+func (r reportedReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 || off >= int64(len(r.data)) {
+		return 0, io.EOF
+	}
+	return copy(p, r.data[off:]), nil
+}
+
+func TestFindLosslessJPEGCapsStreamTail(t *testing.T) {
+	stream := smallSOF3Stream()
+	size := maxCR2StreamBytes + 1
+	if _, err := findLosslessJPEG(reportedReaderAt{data: stream, size: size}, size); !errors.Is(err, ljpeg.ErrTooLarge) {
+		t.Fatalf("oversized stream tail error = %v, want ErrTooLarge", err)
 	}
 }

@@ -18,6 +18,10 @@ marker followed by an SOF3 marker, and `internal/ljpeg` decodes it:
 - two sample planes (1972x2622 on EOS 40D) interleaved into a 3944x2622
   Bayer mosaic (RGGB assumed; black/white levels default to EOS 40D values
   1018/16224 until maker-note parsing is implemented).
+- shared SOF3 allocation guards: `ljpeg.ValidateGeometry` rejects planes above
+  200 Mpix, more than 400 M total samples, precision outside 1..16 or more
+  than 4 components; the CR2 adapter also caps the Bayer raster at 200 Mpix
+  and the copied stream tail at 512 MiB. All checks run before allocations.
 
 ## Validation status
 
