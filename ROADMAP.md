@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-23):** 118 Done · 21 Open · 7 Blocked · 5 Executed/not accepted
+**Summary (2026-11-23):** 119 Done · 20 Open · 7 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 137–141 and 143 were closed on 2026-11-22 with the layered
 annotation subsystem; item 145 (standalone `resize`) was closed the same day;
 items 146-149 closed the first atlas-style annotation iteration; item 150
@@ -17,8 +17,8 @@ items 146-149 closed the first atlas-style annotation iteration; item 150
 (interactive legend) closed the same iteration; items 151-153 closed the
 spectral/colour, catalog-footprint and motion-overlay wave; items 155-158
 closed the named-star, PGC, label-collar/open-circle and vendor example corpus
-waves on 2026-11-23; the next Open work is the correction backlog headed by
-item 115; item 142 stays Blocked by item 13 and goal 144 stays Open.
+waves on 2026-11-23; items 116–119 closed the diagnostics privacy/network-safety wave and item 106
+hardened the Linux diagnostics collector; the next Open work is item 109; item 142 stays Blocked by item 13 and goal 144 stays Open.
 Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
 items 104 and 105 were investigated the same day and **closed as false
@@ -101,7 +101,7 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 134 | **End-to-end calibration fixture suite** | M (~2 h) | **Open** | [research/04-calibration-and-self-flat.md](research/04-calibration-and-self-flat.md) | Fixture of 5 lights plus master dark/flat/bias; stacked mean within 0.5% and variance within 1% of a stored reference. |
 | 135 | **Parallel-detection scaling benchmark** | M (~2 h) | **Open** | [research/05-toolchain-and-modularity.md](research/05-toolchain-and-modularity.md) | 30 MP detection at `--workers` 1/2/4/8 gives >=0.8x scaling per added core; the benchmark is committed to `BENCHMARKS.md`. |
 | 136 | **Parallelise `runPostProcessing` with a worker pool** | L (~4 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | 60 MP post-processing time drops >=1.7x with 4 workers; JPEG outputs byte-identical to the sequential path. |
-| 106 | **goDiagnostics Linux collector robustness** | S (~1 h) | **Open** | [05](research/05-toolchain-and-modularity.md) | `collect_linux.go` process scan ignores `ctx` and can block on `ReadDir /proc/<pid>/fd`; cap the scan, check `ctx.Err()` every N PIDs, rename `Updates` to `Packages` (it lists installed dpkg packages), and honour `--diagnose-timeout`. |
+| 106 | **goDiagnostics Linux collector robustness** | S (~1 h) | **Done 2026-11-23** | [05](research/05-toolchain-and-modularity.md) | `processesFromProc` checks `ctx.Err()` every 32 entries, caps the PID scan at 8192 and fd listing at 4096 in 128-entry batches, and returns partial results on cancellation. `Updates` is renamed to `Packages` (`IncludePackages`, `Report.Packages`, JSON key `packages`, `[packages]` text section) while the CLI flag stays compatible; `--diagnose-timeout` now also clamps `CmdTimeout`. Synthetic `/proc` fixture and embedded CLI-option regression added. |
 | 109 | **Flag-value parsing without hardcoded list** | M (~2 h) | **Open** | [01](research/01-architecture-and-core-engine.md) | `parseArgs` manually enumerates every flag that consumes a value (main.go:721-741); build the set from `flag.Visit` after registration so new value-flags cannot break positional parsing. |
 | 1 | **ASTAP interoperability hardening** | S (~45 min) | **Blocked** — no ASTAP adapter in code | [02](research/02-astrometry-and-identification.md) §ASTAP audit | Correct the `%errorlevel%` HFD scale in docs, add a decoding unit test, prefer textual `HFD_MEDIAN`/`STARS`, clamp HFD > 21.46 px, verify `-ra` units. No plate-solver code changes. |
 | 78 | **Detrended extraction and seeded blind baseline** | S–M (~2 h) | **Executed, not accepted** 2026-11-20 | [02](research/02-astrometry-and-identification.md) §17 | `--blind-detrend` (downsample, asymmetric background, HFD/eccentricity gating) and default `--gaia-multitile` shipped; `detrendedBlindStars` and `filterStarsForMatching` have Go tests. Acceptance (seeded solves on most of the 14 corpus frames without loose matching) is **not met**: processed JPEG centroids and the matcher scale estimate still fail. Second pass added measured seeded harness, FOV-aware odds, pixel-scale tolerance and wider detrend downsampling; corpus remains 0/14. |
@@ -270,8 +270,8 @@ P4 maintainability.
 |---|---|---|---|
 | P1-1 | `main.go:721-741` | M | ~200-line hardcoded list of flags that consume a value for positional reordering. |
 | P1-2 | `main.go:3975-4002` | M | ~~In-tree TIFF constants/writers duplicate the `goTiff` module.~~ **Applied 2026-11-21** via item 110. |
-| P1-3 | `goDiagnostics/collect_linux.go:179-244` | S | `/proc` scan ignores `ctx` and can block on `ReadDir /proc/<pid>/fd`. |
-| P1-4 | `goDiagnostics/collect_linux.go:246-275` | S | `Updates` field actually lists 50 installed dpkg packages, not pending updates. |
+| P1-3 | `goDiagnostics/collect_linux.go:179-244` | S | ~~`/proc` scan ignores `ctx` and can block on `ReadDir /proc/<pid>/fd`.~~ **Applied 2026-11-21** via item 106 (bounded, context-aware scan). |
+| P1-4 | `goDiagnostics/collect_linux.go:246-275` | S | ~~`Updates` field actually lists 50 installed dpkg packages, not pending updates.~~ **Applied 2026-11-21** via item 106 (renamed to `Packages`). |
 | P1-5 | `goDiagnostics/common.go:231-262` | S | Collector walk does not check `ctx.Err()` after the file budget is hit. |
 | P1-6 | `goTiff/header.go:106` | S | ~~IFD entry-count cap is stricter than necessary and rejects large legitimate files.~~ **Applied 2026-11-21** (see Achieved). |
 

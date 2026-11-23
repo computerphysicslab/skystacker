@@ -18,4 +18,4 @@ func (otherPlatform) Disks(context.Context) ([]DiskInfo, error)  { return nil, E
 func (otherPlatform) Processes(context.Context, int) ([]ProcessInfo, error) {
 	return nil, ErrUnsupported
 }
-func (otherPlatform) Updates(context.Context) ([]PackageInfo, error) { return nil, ErrUnsupported }
+func (otherPlatform) Packages(context.Context) ([]PackageInfo, error) { return nil, ErrUnsupported }

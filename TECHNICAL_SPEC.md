@@ -104,6 +104,7 @@ Flags are accepted before or after the positional input directory. `--config FIL
 - `--spikes-length-softness` (1.0), `--spikes-length-min-ratio` (0.03), `--spikes-min-count` (5).
 
 ### Diagnostics
+- `--diagnose` writes `diagnostics.txt`; `--diagnose-json` also writes `diagnostics.json` (JSON key `packages` for the installed-package inventory, formerly `updates`). `--diagnose-integrated` attaches the same snapshot to a normal run; `--diagnose-quick` reduces the walk/process budget and `--diagnose-top N` caps shown processes. `--diagnose-timeout N` (1–120 s) bounds the whole collection and clamps external tool probes.
 - `--selftest`, `--version`, `--help`, `--json-report` (writes `report.json`).
 - `--test-gaia RA,DEC` — one-shot Gaia DR3 tile query; prints nside, ipix, first 5 stars, exits.
 - `--test-debayer PATH` — one-shot FITS debayer diagnostic; writes `<base>.jpg` and `<base>_raw.jpg`.

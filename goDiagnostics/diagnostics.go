@@ -18,15 +18,15 @@ var ErrUnsupported = errors.New("diagnostics: platform collector not implemented
 // Options controls how much information Collect gathers and how long it may
 // take. Zero values are replaced by the defaults from DefaultOptions.
 type Options struct {
-	Timeout        time.Duration
-	CmdTimeout     time.Duration
-	ProgramDir     string
-	TopProcesses   int
-	MaxWalkFiles   int
-	IncludeUpdates bool
-	IncludeEnv     bool
-	IncludeProfile bool
-	Redact         func(string) string
+	Timeout         time.Duration
+	CmdTimeout      time.Duration
+	ProgramDir      string
+	TopProcesses    int
+	MaxWalkFiles    int
+	IncludePackages bool
+	IncludeEnv      bool
+	IncludeProfile  bool
+	Redact          func(string) string
 }
 
 // DefaultOptions returns conservative values suitable for a production run.
@@ -203,7 +203,7 @@ type Report struct {
 	Disks       []DiskInfo       `json:"disks"`
 	Processes   []ProcessInfo    `json:"processes"`
 	Environment EnvInfo          `json:"environment"`
-	Updates     []PackageInfo    `json:"updates"`
+	Packages    []PackageInfo    `json:"packages"`
 	Tools       []ToolInfo       `json:"tools"`
 	Program     ProgramInfo      `json:"program"`
 	Network     []NetInfo        `json:"network"`
@@ -222,7 +222,7 @@ func Collect(ctx context.Context, o Options) Report {
 		GeneratedAt: start.UTC(),
 		Disks:       []DiskInfo{},
 		Processes:   []ProcessInfo{},
-		Updates:     []PackageInfo{},
+		Packages:    []PackageInfo{},
 		Tools:       []ToolInfo{},
 		Network:     []NetInfo{},
 		Errors:      []CollectorError{},
@@ -276,12 +276,12 @@ func Collect(ctx context.Context, o Options) Report {
 		}
 		redactProcessCmds(r.Processes, o.Redact)
 	})
-	if o.IncludeUpdates {
-		run("updates", func() {
+	if o.IncludePackages {
+		run("packages", func() {
 			var err error
-			r.Updates, err = p.Updates(ctx)
+			r.Packages, err = p.Packages(ctx)
 			if err != nil && !errors.Is(err, ErrUnsupported) {
-				r.Errors = append(r.Errors, CollectorError{Collector: "updates", Reason: err.Error()})
+				r.Errors = append(r.Errors, CollectorError{Collector: "packages", Reason: err.Error()})
 			}
 		})
 	}
@@ -304,7 +304,7 @@ func sortReport(r *Report) {
 		}
 		return r.Processes[i].RSSMB > r.Processes[j].RSSMB
 	})
-	sort.Slice(r.Updates, func(i, j int) bool { return r.Updates[i].Name < r.Updates[j].Name })
+	sort.Slice(r.Packages, func(i, j int) bool { return r.Packages[i].Name < r.Packages[j].Name })
 	sort.Slice(r.Tools, func(i, j int) bool { return r.Tools[i].Name < r.Tools[j].Name })
 	sort.Slice(r.Network, func(i, j int) bool { return r.Network[i].Name < r.Network[j].Name })
 	sort.Slice(r.Errors, func(i, j int) bool { return r.Errors[i].Collector < r.Errors[j].Collector })

@@ -157,7 +157,7 @@ func (darwinPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, erro
 	return procs, nil
 }
 
-func (darwinPlatform) Updates(ctx context.Context) ([]PackageInfo, error) {
+func (darwinPlatform) Packages(ctx context.Context) ([]PackageInfo, error) {
 	out, err := runCommand(ctx, 2*time.Second, "brew", "list", "--formula", "--versions")
 	if err != nil || out == "" {
 		return nil, ErrUnsupported

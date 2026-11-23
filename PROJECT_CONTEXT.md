@@ -1878,3 +1878,23 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   parsing the URL, so the service receives zero requests for oversized frames;
   64x64 cutouts remain unaffected.
 - `network_selftests.go` locks both contracts in the shipped binary; suite 309.
+
+
+### Linux diagnostics robustness — item 106 (2026-11-23)
+
+- `processesFromProc` is an injectable `/proc` collector: it checks the caller
+  context every 32 directory entries (including non-PID entries), caps the
+  scan at 8192 numeric PIDs, reads fd directories in 128-name batches capped
+  at 4096, and returns partial processes with the cancellation error instead
+  of blocking. `goDiagnostics/collect_linux_test.go` builds a synthetic
+  `/proc` tree to lock RSS, ppid, cmdline, fd count, lifetime CPU share,
+  sorting, top-N truncation and cancellation.
+- The misleading `Updates` API is now `Packages` end-to-end:
+  `Options.IncludePackages`, `Report.Packages`, collector method `Packages`,
+  JSON key `packages` and `[packages]` text section. The CLI flag
+  `--diagnose-updates` is retained as a compatibility alias and documented as
+  an installed-package inventory.
+- `applyDiagnoseTimeout` maps `--diagnose-timeout` to both the overall
+  collector budget and `CmdTimeout`, so a one-second budget also bounds
+  external tool probes. `testDiagnosticsCollect` verifies 3 s/2 s defaults
+  and the 1 s clamp. Suite remains 309.

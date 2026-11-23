@@ -9,7 +9,9 @@ program, as text or JSON.
 
 * Standard library only. No cgo, no third-party imports.
 * `go 1.22` baseline: reusable in older Go projects than SkyStacker.
-* Every collector is bounded by a context timeout and a 64 KiB output cap.
+* Every collector is bounded by a context timeout and a 64 KiB output cap;
+  the Linux `/proc` walk is capped, context-aware in bounded batches and never
+  performs an unbounded `ReadDir` on a process descriptor directory.
 * Collector failures are recorded in `Report.Errors`; they never abort a run.
 * Environment values are whitelisted and redacted; process command lines are
   masked by `RedactProcessCmd` on every platform, so no tokens are emitted.
@@ -33,7 +35,7 @@ import diagnostics "github.com/computerphysicslab/skystacker/goDiagnostics"
 
 o := diagnostics.DefaultOptions()
 o.ProgramDir = "."
-o.IncludeUpdates = true
+o.IncludePackages = true
 rep := diagnostics.Collect(ctx, o)
 fmt.Print(rep.Text())
 _ = rep.WriteJSON(os.Stdout)
@@ -45,14 +47,16 @@ remove the `replace` line and use `go get ...@v0.1.0`.
 ## API
 
 `Options` controls timeouts, program directory, process count, directory-walk
-budget, package inventory and environment redaction. `Collect` always returns
-a `Report`; `Report.JSON()`, `Report.WriteJSON()` and `Report.Text()` render it
-deterministically (all slices are sorted).
+budget, package inventory and environment redaction. The installed-package
+inventory is exposed as `Options.IncludePackages`, `Report.Packages` and the
+JSON key `packages` (it is not a list of pending updates). `Collect` always
+returns a `Report`; `Report.JSON()`, `Report.WriteJSON()` and `Report.Text()`
+render it deterministically (all slices are sorted).
 
 ## Tests
 
 ```bash
-cd diagnostics
+cd goDiagnostics
 go vet ./...
 go test ./...
 ```

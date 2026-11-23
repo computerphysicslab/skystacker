@@ -38,7 +38,7 @@ func (f fakePlatform) Processes(context.Context, int) ([]ProcessInfo, error) {
 	}
 	return []ProcessInfo{{PID: 1, RSSMB: 50}, {PID: 2, RSSMB: 100, Self: true}}, nil
 }
-func (fakePlatform) Updates(context.Context) ([]PackageInfo, error) {
+func (fakePlatform) Packages(context.Context) ([]PackageInfo, error) {
 	return []PackageInfo{{Name: "pkg", Version: "1", Source: "fake"}}, nil
 }
 
@@ -61,7 +61,7 @@ func TestCollectWithFakePlatform(t *testing.T) {
 
 	o := DefaultOptions()
 	o.ProgramDir = t.TempDir()
-	o.IncludeUpdates = true
+	o.IncludePackages = true
 	o.Timeout = 2 * time.Second
 	r := Collect(context.Background(), o)
 	if r.Host.Hostname == "" || r.OS.Name != "FakeOS" || r.CPU.Model != "Fake CPU" {
@@ -73,8 +73,8 @@ func TestCollectWithFakePlatform(t *testing.T) {
 	if len(r.Errors) == 0 || r.Errors[0].Collector != "memory" {
 		t.Fatalf("partial collector error missing: %+v", r.Errors)
 	}
-	if len(r.Updates) != 1 || len(r.Processes) != 2 {
-		t.Fatalf("updates/processes missing: %+v", r)
+	if len(r.Packages) != 1 || len(r.Processes) != 2 {
+		t.Fatalf("packages/processes missing: %+v", r)
 	}
 	b, err := r.JSON()
 	if err != nil {

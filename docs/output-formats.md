@@ -134,7 +134,7 @@ min separation, null fraction, hole risk).
 | `stacked_annotated.png` | `--annotate --sky-map` (same unified source model and label placement as the SVG, with anti-aliasing, halos and colour-blind-safe palettes) |
 | `annotation_provenance.json` | `--annotate --sky-map` (renderer version, frame size, layer list, source/label counts, `label_collar`, `star_style`, per-source catalogue provenance/warnings, `gaia_coverage`, `pgc_matches` and `name_matches`: `designated`/`matched` Gaia sources plus example names from SIMBAD or AllWISE; unmatched stars keep a unique `Gaia J…` designation). The offline bundle version is `2026-11-23-1` and includes the named-star and PGC tables described in [catalog-attribution.md](catalog-attribution.md). |
 | `survey_reference.fits/.jpg` | `--survey-cutout` |
-| `diagnostics.txt/.json` | `--diagnose`, `--diagnose-integrated` |
+| `diagnostics.txt/.json` | `--diagnose`, `--diagnose-integrated` (host/runtime/process snapshot; installed packages live in the `packages` section/key) |
 | `stacked_wht.f32raw`, `stacked_ctx.u32raw` | `--wht-ctx` (per-pixel weights and 32-bit contributor mask, versioned headers) |
 | `master_*.f32raw/.jpg` | `--export-masters` |
 

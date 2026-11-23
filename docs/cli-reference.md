@@ -183,7 +183,7 @@ See [post-processing.md](post-processing.md).
 | `--check-acquisition-keywords FILE` | — | Validate N.I.N.A. RAW/FITS acquisition keywords; JSON output, exit 1 on invalid values. |
 | `--check-survey-fits FILE` | — | Report FITS/WCS caveats (legacy PC keywords, RADESYS/TIMESYS, asinh, Pan-STARRS pole) into `report.txt`/`report.json`. |
 | `--diagnose` / `--diagnose-json` / `--diagnose-quick` / `--diagnose-integrated` | off | Host diagnostics. |
-| `--diagnose-timeout N` / `--diagnose-top N` / `--diagnose-updates` | `5` / `10` / off | Diagnostic collectors. |
+| `--diagnose-timeout N` / `--diagnose-top N` / `--diagnose-updates` | `5` / `10` / off | Diagnostic collectors. The timeout is the overall budget; external tool probes are clamped to it. The legacy `--diagnose-updates` flag now writes the `packages` section (installed inventory, not pending updates). |
 | `--donation` / `--no-donation` / `--no-donation-qr` | — | Donation footer control. |
 | `--force` | off | Bypass the OOM safety check. |
 | `--clean` | off | Remove `_work` after success. |

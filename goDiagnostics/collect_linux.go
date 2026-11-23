@@ -176,14 +176,32 @@ func (linuxPlatform) Disks(ctx context.Context) ([]DiskInfo, error) {
 	return disks, nil
 }
 
+// Bounds for the /proc walk. A machine with thousands of short-lived PIDs
+// must not stall a diagnostic snapshot, and each /proc/<pid>/fd listing is
+// read in small batches so one unreadable directory cannot block forever.
+const (
+	maxProcScanPIDs   = 8192
+	procCtxCheckEvery = 32
+	maxProcFDs        = 4096
+)
+
 func (linuxPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, error) {
-	self := os.Getpid()
-	entries, err := os.ReadDir("/proc")
+	return processesFromProc(ctx, "/proc", os.Getpid(), n)
+}
+
+// processesFromProc is the testable core of the Linux process collector.
+// procRoot is injectable so cancellation, capping and fd counting can be
+// exercised with a synthetic /proc tree on any machine.
+func processesFromProc(ctx context.Context, procRoot string, selfPID, n int) ([]ProcessInfo, error) {
+	if n <= 0 {
+		return []ProcessInfo{}, nil
+	}
+	entries, err := os.ReadDir(procRoot)
 	if err != nil {
 		return nil, err
 	}
 	totalTicks := uint64(0)
-	if boot, err := os.ReadFile("/proc/stat"); err == nil {
+	if boot, err := os.ReadFile(filepath.Join(procRoot, "stat")); err == nil {
 		fields := strings.Fields(strings.Split(string(boot), "\n")[0])
 		if len(fields) > 1 {
 			for _, f := range fields[1:] {
@@ -191,16 +209,26 @@ func (linuxPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, error
 			}
 		}
 	}
-	var procs []ProcessInfo
+	procs := make([]ProcessInfo, 0, min(n, maxProcScanPIDs))
+	scanned, seen := 0, 0
 	for _, e := range entries {
-		if len(procs) > 4000 {
+		// Check the deadline every N entries, including non-PID entries.
+		if seen%procCtxCheckEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return procs, err
+			}
+		}
+		seen++
+		if scanned >= maxProcScanPIDs {
 			break
 		}
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil {
 			continue
 		}
-		status := readFileFields(filepath.Join("/proc", e.Name(), "status"))
+		scanned++
+		dir := filepath.Join(procRoot, e.Name())
+		status := readFileFields(filepath.Join(dir, "status"))
 		fields := strings.Fields(status["VmRSS"])
 		rss := 0.0
 		if len(fields) > 0 {
@@ -209,8 +237,7 @@ func (linuxPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, error
 		threads, _ := strconv.Atoi(status["Threads"])
 		ppid := 0
 		lifetimeShare := 0.0
-		stat, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
-		if err == nil {
+		if stat, err := os.ReadFile(filepath.Join(dir, "stat")); err == nil {
 			parts := strings.Fields(string(stat))
 			if len(parts) > 3 {
 				ppid, _ = strconv.Atoi(parts[3])
@@ -222,18 +249,21 @@ func (linuxPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, error
 			}
 		}
 		cmd := status["Name"]
-		if data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline")); err == nil {
+		if data, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
 			parts := strings.FieldsFunc(string(data), func(r rune) bool { return r == 0 })
 			if len(parts) > 0 {
 				cmd = strings.Join(parts, " ")
 			}
 		}
-		fds, _ := os.ReadDir(filepath.Join("/proc", e.Name(), "fd"))
 		procs = append(procs, ProcessInfo{
 			PID: pid, PPID: ppid, User: "-", Cmd: cmd, RSSMB: rss,
 			LifetimeCPUSharePct: lifetimeShare,
-			Threads:             threads, FDs: len(fds), Self: pid == self,
+			Threads:             threads, FDs: countProcFDs(ctx, filepath.Join(dir, "fd")),
+			Self: pid == selfPID,
 		})
+	}
+	if err := ctx.Err(); err != nil {
+		return procs, err
 	}
 	sort.Slice(procs, func(i, j int) bool { return procs[i].RSSMB > procs[j].RSSMB })
 	if len(procs) > n {
@@ -242,7 +272,30 @@ func (linuxPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, error
 	return procs, nil
 }
 
-func (linuxPlatform) Updates(ctx context.Context) ([]PackageInfo, error) {
+// countProcFDs counts directory entries in bounded batches so a single
+// unreadable or very large fd directory cannot stall the collector.
+func countProcFDs(ctx context.Context, dir string) int {
+	d, err := os.Open(dir)
+	if err != nil {
+		return 0
+	}
+	defer d.Close()
+	count := 0
+	for {
+		if count%128 == 0 {
+			if err := ctx.Err(); err != nil {
+				return count
+			}
+		}
+		names, err := d.Readdirnames(128)
+		count += len(names)
+		if err != nil || count >= maxProcFDs {
+			return count
+		}
+	}
+}
+
+func (linuxPlatform) Packages(ctx context.Context) ([]PackageInfo, error) {
 	specs := []struct {
 		cmd    string
 		args   []string

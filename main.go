@@ -23860,6 +23860,24 @@ func testDiagnosticsCollect() error {
 	if _, err := parseArgs([]string{"--diagnose-timeout", "0"}); err == nil {
 		return errors.New("invalid diagnose timeout accepted")
 	}
+	dopts := diagnosticsOptionsFromCLI(opts, ".")
+	if dopts.Timeout != 3*time.Second || dopts.CmdTimeout != 2*time.Second ||
+		dopts.TopProcesses != 5 || dopts.MaxWalkFiles != 2000 {
+		return fmt.Errorf("diagnose options not wired: %+v", dopts)
+	}
+	one, err := parseArgs([]string{"--diagnose-timeout", "1"})
+	if err != nil {
+		return err
+	}
+	short := diagnosticsOptionsFromCLI(one, ".")
+	if short.Timeout != time.Second || short.CmdTimeout != time.Second {
+		return fmt.Errorf("short diagnose timeout not applied to commands: %+v", short)
+	}
+	dopts.IncludePackages = true
+	full := diagnostics.Collect(context.Background(), dopts)
+	if b, err := full.JSON(); err != nil || !strings.Contains(string(b), `"packages"`) {
+		return fmt.Errorf("diagnostics packages section missing: %v", err)
+	}
 	return nil
 }
 
@@ -34052,11 +34070,24 @@ func runBatchQueue(path string) error {
 	return nil
 }
 
+// applyDiagnoseTimeout binds the CLI budget to every collector. The global
+// context is bounded by Timeout; external tool probes additionally use
+// CmdTimeout, which must never exceed the user's overall budget.
+func applyDiagnoseTimeout(d *diagnostics.Options, seconds int) {
+	if seconds <= 0 {
+		return
+	}
+	d.Timeout = time.Duration(seconds) * time.Second
+	if d.CmdTimeout > d.Timeout {
+		d.CmdTimeout = d.Timeout
+	}
+}
+
 func diagnosticsOptionsFromCLI(opts *cliOptions, dir string) diagnostics.Options {
 	d := diagnostics.DefaultOptions()
-	d.Timeout = time.Duration(opts.DiagnoseTimeout) * time.Second
+	applyDiagnoseTimeout(&d, opts.DiagnoseTimeout)
 	d.TopProcesses = opts.DiagnoseTop
-	d.IncludeUpdates = opts.DiagnoseUpdates
+	d.IncludePackages = opts.DiagnoseUpdates
 	d.ProgramDir = dir
 	if opts.DiagnoseQuick {
 		d.MaxWalkFiles = 2000
@@ -34067,13 +34098,11 @@ func diagnosticsOptionsFromCLI(opts *cliOptions, dir string) diagnostics.Options
 
 func diagnosticsOptionsFromRun(opts runOptions, dir string) diagnostics.Options {
 	d := diagnostics.DefaultOptions()
-	if opts.DiagnoseTimeout > 0 {
-		d.Timeout = time.Duration(opts.DiagnoseTimeout) * time.Second
-	}
+	applyDiagnoseTimeout(&d, opts.DiagnoseTimeout)
 	if opts.DiagnoseTop > 0 {
 		d.TopProcesses = opts.DiagnoseTop
 	}
-	d.IncludeUpdates = opts.DiagnoseUpdates
+	d.IncludePackages = opts.DiagnoseUpdates
 	d.ProgramDir = dir
 	if opts.DiagnoseQuick {
 		d.MaxWalkFiles = 2000

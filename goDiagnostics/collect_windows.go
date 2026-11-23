@@ -126,7 +126,7 @@ func (windowsPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, err
 	return out, nil
 }
 
-func (windowsPlatform) Updates(ctx context.Context) ([]PackageInfo, error) {
+func (windowsPlatform) Packages(ctx context.Context) ([]PackageInfo, error) {
 	var v []struct {
 		ID        string `json:"HotFixID"`
 		Installed string `json:"InstalledOn"`

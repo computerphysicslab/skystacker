@@ -86,9 +86,9 @@ func (r Report) Text() string {
 			line(t.Name, strings.TrimSpace(t.Version))
 		}
 	}
-	if len(r.Updates) > 0 {
-		b.WriteString("\n[updates]\n")
-		for _, u := range r.Updates {
+	if len(r.Packages) > 0 {
+		b.WriteString("\n[packages]\n")
+		for _, u := range r.Packages {
 			line(u.Name, u.Version+" ("+u.Source+")")
 		}
 	}

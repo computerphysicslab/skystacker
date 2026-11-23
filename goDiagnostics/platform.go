@@ -12,7 +12,7 @@ type platform interface {
 	Memory(ctx context.Context) (MemoryInfo, error)
 	Disks(ctx context.Context) ([]DiskInfo, error)
 	Processes(ctx context.Context, n int) ([]ProcessInfo, error)
-	Updates(ctx context.Context) ([]PackageInfo, error)
+	Packages(ctx context.Context) ([]PackageInfo, error)
 }
 
 var platformFactory = func() platform { return newPlatformImpl() }
