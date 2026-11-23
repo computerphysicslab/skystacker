@@ -169,3 +169,138 @@ func TestReadIFDRejectsHugeEntryCount(t *testing.T) {
 		t.Fatal("huge IFD entry count accepted")
 	}
 }
+
+// TestEntryFloat checks the numeric helper used by DNG calibration tags for
+// every supported TIFF type, including both byte orders for 64-bit values and
+// rejection of non-finite or malformed inputs.
+func TestEntryFloat(t *testing.T) {
+	for _, big := range []bool{false, true} {
+		order := binary.ByteOrder(binary.LittleEndian)
+		if big {
+			order = binary.BigEndian
+		}
+		raw32 := func(bits uint32) []byte {
+			b := make([]byte, 4)
+			order.PutUint32(b, bits)
+			return b
+		}
+		raw64 := func(bits uint64) []byte {
+			b := make([]byte, 8)
+			lo, hi := uint32(bits), uint32(bits>>32)
+			if big {
+				order.PutUint32(b[0:], hi)
+				order.PutUint32(b[4:], lo)
+			} else {
+				order.PutUint32(b[0:], lo)
+				order.PutUint32(b[4:], hi)
+			}
+			return b
+		}
+		cases := []struct {
+			name string
+			typ  uint16
+			raw  []byte
+			want float64
+		}{
+			{"byte", 1, []byte{7}, 7},
+			{"undefined", 7, []byte{9}, 9},
+			{"short", 3, shortVal(order, 512), 512},
+			{"long", 4, longVal(order, 16000), 16000},
+			{"rational", 5, append(longVal(order, 3), longVal(order, 4)...), 0.75},
+			{"sshort", 8, shortVal(order, 0xFFFE), -2},
+			{"slong", 9, longVal(order, 0xFFFFFFFD), -3},
+			{"srational", 10, append(longVal(order, 0xFFFFFFF6), longVal(order, 2)...), -5},
+			{"float", 11, raw32(0x41480000 /* 12.5f */), 12.5},
+			{"double", 12, raw64(0x4024000000000000 /* 10.0 */), 10},
+		}
+		for _, c := range cases {
+			ent := Entry{Tag: 1, Type: c.typ, Raw: c.raw}
+			got, err := ent.Float(order, 0)
+			if err != nil {
+				t.Errorf("big=%v %s: %v", big, c.name, err)
+				continue
+			}
+			if got != c.want {
+				t.Errorf("big=%v %s = %v, want %v", big, c.name, got, c.want)
+			}
+		}
+	}
+	bad := []Entry{
+		{Tag: 1, Type: 3, Raw: []byte{1}},                       // truncated SHORT
+		{Tag: 1, Type: 13, Raw: []byte{1, 0, 0, 0}},             // unknown type
+		{Tag: 1, Type: 11, Raw: raw32Magic(0x7FC00000)},         // NaN
+		{Tag: 1, Type: 12, Raw: raw64Magic(0x7FF0000000000000)}, // +Inf
+	}
+	for i, e := range bad {
+		if _, err := e.Float(binary.LittleEndian, 0); err == nil {
+			t.Errorf("bad entry %d unexpectedly accepted", i)
+		}
+	}
+	if _, err := (Entry{Tag: 1, Type: 3, Raw: []byte{1, 0}}).Float(binary.LittleEndian, -1); err == nil {
+		t.Error("negative index unexpectedly accepted")
+	}
+}
+
+func raw32Magic(bits uint32) []byte {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, bits)
+	return b
+}
+
+func raw64Magic(bits uint64) []byte {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint32(b[0:], uint32(bits))
+	binary.LittleEndian.PutUint32(b[4:], uint32(bits>>32))
+	return b
+}
+
+// buildIFDChain assembles a little-endian TIFF whose IFDs are linked through
+// their Next pointers. The optional loopBack makes the last IFD point back to
+// IFD0 so the reader's cycle guard can be exercised.
+func buildIFDChain(n int, loopBack bool) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{'I', 'I'})
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(42))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(8))
+	for i := 0; i < n; i++ {
+		_ = binary.Write(&buf, binary.LittleEndian, uint16(1)) // one dummy entry
+		_ = binary.Write(&buf, binary.LittleEndian, uint16(0x0111))
+		_ = binary.Write(&buf, binary.LittleEndian, uint16(3)) // SHORT
+		_ = binary.Write(&buf, binary.LittleEndian, uint32(1))
+		_ = binary.Write(&buf, binary.LittleEndian, uint32(1)) // inline value
+		var next uint32
+		if i+1 < n {
+			next = uint32(8 + 18*(i+1))
+		} else if loopBack {
+			next = 8
+		}
+		_ = binary.Write(&buf, binary.LittleEndian, next)
+	}
+	return buf.Bytes()
+}
+
+func TestReadFollowsIFDChain(t *testing.T) {
+	doc, err := Read(bytes.NewReader(buildIFDChain(4, false)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.IFDs) != 4 {
+		t.Fatalf("IFDs = %d, want 4", len(doc.IFDs))
+	}
+	if doc.IFD1 == nil || doc.IFD1 == doc.IFD0 {
+		t.Fatal("IFD1 was not set to the second directory")
+	}
+	if doc.IFDs[3].Next != 0 {
+		t.Fatal("last IFD should terminate the chain")
+	}
+}
+
+func TestReadStopsOnIFDCycle(t *testing.T) {
+	doc, err := Read(bytes.NewReader(buildIFDChain(20, true)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.IFDs) < 2 || len(doc.IFDs) > maxIFDChain {
+		t.Fatalf("cyclic chain produced %d IFDs, want 2..%d", len(doc.IFDs), maxIFDChain)
+	}
+}

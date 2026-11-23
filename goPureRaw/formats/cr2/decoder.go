@@ -158,13 +158,19 @@ func (Decoder) Decode(r io.ReaderAt, size int64) (*raw.Image, error) {
 			pix[y*w+2*x+1] = lj.Planes[1][p]
 		}
 	}
-	meta, _ := ReadMetadata(r)
+	doc, _ := tiff.Read(r)
+	var meta raw.Metadata
+	if doc != nil {
+		meta, _ = metadata.FromTIFF(doc)
+	}
+	maxLevel := float64((uint64(1) << uint(lj.Precision)) - 1)
+	cfa, black, white := calibrationFromTIFF(doc, maxLevel)
 	return &raw.Image{
 		Width: w, Height: h, BitDepth: lj.Precision,
 		SensorData: pix,
-		CFAPattern: raw.CFAPattern{{'R', 'G'}, {'G', 'B'}},
-		BlackLevel: [4]float64{1018, 1018, 1018, 1018},
-		WhiteLevel: 16224,
+		CFAPattern: cfa,
+		BlackLevel: black,
+		WhiteLevel: white,
 		Metadata:   meta,
 	}, nil
 }

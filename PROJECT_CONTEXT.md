@@ -14,7 +14,7 @@ builds with a fresh build date, installs `skystacker` in `~/.local/bin` and
 `~/go/bin`, refreshes `./skystacker`, runs the selftest and `go test ./...`,
 then prints the active PATH binary and its build date.
 
-**Self-test count: 311 passing.** Update this number after any test change.
+**Self-test count: 312 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -636,7 +636,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 311 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 312 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -1987,3 +1987,21 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   modified-light regression: cache a synthetic FITS light, rewrite it with
   shifted stars and a new mtime, then verify the logged miss, fresh
   re-detection, a new cache entry and a following hit. Suite 311.
+
+### CR2 container calibration — item 126 (2026-11-23)
+
+- `tiff.Read` follows the complete IFD `Next` chain into `Document.IFDs`
+  (16-directory cap and cycle guard), so Canon CR2 CFA tags in IFD3 are
+  visible; `IFD1` remains for compatibility. `Entry.Float` decodes BYTE,
+  SHORT, LONG, RATIONAL, SSHORT, SLONG, SRATIONAL, FLOAT and DOUBLE in both
+  byte orders and rejects non-finite values.
+- `goPureRaw/formats/cr2/calibration.go` reads standard DNG CFA/BlackLevel/
+  WhiteLevel tags and the compact Canon `CR2CFAPattern` code, accepts scalar
+  or 2x2 black levels, validates all values against the decoded bit depth and
+  falls back to the historical EOS 40D constants (1018, 16224, RGGB) when a
+  tag is missing or invalid. `Decode` now fills `raw.Image` from those values.
+- Go tests cover a synthetic CR2 with BGGR, 500/600/700/800 black and 16000
+  white, an IFD3-only CFA tag, fallback behaviour, unsupported repeat dims,
+  numeric type/byte-order cases and IFD cycles; embedded
+  `testCR2ContainerCalibration` locks the end-to-end path. The real 40D oracle
+  still decodes 3944x2622 @ 14 bits. Suite 312.

@@ -21917,6 +21917,94 @@ func testNativeCR2Decode() error {
 	return nil
 }
 
+// calibTestSOF3Stream builds a tiny two-component lossless-JPEG stream used
+// by the CR2 container-calibration self-test. All differences are zero, so
+// decoding only depends on the structural SOF3/SOS metadata.
+func calibTestSOF3Stream() []byte {
+	var b bytes.Buffer
+	b.Write([]byte{0xFF, 0xD8})
+	for _, id := range []byte{0x00, 0x01} {
+		b.Write([]byte{
+			0xFF, 0xC4, 0x00, 0x14, id,
+			0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0,
+		})
+	}
+	b.Write([]byte{
+		0xFF, 0xC3, 0x00, 0x0E, 14,
+		0x00, 0x02, 0x00, 0x02, 0x02,
+		0x01, 0x11, 0x00,
+		0x02, 0x11, 0x01,
+	})
+	b.Write([]byte{
+		0xFF, 0xDA, 0x00, 0x0A,
+		0x02, 0x01, 0x00, 0x02, 0x10, 0x00, 0x3F, 0x00,
+	})
+	b.Write([]byte{0, 0, 0, 0, 0xFF, 0xD9})
+	return b.Bytes()
+}
+
+// testCR2ContainerCalibration checks that a synthetic CR2 with DNG-level and
+// CFA tags drives raw.Image instead of the legacy EOS 40D constants.
+func testCR2ContainerCalibration() error {
+	var b bytes.Buffer
+	b.Write([]byte{'I', 'I', 0x2A, 0x00, 0x10, 0x00, 0x00, 0x00, 'C', 'R', 0x02, 0x00, 0, 0, 0, 0})
+	if err := binary.Write(&b, binary.LittleEndian, uint16(5)); err != nil {
+		return err
+	}
+	entry := func(tag uint16, count uint32, value uint32) error {
+		for _, v := range []any{tag, uint16(3), count, value} {
+			if err := binary.Write(&b, binary.LittleEndian, v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := entry(0x828D, 2, uint32(2)|uint32(2)<<16); err != nil {
+		return err
+	}
+	cfaOff := uint32(16 + 2 + 5*12 + 4)
+	if err := entry(0x828E, 4, cfaOff); err != nil {
+		return err
+	}
+	if err := entry(0xC619, 2, uint32(2)|uint32(2)<<16); err != nil {
+		return err
+	}
+	blackOff := cfaOff + 8
+	if err := entry(0xC61A, 4, blackOff); err != nil {
+		return err
+	}
+	if err := entry(0xC61D, 1, 16000); err != nil {
+		return err
+	}
+	b.Write([]byte{0, 0, 0, 0})
+	for _, v := range []uint16{2, 1, 1, 0, 500, 600, 700, 800} {
+		if err := binary.Write(&b, binary.LittleEndian, v); err != nil {
+			return err
+		}
+	}
+	b.Write(calibTestSOF3Stream())
+	data := b.Bytes()
+	img, err := (cr2.Decoder{}).Decode(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return fmt.Errorf("synthetic CR2 decode: %w", err)
+	}
+	if img.Width != 4 || img.Height != 2 || img.BitDepth != 14 {
+		return fmt.Errorf("geometry %dx%d @ %d, want 4x2 @ 14", img.Width, img.Height, img.BitDepth)
+	}
+	wantCFA := raw.CFAPattern{{'B', 'G'}, {'G', 'R'}}
+	if img.CFAPattern != wantCFA {
+		return fmt.Errorf("CFA %v, want %v", img.CFAPattern, wantCFA)
+	}
+	if img.BlackLevel != [4]float64{500, 600, 700, 800} {
+		return fmt.Errorf("black %v, want 500/600/700/800", img.BlackLevel)
+	}
+	if img.WhiteLevel != 16000 {
+		return fmt.Errorf("white %v, want 16000", img.WhiteLevel)
+	}
+	return nil
+}
+
 func testCometTranslation() error {
 	const w, h = 16, 8
 	src := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
@@ -22516,6 +22604,7 @@ func runSelfTests() int {
 		{"ser decode", testSERDecode},
 		{"comet translation", testCometTranslation},
 		{"native CR2 decode", testNativeCR2Decode},
+		{"CR2 container calibration", testCR2ContainerCalibration},
 		{"comet ephemeris parse", testCometEphemerisParse},
 		{"reference crop alignment", testReferenceCropAlignment},
 		{"calibration master export", testExportCalibrationMasters},

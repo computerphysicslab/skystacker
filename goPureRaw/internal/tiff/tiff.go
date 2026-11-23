@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 )
 
 var (
@@ -20,6 +21,11 @@ var (
 // A hostile file may claim up to 65535 entries; real RAW containers stay
 // well below this cap.
 const maxIFDEntries = 4096
+
+// maxIFDChain bounds the number of IFDs followed through their Next
+// pointers. CR2 files use four IFDs (IFD0..IFD3); the cap also breaks
+// hostile circular chains.
+const maxIFDChain = 16
 
 // Entry is one IFD directory entry. Raw is the value bytes (inline or
 // fetched from the referenced offset), already decoded in file byte order.
@@ -47,6 +53,9 @@ type Document struct {
 	IFD1    *IFD
 	Exif    *IFD
 	SubIFDs []*IFD
+	// IFDs holds every directory in the Next-pointer chain, starting with
+	// IFD0. CR2 stores the CFA pattern in IFD3, beyond the legacy IFD1.
+	IFDs []*IFD
 }
 
 func typeSize(t uint16) (int, error) {
@@ -93,11 +102,22 @@ func ReadAt(r io.ReaderAt, offset int64) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	doc := &Document{Order: order, IFD0: ifd0}
-	if ifd0.Next != 0 {
-		if next, nerr := readIFD(r, order, offset+int64(ifd0.Next)); nerr == nil {
-			doc.IFD1 = next
+	doc := &Document{Order: order, IFD0: ifd0, IFDs: []*IFD{ifd0}}
+	// Follow the complete Next-pointer chain. IFD1 is kept for compatibility,
+	// but CR2 publishes its raw CFA tag in IFD3, so callers need all four.
+	seen := map[uint32]bool{uint32(off - offset): true}
+	next := ifd0.Next
+	for next != 0 && len(doc.IFDs) < maxIFDChain && !seen[next] {
+		seen[next] = true
+		nifd, nerr := readIFD(r, order, offset+int64(next))
+		if nerr != nil {
+			break
 		}
+		doc.IFDs = append(doc.IFDs, nifd)
+		if doc.IFD1 == nil {
+			doc.IFD1 = nifd
+		}
+		next = nifd.Next
 	}
 	if e, ok := ifd0.Entries[0x8769]; ok {
 		p, err := e.Uint32(order, 0)
@@ -214,6 +234,85 @@ func (e Entry) Rational(order binary.ByteOrder, idx int) (float64, error) {
 		return 0, nil
 	}
 	return float64(num) / float64(den), nil
+}
+
+// Float returns the idx-th numeric value as float64. It accepts the
+// integer, rational and floating-point TIFF types used by DNG calibration
+// tags; non-finite values are rejected.
+func (e Entry) Float(order binary.ByteOrder, idx int) (float64, error) {
+	if idx < 0 {
+		return 0, ErrBadType
+	}
+	var v float64
+	switch e.Type {
+	case 1, 7: // BYTE, UNDEFINED
+		if idx >= len(e.Raw) {
+			return 0, ErrBadType
+		}
+		v = float64(e.Raw[idx])
+	case 3: // SHORT
+		n, err := e.Uint16(order, idx)
+		if err != nil {
+			return 0, err
+		}
+		v = float64(n)
+	case 4: // LONG
+		n, err := e.Uint32(order, idx)
+		if err != nil {
+			return 0, err
+		}
+		v = float64(n)
+	case 5: // RATIONAL
+		n, err := e.Rational(order, idx)
+		if err != nil {
+			return 0, err
+		}
+		v = n
+	case 8: // SSHORT
+		if idx*2+2 > len(e.Raw) {
+			return 0, ErrBadType
+		}
+		v = float64(int16(order.Uint16(e.Raw[idx*2:])))
+	case 9: // SLONG
+		if idx*4+4 > len(e.Raw) {
+			return 0, ErrBadType
+		}
+		v = float64(int32(order.Uint32(e.Raw[idx*4:])))
+	case 10: // SRATIONAL
+		if idx*8+8 > len(e.Raw) {
+			return 0, ErrBadType
+		}
+		num := int32(order.Uint32(e.Raw[idx*8:]))
+		den := int32(order.Uint32(e.Raw[idx*8+4:]))
+		if den == 0 {
+			return 0, ErrBadType
+		}
+		v = float64(num) / float64(den)
+	case 11: // FLOAT
+		if idx*4+4 > len(e.Raw) {
+			return 0, ErrBadType
+		}
+		v = float64(math.Float32frombits(order.Uint32(e.Raw[idx*4:])))
+	case 12: // DOUBLE
+		if idx*8+8 > len(e.Raw) {
+			return 0, ErrBadType
+		}
+		first := order.Uint32(e.Raw[idx*8:])
+		second := order.Uint32(e.Raw[idx*8+4:])
+		var bits uint64
+		if order.Uint16([]byte{1, 0}) == 1 { // little-endian: low word first
+			bits = uint64(second)<<32 | uint64(first)
+		} else { // big-endian: high word first
+			bits = uint64(first)<<32 | uint64(second)
+		}
+		v = math.Float64frombits(bits)
+	default:
+		return 0, ErrBadType
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, ErrBadType
+	}
+	return v, nil
 }
 
 // TagName returns a human-readable name for common TIFF/Exif tags, or a

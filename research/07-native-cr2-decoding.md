@@ -180,6 +180,34 @@ For module path, tags, `go.work` and release mechanics see **C5**. CR2-specific 
 
 ---
 
+## 9. Container calibration — item 126 (2026-11-23)
+
+- CR2 calibration values now come from container metadata. `internal/tiff.Read`
+  follows the complete IFD `Next` chain into `Document.IFDs` (16-directory cap
+  and cycle guard), because Canon stores `CR2CFAPattern` in IFD3; `IFD1`
+  remains for compatibility. `Entry.Float` decodes BYTE, SHORT, LONG,
+  RATIONAL, SSHORT, SLONG, SRATIONAL, FLOAT and DOUBLE in both byte orders and
+  rejects non-finite values.
+- `formats/cr2/calibration.go` reads DNG `CFARepeatPatternDim`/`CFAPattern`
+  (0x828D/0x828E), DNG `BlackLevel`/`WhiteLevel` (0xC619/0xC61A, with the
+  DNG 1.4 `BlackLevelRepeatDim` variant) and the compact Canon
+  `CR2CFAPattern` (0xC5E0, codes 1-4). Scalar or 2x2 black levels are accepted;
+  white must exceed the maximum black. Every value is validated against the
+  decoded bit depth and invalid or absent tags fall back to the historical
+  EOS 40D constants: RGGB, black 1018 and white 16224.
+- Source traces in `/tmp/opencode/dcraw.c` and `/tmp/opencode/libraw-canon.cpp`
+  confirm that 1018 is dcraw's optical-black-derived value and 16224 comes
+  from the `adobe_coeff` table (`0x3f60`), not a CR2 tag; the real 40D therefore
+  legitimately uses the validated fallback. The camera's own `ColorData4`
+  offset `0xe7` is 1024, which is not used as a CR2 calibration tag.
+- Go regressions cover a synthetic CR2 with BGGR, 500/600/700/800 black and
+  16000 white, an IFD3-only CFA tag, fallback behaviour, unsupported repeat
+  dimensions, float/rational types in both byte orders and IFD cycle bounds.
+  The embedded `testCR2ContainerCalibration` exercises the end-to-end path and
+  the real EOS 40D oracle still reports 3944x2622 @ 14 bits. Suite 312.
+
+---
+
 ## Sources absorbed
 
 - `GEMINI_CR2_BITEXACT_PROMPT.md` — archived Deep Research prompt (verified facts, 7 questions, deliverables, guardrails).
