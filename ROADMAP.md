@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-23):** 129 Done · 12 Open · 7 Blocked · 5 Executed/not accepted
+**Summary (2026-11-23):** 133 Done · 12 Open · 7 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 137–141 and 143 were closed on 2026-11-22 with the layered
 annotation subsystem; item 145 (standalone `resize`) was closed the same day;
 items 146-149 closed the first atlas-style annotation iteration; item 150
@@ -17,7 +17,7 @@ items 146-149 closed the first atlas-style annotation iteration; item 150
 (interactive legend) closed the same iteration; items 151-153 closed the
 spectral/colour, catalog-footprint and motion-overlay wave; items 155-158
 closed the named-star, PGC, label-collar/open-circle and vendor example corpus
-waves on 2026-11-23; items 159 (SAO bright-star identifiers) and 160 (aligned DSS photographic survey cutouts) closed the SAO/survey-alignment wave the same day; items 116–119 closed the diagnostics privacy/network-safety wave and item 106
+waves on 2026-11-23; items 159 (SAO bright-star identifiers) and 160 (aligned DSS photographic survey cutouts) closed the SAO/survey-alignment wave the same day; items 161-164 closed the public deep-sky catalogue wave (OpenNGC, specialised HEASARC catalogues, field-filtered acquisition and attribution); items 116–119 closed the diagnostics privacy/network-safety wave and item 106
 hardened the Linux diagnostics collector, item 109 made positional parsing flag-registry driven, item 120 bounded SOF3/CR2 allocations, item 121 capped SBI1 table counts, item 122 switched the density-uniform RA centre to a circular mean and item 123 exposed the embedded suite through `go test`, item 124 added compensated summation to the streaming mean stack and item 125 locked star-cache invalidation with a real modified-light regression, and item 126 made the CR2 decoder read CFA and black/white levels from container tags with validated fallbacks; the next Open work is item 127; item 142 stays Blocked by item 13 and goal 144 stays Open.
 Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
@@ -51,7 +51,7 @@ already-tracked and explicitly rejected proposals were removed during
 integration. Acceptance criteria are falsifiable and still require
 verification before implementation.
 
-## Issue tracker — 158 items (ordered by effort)
+## Issue tracker — 157 items (ordered by effort)
 
 The tracker is split into **not achieved** (Open, Blocked and Executed/not accepted) and **achieved** (Done) items. Deferred and explicitly rejected work is listed in its own section below. Within each table, rows are ordered by ascending effort.
 
@@ -223,6 +223,11 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 96 | **MAST / ESASky / IRSA MOST archive adapters** | M–L (~3–4 h) | **Done** 2026-11-20 | [02](research/02-astrometry-and-identification.md) §21 | Opt-in catalog/cutout queries for MAST portal, ESASky cone/SSO crossmatch and IRSA MOST precovery, with row limits and token handling; recorded-response tests, no new runtime dependency. |
 | 28 | **Ensemble photometry + light curves (`--photometry`)** | L (~6–8 h) | **Done** 2026-11-18 | [01](research/01-architecture-and-core-engine.md) §12.2 | From AstroImageJ and MaxIm DL: aperture photometry on the plate-solved stack, Gaia ensemble zero point with MAD rejection, CSV/JSON light curve and residual table; selftest on a synthetic catalogued field. |
 | 18 | **Standalone diagnostic module (`goDiagnostics/`)** | S–L (~1–6 h, phased) | **Done** 2026-11-18 | [goDiagnostics/README.md](goDiagnostics/README.md) | Self-contained Go module with OS/runtime/CPU/memory/disk/process/update/tool collectors, `--diagnose` flag, text/JSON output, redaction, timeouts and copy-paste portability to other Go projects. |
+
+| 161 | **OpenNGC deep-sky catalogue (CC BY-SA 4.0)** | M (~3 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) §46 | `scripts/build-extended-catalog.py` merges 12,578 valid NGC/IC objects from Mattia Verga's OpenNGC database (CC BY-SA 4.0, credited in `docs/catalog-attribution.md`); stellar, duplicate and non-existent types are skipped. Precise OpenNGC types override the generic Messier class after deduplication, so M 31 stays a galaxy, M 13 a cluster and M 57 a planetary nebula. NGC 2000.0 remains excluded (Sky Publishing, research-only). |
+| 162 | **Specialised public nebula/SNR/cluster catalogues** | M (~3 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) §46 | HEASARC TDAT dumps of Messier, LBN, LDN, Sh2 H II regions, Magakian reflection nebulae, planetary nebulae, Green SNRs and open/globular clusters add 9,714 rows with axes, magnitudes and cross-IDs. Cloud area becomes a deterministic equivalent diameter for LDN, and all rows are U.S. Government Work. |
+| 163 | **Field-filtered deep-sky acquisition and provenance** | M (~2 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) §46 | The 19,292-row table lives in a separate Go constant so the offline bundle stays under 2 MiB. A declination-band index loads only objects inside the solved frame, merges aliases, suppresses the hand-curated M 31 duplicate and reports one `OpenNGC + HEASARC` provenance entry. `--annotation-deep-sky` (default on) disables it; four selftests lock count, order, known types, aliases, field filtering, acquisition and layered output. |
+| 164 | **Deep-sky wave documentation and M31 visual acceptance** | S (~1 h) | **Done 2026-11-23** | [docs/catalog-attribution.md](docs/catalog-attribution.md) | Generator source header, catalogue attribution with CC BY-SA 4.0 and U.S. Government Work notices, CLI flags, README, research notes and all test counts were synced. A real `--annotate --sky-map --gaia-offline` M31 run produced 254 sources / 239 labels / six layers with the new provenance entry; maps are in `review/atlas-maps/20261123-0759-m31-deep-sky/` (gitignored). |
 
 ## Completed (2026-11-17)
 

@@ -960,3 +960,73 @@ recorded in `docs/catalog-attribution.md`.
 **Sources absorbed:** MAST DSS documentation and `copyright.html`, live DSS
 GetImage response for M31 (2026-11-23), astroquery / hips2fits-cutout parameter
 documentation, and `survey_reproject.go` design notes.
+
+## 46. Public deep-sky catalogues — items 161–164 (2026-11-23)
+
+- The hand-curated offline bundle had only 22 deep-sky objects and 7 dark
+  clouds, which left dense fields almost unlabelled. The new generated table
+  `annotation_dso_catalogs.go` contains **19,292 unique objects**, one row per
+  designation with J2000 RA/Dec, magnitude, major/minor axes in arcsec,
+  position angle, a unified atlas type, a label priority and merged aliases:
+  `name|RA|Dec|mag|major|minor|PA|type|priority|aliases`. It is deliberately a
+  separate Go constant: adding it to `offlineAnnotationBundle()` would break
+  the `testAnnotationBundle` 2 MiB JSON guard for every annotation run.
+- `scripts/build-extended-catalog.py` is the reproducible generator. It reads
+  OpenNGC `NGC.csv`/`addendum.csv` (semicolon CSV, sexagesimal RA/Dec, arcmin
+  axes) and nine HEASARC TDAT dumps. TDAT column names come from the
+  `line[1] = ...` header, not from positional guesses. Each catalogue has an
+  extractor; rows are validated for coordinates, finite numbers and bounded
+  axes, then merged by normalised identity (designation and aliases) and by a
+  12 arcsec spatial tolerance in 0.05 deg declination cells. The first source
+  in priority order supplies the primary name (Messier > NGC/IC > specialised
+  catalogues); later rows only contribute aliases, missing geometry and
+  missing magnitudes.
+- **OpenNGC** (<https://github.com/mattiaverga/OpenNGC>) is licensed
+  **CC BY-SA 4.0**. It contributed 12,578 valid NGC/IC objects after skipping
+  `Dup`, `NonEx`, `*`, `**`, `Nova` and unclassified types (1,456 rows). The
+  derived table keeps the CC BY-SA 4.0 notice; it is factual astronomical
+  data shipped alongside the MIT-licensed code, not a relicensing of the code.
+  The **NGC 2000.0** catalogue (CDS `VII/118`) was explicitly rejected: the
+  HEASARC record states Sky Publishing copyright and research-only use.
+- **HEASARC** mirrors (<https://heasarc.gsfc.nasa.gov/W3Browse/all/> and the
+  `FTP/heasarc/dbase/dump/` TDAT files) contributed Messier (109), LBN (1,125),
+  LDN (1,791), Sh2 H II regions (313), Magakian reflection nebulae (913),
+  planetary nebulae (1,490), Green SNRs (295), open clusters (2,166) and
+  globular clusters (157). These are published as U.S. Government Work. LDN
+  areas in deg² are converted to an equivalent circular diameter only to size
+  the dark-cloud contour; no physical claim is made about cloud shape.
+- The Messier dump assigns one generic "nebula" class to galaxies, clusters
+  and planetary nebulae. The merge refines a generic Messier type with the
+  precise OpenNGC type when the same object is cross-identified, while keeping
+  the Messier designation and priority. Verified examples: M 31 → `galaxy`
+  (aliases `Andromeda Galaxy`, `NGC 0224`, `NGC 224`), M 42 → `nebula`,
+  M 13 → `cluster`, M 51 → `galaxy`, M 57 and M 27 → `planetary`,
+  NGC 6960 → `remnant`, LDN 846 → `dark-nebula`.
+- `annotation_dso.go` parses the table once behind `sync.Once`, indexes rows
+  by 0.25 deg declination band and returns only objects inside the WCS field.
+  `extendedDSOSources()` maps them to the unified `annotationSource`, dedups
+  against the small hand-curated bundle with `annotationIdentity()` (so
+  `M31`, `M 31` and `m-31` match) and marks them `Extended` and offline.
+  `acquireAnnotationSources()` adds them before the online VO services, so a
+  network failure cannot remove them. `--annotation-deep-sky` defaults to on;
+  `=false` restores the previous behaviour. The provenance report gains one
+  `OpenNGC + HEASARC deep-sky catalogues` entry only when rows were used.
+- Four embedded selftests lock the release: exact row count (19,292), RA order,
+  geometry/type bounds, known objects and M 31 aliases; the four-object M 31
+  field cone and deduplication; offline acquisition sizes and provenance; and
+  a real layered SVG/raster run with the catalogue on. Suite: **322**.
+- Verification: a real `--annotate --sky-map --gaia-offline` run on
+  `assets/2024-08-07-Riofrio-M31-refr150/` produced 254 sources, 239 labels,
+  six layers and a provenance report listing the new catalogue; M 32 appears
+  as a label that the old bundle could not provide. Maps are in
+  `review/atlas-maps/20261123-0759-m31-deep-sky/` (local, gitignored).
+- **External outages:** CDS/VizieR and Web search were unreachable (timeouts /
+  HTTP 402) during source research; all data were obtained from the listed
+  HEASARC mirrors and the OpenNGC GitHub repository. No catalogue result was
+  inferred without a downloaded source.
+
+**Sources absorbed:** OpenNGC README and `database_files/NGC.csv`/
+`addendum.csv` (CC BY-SA 4.0, Mattia Verga); HEASARC TDAT dumps and W3Browse
+pages for `messier`, `lbn`, `ldn`, `hiiregion`, `refnebulae`, `plnebulae`,
+`snrgreen`, `openclust` and `globclust`; HEASARC NGC 2000.0 licence note;
+USA.gov U.S. Government Work notice.

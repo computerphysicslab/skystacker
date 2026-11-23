@@ -101,6 +101,7 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--annotation-vo LIST` | — | Optional SIMBAD/VizieR cone queries for layered annotations; offline bundle by default. |
 | `--annotation-names MODE` | `auto` | Gaia labels: `auto` (SIMBAD full-field query, AllWISE/IRSA fallback), `simbad`, `irsa` or `off` (unique `Gaia J…` designations only). |
 | `--annotation-sao` | on | Bright-star `SAO`/`HD`/`DM`/`GC` labels from the embedded V<=8.0 SAO subset; `=false` disables. Proper names always win positional ties. |
+| `--annotation-deep-sky` | on | Field-filtered OpenNGC + HEASARC deep-sky catalogue (19,292 objects: galaxies, clusters, nebulae, planetary nebulae, remnants, dark clouds); `=false` disables. Cross-IDs are merged and duplicates with the hand-curated bundle are suppressed. |
 | `--annotation-cache DIR` | Gaia cache dir | Disk cache for VO annotation queries. |
 | `--annotation-label-collar` | on | Dark `paint-order` SVG stroke behind labels, with a two-pixel raster twin. `--annotation-label-collar=false` disables it without changing placement. |
 | `--annotation-star-style MODE` | `filled` | `filled` or `open`; `open` adds the `open-star` symbol family, legend row and CSS toggle. |

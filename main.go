@@ -284,6 +284,7 @@ type cliOptions struct {
 	AnnotationVO           string
 	AnnotationNames        string
 	AnnotationSAO          bool
+	AnnotationDeepSky      bool
 	AnnotationCache        string
 	AnnotationLabelCollar  bool
 	AnnotationStarStyle    string
@@ -696,6 +697,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.AnnotationVO, "annotation-vo", "", "comma-separated VO catalogs for layered annotations: simbad,vizier (offline by default)")
 	fs.StringVar(&o.AnnotationNames, "annotation-names", "auto", "Gaia label names: auto (SIMBAD, AllWISE fallback), simbad, irsa, off (coordinate designations only)")
 	fs.BoolVar(&o.AnnotationSAO, "annotation-sao", true, "use the embedded SAO V<=8.0 catalog to name Gaia stars; use =false to disable")
+	fs.BoolVar(&o.AnnotationDeepSky, "annotation-deep-sky", true, "use the embedded OpenNGC/HEASARC deep-sky catalogues in layered annotations; use =false to disable")
 	fs.StringVar(&o.AnnotationCache, "annotation-cache", "", "disk cache directory for VO annotation queries (default: Gaia cache dir)")
 	fs.BoolVar(&o.AnnotationLabelCollar, "annotation-label-collar", true, "draw a dark contrast collar behind annotation labels; use =false for plain labels")
 	fs.StringVar(&o.AnnotationStarStyle, "annotation-star-style", "filled", "point-source marker style in annotation maps: filled or open")
@@ -5917,6 +5919,9 @@ func resolvedFlagLines(o runOptions) []string {
 		if !o.AnnotationSAO {
 			add("--annotation-sao=false")
 		}
+		if !o.AnnotationDeepSky {
+			add("--annotation-deep-sky=false")
+		}
 		if o.AnnotationCache != "" {
 			add("--annotation-cache " + quoteReportArg(o.AnnotationCache))
 		}
@@ -6603,6 +6608,7 @@ type runOptions struct {
 	AnnotationVO           string
 	AnnotationNames        string
 	AnnotationSAO          bool
+	AnnotationDeepSky      bool
 	AnnotationCache        string
 	AnnotationLabelCollar  bool
 	AnnotationStarStyle    string
@@ -22670,6 +22676,10 @@ func runSelfTests() int {
 		{"named star crossmatch priority", testNamedStarCrossmatchPriority},
 		{"SAO catalogue", testSAOCatalogue},
 		{"SAO crossmatch", testSAOCrossmatch},
+		{"extended deep-sky catalogue", testExtendedDeepSkyCatalogue},
+		{"extended deep-sky field filter", testExtendedDeepSkyFieldFilter},
+		{"extended deep-sky acquisition", testExtendedDeepSkyAcquisition},
+		{"extended deep-sky layered output", testExtendedDeepSkyLayeredOutput},
 		{"DSS cutout URL", testDSSCutoutURL},
 		{"survey geometry", testSurveyGeometry},
 		{"survey reprojection", testSurveyReprojection},
@@ -35029,6 +35039,7 @@ func main() {
 		AnnotationVO:           opts.AnnotationVO,
 		AnnotationNames:        opts.AnnotationNames,
 		AnnotationSAO:          opts.AnnotationSAO,
+		AnnotationDeepSky:      opts.AnnotationDeepSky,
 		SurveySource:           opts.SurveySource,
 		SurveyDSSSurvey:        opts.SurveyDSSSurvey,
 		SurveyReproject:        opts.SurveyReproject,

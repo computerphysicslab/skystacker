@@ -415,7 +415,14 @@ domain). CDS HiPS remains the default source; its service was unreachable from
 this machine during verification, which is reported as an external outage.
 Add `--annotation-vo simbad,vizier` to
 enrich the same model from VO services; network failures only add a redacted
-warning and keep the offline sources. Star markers use renderer-safe literal
+warning and keep the offline sources. Layered annotations also embed a
+field-filtered deep-sky catalogue of 19,292 unique objects built from OpenNGC
+(CC BY-SA 4.0) and public HEASARC dumps of Messier, LBN, LDN, Sh2, Magakian,
+planetary nebulae, Green SNRs and open/globular clusters. It is enabled by
+default with `--annotation-deep-sky` and can be disabled with `=false`; only
+objects inside the solved frame are loaded, cross-identifiers are merged, and
+the bundle duplicate (M 31) is suppressed. `docs/catalog-attribution.md`
+records every source and licence. Star markers use renderer-safe literal
 colours (white → amber → brown by magnitude) with matching opacity, so the SVG
 stays visible in browsers, librsvg and ImageMagick instead of rendering
 black-on-black. Extended sources use an atlas-style vocabulary shared by both
@@ -534,6 +541,7 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--annotation-catalogs LIST` | Comma-separated JSON catalogs (RA/Dec degrees; optional name/type/mag/major/minor/pa) for multi-catalog cross-match | — |
 | `--annotation-layers LIST` | Comma-separated SVG 2 annotation layers: `grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, `legend`/`key` (plus `grid`, `gaia-stars`/`stars`, `extended-objects`/`dso`, `sso-vectors`) | all |
 | `--annotation-vo LIST` | Optional online VO services for layered annotations: `simbad`, `vizier` (offline bundle by default) | — |
+| `--annotation-deep-sky` | Use the embedded 19,292-object OpenNGC/HEASARC deep-sky catalogue in layered annotations (`=false` disables it) | `true` |
 | `--annotation-cache DIR` | Disk cache directory for VO annotation queries | Gaia cache dir |
 | `--annotation-label-collar` | Draw a dark contrast stroke behind annotation labels (`=false` for plain labels) | `true` |
 | `--annotation-star-style MODE` | Point-source markers: `filled` or `open` | `filled` |
@@ -856,7 +864,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 318 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (160 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 322 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (164 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 

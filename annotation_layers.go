@@ -848,15 +848,17 @@ func annotationLabelFields(s annotationSource, fields int) string {
 // ---------------------------------------------------------------------------
 
 type annotationAcquisitionOptions struct {
-	Offline      bool
-	Services     []string
-	CacheDir     string
-	Timeout      time.Duration
-	RADeg        float64
-	DecDeg       float64
-	RadiusArcsec float64
-	SIMBADURL    string
-	VizierURL    string
+	Offline             bool
+	Services            []string
+	CacheDir            string
+	Timeout             time.Duration
+	RADeg               float64
+	DecDeg              float64
+	RadiusArcsec        float64
+	DeepSky             bool
+	DeepSkyRadiusArcsec float64
+	SIMBADURL           string
+	VizierURL           string
 }
 
 type annotationAcquisition struct {
@@ -1045,6 +1047,24 @@ func acquireAnnotationSources(ctx context.Context, o annotationAcquisitionOption
 		Provenance: []annotationProvenance{{
 			Catalog: bundle.Version, Service: "offline-bundle", Offline: true,
 		}},
+	}
+	// The extended deep-sky catalogue is filtered to the current field and
+	// deduplicated against the small hand-curated bundle. It stays out of the
+	// 2 MiB offline bundle and never slows down unrelated annotation runs.
+	if o.DeepSky {
+		radius := o.DeepSkyRadiusArcsec
+		if radius <= 0 {
+			radius = o.RadiusArcsec
+		}
+		known := make(map[string]bool, len(result.Sources))
+		for _, src := range result.Sources {
+			known[annotationIdentity(src.Name)] = true
+		}
+		deep := extendedDSOSources(o.RADeg, o.DecDeg, radius, extendedDSOProvenance(), known)
+		if len(deep) > 0 {
+			result.Sources = append(result.Sources, deep...)
+			result.Provenance = append(result.Provenance, extendedDSOProvenance())
+		}
 	}
 	if o.Offline {
 		return result, nil
@@ -2194,12 +2214,14 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 
 	// Unified source model: offline bundle + cached Gaia + user catalogs + VO.
 	acqOpts := annotationAcquisitionOptions{
-		Offline:      opts.GaiaOffline || strings.TrimSpace(opts.AnnotationVO) == "",
-		CacheDir:     opts.AnnotationCache,
-		RADeg:        ww.CRVAL1 * 180 / math.Pi,
-		DecDeg:       ww.CRVAL2 * 180 / math.Pi,
-		RadiusArcsec: opts.ConeRadiusArcsec,
-		Timeout:      30 * time.Second,
+		Offline:             opts.GaiaOffline || strings.TrimSpace(opts.AnnotationVO) == "",
+		CacheDir:            opts.AnnotationCache,
+		RADeg:               ww.CRVAL1 * 180 / math.Pi,
+		DecDeg:              ww.CRVAL2 * 180 / math.Pi,
+		RadiusArcsec:        opts.ConeRadiusArcsec,
+		DeepSky:             opts.AnnotationDeepSky,
+		DeepSkyRadiusArcsec: wcsFieldRadiusArcsec(&ww, w, h),
+		Timeout:             30 * time.Second,
 	}
 	if acqOpts.CacheDir == "" {
 		acqOpts.CacheDir = gaiaDefaultCacheDir()
