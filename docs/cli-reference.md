@@ -1,7 +1,9 @@
 # CLI reference
 
 Usage: `skystacker [flags] [input-directory]`. Flags may appear before or after
-the positional input directory. The default input directory is `.`.
+the positional input directory; value-taking flags are derived from the
+registered flag set, so `--flag value`, `--flag=value` and `-flag value` are all
+accepted. `--` stops flag parsing. The default input directory is `.`.
 
 This page mirrors `skystacker --help`; use that command for the authoritative,
 build-specific text. See the linked pages for the semantics of each subsystem.

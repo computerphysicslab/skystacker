@@ -483,7 +483,7 @@ Comet-aligned outputs are written as `stacked_comet.f32raw`/`stacked_comet.jpg` 
 skystacker [flags] [input-directory]
 ```
 
-The input directory defaults to `.`. Flags may be passed before or after the positional input directory.
+The input directory defaults to `.`. Flags may be passed before or after the positional input directory. Value-taking flags are discovered from the registered flag set, so new flags do not need a parser change; `--flag=value`, `-flag value` and a trailing `--` are also supported.
 
 ### Core & Execution
 

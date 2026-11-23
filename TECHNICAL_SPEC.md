@@ -35,7 +35,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 skystacker [flags] [input-directory]
 ```
 
-Flags are accepted before or after the positional input directory. `--config FILE` loads a JSON object of flag names (without `--`) with string/number/bool/array values; config flags are applied first so explicit CLI flags override them. Default input directory: `.`. Default output directory: `<input>/0_skystacker_results`.
+Flags are accepted before or after the positional input directory. The positional preprocessor derives value-taking flags from the registered `flag.FlagSet` via `IsBoolFlag`, so future flags cannot silently break reordering; `--flag=value`, `-flag value`, negative numeric values and the `--` terminator are supported. `--config FILE` loads a JSON object of flag names (without `--`) with string/number/bool/array values; config flags are applied first so explicit CLI flags override them. Default input directory: `.`. Default output directory: `<input>/0_skystacker_results`.
 
 ### Core flags
 - `--method` (default `sigma`): `mean`, `median`, `sigma`.

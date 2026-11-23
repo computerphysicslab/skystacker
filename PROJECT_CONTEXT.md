@@ -1898,3 +1898,21 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   collector budget and `CmdTimeout`, so a one-second budget also bounds
   external tool probes. `testDiagnosticsCollect` verifies 3 s/2 s defaults
   and the 1 s clamp. Suite remains 309.
+
+
+### Registry-driven CLI parsing — item 109 (2026-11-23)
+
+- `parseArgs` no longer owns a 138-entry hardcoded list of value flags.
+  `registeredValueFlagNames` uses `flag.VisitAll` after registration and the
+  standard `IsBoolFlag` contract (also valid for custom values and bool
+  functions), so newly registered flags cannot silently break positional
+  reordering. `flag.Visit` would only see already-set flags and is therefore
+  not suitable before `Parse`.
+- `reorderArgsForParse` is pure and unit-tested: it moves positionals after
+  flags, keeps attached `--flag=value` tokens intact, accepts single-dash
+  names, preserves negative numeric values, treats a bare `-` as positional
+  and honours the `--` terminator.
+- Embedded `testParseArgs` adds regressions for the previously omitted
+  `--tiff-compression`, `--tiff-depth` and `--test-debayer` value flags, plus
+  `-workers 2`, `--tiff-compression=lzw`, `--spikes=false` and
+  `--stf-shadows -3.5`. Suite remains 309.
