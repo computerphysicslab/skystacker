@@ -402,6 +402,17 @@ designation with the catalog identifier (for example `WISE
 J004057.98+414350.8`) and the number of matches is recorded in
 `annotation_provenance.json` (`name_matches`). Use `--annotation-names simbad`,
 `irsa` or `off` to force a catalog, the fallback only, or designations only.
+Bright Gaia stars additionally receive an `SAO n` identifier (with `HD`,
+`DM` and `GC` cross-IDs in the provenance) from a compact embedded V<=8.0 SAO
+subset; proper names and Bayer/Flamsteed labels always win a positional tie, and
+`--annotation-sao=false` disables this fallback. To compare a solved frame with
+the sky survey it was taken from, `--survey-cutout --survey-source dss
+--survey-reproject` downloads a STScI/MAST DSS plate and resamples it onto the
+target WCS, producing a pixel-registered `*_aligned.fits` plus JPG and a
+provenance JSON that records the plate, its copyright and the CC BY-NC-SA 4.0
+licence (DSS is free for scientific/educational/non-profit use, not public
+domain). CDS HiPS remains the default source; its service was unreachable from
+this machine during verification, which is reported as an external outage.
 Add `--annotation-vo simbad,vizier` to
 enrich the same model from VO services; network failures only add a redacted
 warning and keep the offline sources. Star markers use renderer-safe literal
@@ -561,6 +572,8 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--annotate --sky-map` | Also write the unified layered products `stacked_annotated.svg`, `stacked_annotated.png` and `annotation_provenance.json` | `false` |
 | `--survey-cutout` | Fetch a CDS HiPS FITS cutout matching the solved frame geometry (frames above the 50 Mpix service limit are refused locally) | `false` |
 | `--survey-hips ID` / `--survey-timeout N` | HiPS survey and HTTP timeout for `--survey-cutout` | `CDS/P/DSS2/color` / `30` |
+| `--survey-source hips\|dss` / `--dss-survey NAME` | Survey service and DSS plate survey (`poss2ukstu_red`, `poss2ukstu_blue`, `poss2ukstu_ir`, `poss1_red`, `poss1_blue`, `quickv`, `phase2_gsc2`, `phase2_gsc1`) | `hips` / `poss2ukstu_red` |
+| `--survey-reproject` | Resample the cutout onto the solved frame WCS; writes `*_aligned.fits` (target WCS, SIP), `*_aligned.jpg` and `*_alignment.json` with plate ID, copyright and CC BY-NC-SA 4.0 licence | `false` |
 | `--process-image PATH[,PATH...]` | Process existing JPG/PNG/FITS images without stacking; `resize` also accepts a directory | — |
 | `--image-op OP` | `resize`, `blur`, `sharpen`, `background`, `stretch`, `denoise`, `deconvolve`, `starless`, `sum`, `subtract`, `average`, `median`, `min`, `max`, `measure-transform`, `measure-quality`, `sky-map`, `survey-cutout`, `plate-solve` (blind-capable) | — |
 | `--image-output DIR` | Output directory for image-mode products | `image_processing` |
@@ -702,6 +715,7 @@ frames unless `--external-allow-nonlinear` is given.
 | `--astap-cmd CMD` | local ASTAP blind-solver command (needs D05–D80 database) | `astap` |
 | `--cone-catalog NAME` / `--cone-radius N` | external VOTable cone search added to annotations (sdss, irsa, vizier; arcsec) | — / `60` |
 | `--annotation-names MODE` | Gaia label names: `auto` (SIMBAD over the whole field, AllWISE fallback), `simbad`, `irsa` or `off` | `auto` |
+| `--annotation-sao` | Bright-star `SAO`/`HD`/`DM`/`GC` labels from the embedded V<=8.0 SAO subset; use `=false` to disable | on |
 | `--annotation-label-collar` | Dark contrast stroke behind labels; use `=false` for plain text | on |
 | `--annotation-star-style MODE` | `open` adds the toggleable `open-star` family (variable/double markers remain distinct) | `filled` |
 | `--blind-benchmark DIR` / `--benchmark-solvers LIST` | head-to-head blind-solve CSV over a corpus | — |
@@ -842,7 +856,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 312 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (158 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 318 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (160 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 

@@ -283,6 +283,7 @@ type cliOptions struct {
 	AnnotationLayers       string
 	AnnotationVO           string
 	AnnotationNames        string
+	AnnotationSAO          bool
 	AnnotationCache        string
 	AnnotationLabelCollar  bool
 	AnnotationStarStyle    string
@@ -315,6 +316,9 @@ type cliOptions struct {
 	SkyMap                 bool
 	SurveyCutout           bool
 	SurveyHIPS             string
+	SurveySource           string
+	SurveyDSSSurvey        string
+	SurveyReproject        bool
 	SurveyTimeout          int
 	ProcessImage           string
 	ImageOp                string
@@ -691,6 +695,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.AnnotationLayers, "annotation-layers", "", "comma-separated SVG 2 annotation layers: grid-radec,grid-galactic,grid-ecliptic,constellations,scale-bar,finder-chart (default: all)")
 	fs.StringVar(&o.AnnotationVO, "annotation-vo", "", "comma-separated VO catalogs for layered annotations: simbad,vizier (offline by default)")
 	fs.StringVar(&o.AnnotationNames, "annotation-names", "auto", "Gaia label names: auto (SIMBAD, AllWISE fallback), simbad, irsa, off (coordinate designations only)")
+	fs.BoolVar(&o.AnnotationSAO, "annotation-sao", true, "use the embedded SAO V<=8.0 catalog to name Gaia stars; use =false to disable")
 	fs.StringVar(&o.AnnotationCache, "annotation-cache", "", "disk cache directory for VO annotation queries (default: Gaia cache dir)")
 	fs.BoolVar(&o.AnnotationLabelCollar, "annotation-label-collar", true, "draw a dark contrast collar behind annotation labels; use =false for plain labels")
 	fs.StringVar(&o.AnnotationStarStyle, "annotation-star-style", "filled", "point-source marker style in annotation maps: filled or open")
@@ -735,6 +740,9 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.BoolVar(&o.SkyMap, "sky-map", false, "write stacked_sky_map.svg from cached Gaia sources (requires --plate-solve)")
 	fs.BoolVar(&o.SurveyCutout, "survey-cutout", false, "fetch a CDS HiPS survey cutout matching the solved frame geometry")
 	fs.StringVar(&o.SurveyHIPS, "survey-hips", "CDS/P/DSS2/color", "HiPS survey ID for --survey-cutout")
+	fs.StringVar(&o.SurveySource, "survey-source", "hips", "survey cutout service: hips (CDS) or dss (STScI/MAST photographic plates)")
+	fs.StringVar(&o.SurveyDSSSurvey, "dss-survey", "poss2ukstu_red", "DSS survey for --survey-source=dss: poss2ukstu_red|blue|ir, poss1_red|blue, quickv, phase2_gsc2|gsc1")
+	fs.BoolVar(&o.SurveyReproject, "survey-reproject", false, "resample the survey FITS onto the target WCS pixel grid and write _aligned products")
 	fs.IntVar(&o.SurveyTimeout, "survey-timeout", 30, "HTTP timeout in seconds for --survey-cutout")
 	fs.StringVar(&o.ProcessImage, "process-image", "", "comma-separated image paths or a directory to process without stacking (resize expands directories)")
 	fs.StringVar(&o.ImageOp, "image-op", "", "image operation: resize, blur, sharpen, background, stretch, denoise, deconvolve, starless, sum, subtract, average, median, min, max, measure-transform, measure-quality, sky-map, survey-cutout, plate-solve")
@@ -1019,6 +1027,14 @@ func parseArgs(args []string) (*cliOptions, error) {
 	}
 	if o.ConeRadiusArcsec <= 0 || o.ConeRadiusArcsec > 180 {
 		return nil, fmt.Errorf("--cone-radius must be in (0, 180] arcsec, got %g", o.ConeRadiusArcsec)
+	}
+	switch strings.ToLower(strings.TrimSpace(o.SurveySource)) {
+	case "", "hips", "dss":
+	default:
+		return nil, fmt.Errorf("--survey-source must be hips or dss, got %q", o.SurveySource)
+	}
+	if o.SurveyDSSSurvey != "" && !validDSSSurvey(o.SurveyDSSSurvey) {
+		return nil, fmt.Errorf("--dss-survey is not a documented DSS survey: %q", o.SurveyDSSSurvey)
 	}
 	switch strings.ToLower(strings.TrimSpace(o.AnnotationNames)) {
 	case "", "auto", "simbad", "irsa", "off":
@@ -1604,6 +1620,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --annotation-layers LIST  SVG 2 layers: grid-radec,grid-galactic,grid-ecliptic,constellations,scale-bar,finder-chart (default: all)")
 	fmt.Fprintln(w, "  --annotation-vo LIST       optional VO services: simbad,vizier (offline by default)")
 	fmt.Fprintln(w, "  --annotation-names MODE    Gaia names: auto, simbad, irsa, off (offline uses Gaia J designations)")
+	fmt.Fprintln(w, "  --annotation-sao           use embedded SAO V<=8.0 cross-IDs to name Gaia stars (default true; use =false to disable)")
 	fmt.Fprintln(w, "  --annotation-cache DIR     disk cache for VO annotation queries (default: Gaia cache dir)")
 	fmt.Fprintln(w, "  --annotation-label-collar  dark contrast stroke behind labels (default true; use =false to disable)")
 	fmt.Fprintln(w, "  --annotation-star-style    point markers: filled (default) or open")
@@ -1638,6 +1655,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --sky-map              write stacked_sky_map.svg from cached Gaia sources")
 	fmt.Fprintln(w, "  --survey-cutout        fetch a CDS HiPS FITS cutout matching the solved frame")
 	fmt.Fprintln(w, "  --survey-hips ID / --survey-timeout N  HiPS survey and HTTP timeout (30 s)")
+	fmt.Fprintln(w, "  --survey-source hips|dss      survey service (DSS = STScI photographic plates)")
+	fmt.Fprintln(w, "  --dss-survey NAME             DSS plate survey (default poss2ukstu_red)")
+	fmt.Fprintln(w, "  --survey-reproject            resample the cutout onto the target WCS grid; writes _aligned FITS/JPG/JSON")
 	fmt.Fprintln(w, "  --process-image PATH[,PATH...]  process image(s) without running the stacking pipeline")
 	fmt.Fprintln(w, "                                 a directory expands to its image files for --image-op resize")
 	fmt.Fprintln(w, "  --image-op OP / --image-output DIR  operation (see --help listing) and output directory")
@@ -5894,6 +5914,9 @@ func resolvedFlagLines(o runOptions) []string {
 		if o.AnnotationNames != "" && o.AnnotationNames != "auto" {
 			add("--annotation-names " + quoteReportArg(o.AnnotationNames))
 		}
+		if !o.AnnotationSAO {
+			add("--annotation-sao=false")
+		}
 		if o.AnnotationCache != "" {
 			add("--annotation-cache " + quoteReportArg(o.AnnotationCache))
 		}
@@ -5995,6 +6018,15 @@ func resolvedFlagLines(o runOptions) []string {
 	}
 	if o.SurveyCutout {
 		add("--survey-cutout --survey-hips " + o.SurveyHIPS + fmt.Sprintf(" --survey-timeout %d", o.SurveyTimeout))
+		if o.SurveySource != "" && strings.ToLower(o.SurveySource) != "hips" {
+			add("--survey-source " + quoteReportArg(o.SurveySource))
+		}
+		if source := strings.ToLower(strings.TrimSpace(o.SurveySource)); source == "dss" && o.SurveyDSSSurvey != "" {
+			add("--dss-survey " + quoteReportArg(o.SurveyDSSSurvey))
+		}
+		if o.SurveyReproject {
+			add("--survey-reproject")
+		}
 	}
 	if o.ProcessImage != "" {
 		add("--process-image " + quoteReportArg(o.ProcessImage))
@@ -6570,6 +6602,7 @@ type runOptions struct {
 	AnnotationLayers       string
 	AnnotationVO           string
 	AnnotationNames        string
+	AnnotationSAO          bool
 	AnnotationCache        string
 	AnnotationLabelCollar  bool
 	AnnotationStarStyle    string
@@ -6611,6 +6644,9 @@ type runOptions struct {
 	SkyMap                 bool
 	SurveyCutout           bool
 	SurveyHIPS             string
+	SurveySource           string
+	SurveyDSSSurvey        string
+	SurveyReproject        bool
 	SurveyTimeout          int
 	ProcessImage           string
 	ImageOp                string
@@ -15590,9 +15626,12 @@ func solvePlate(frameStars []star, imgW, imgH int, headerRA, headerDec float64, 
 // A_ORDER/B_ORDER > 2 is accepted by using only the quadratic SIP terms.
 func parseAstrometryWCS(data []byte) (*wcsTan, []float64, error) {
 	cards := make(map[string]string)
+	// DSS GetImage headers place the local WCS approximation several blocks
+	// after SIMPLE; scanning the whole primary header (bounded) keeps the same
+	// parser usable for astrometry.net solutions and survey cutouts.
 	limit := len(data)
-	if limit > 2880 {
-		limit = 2880
+	if limit > 2880*64 {
+		limit = 2880 * 64
 	}
 	for off := 0; off+80 <= limit; off += 80 {
 		card := strings.TrimRight(string(data[off:off+80]), " ")
@@ -22629,6 +22668,12 @@ func runSelfTests() int {
 		{"atlas motion and variability", testAtlasMotionVariabilityOverlays},
 		{"named star catalogue", testNamedStarCatalogue},
 		{"named star crossmatch priority", testNamedStarCrossmatchPriority},
+		{"SAO catalogue", testSAOCatalogue},
+		{"SAO crossmatch", testSAOCrossmatch},
+		{"DSS cutout URL", testDSSCutoutURL},
+		{"survey geometry", testSurveyGeometry},
+		{"survey reprojection", testSurveyReprojection},
+		{"reprojected FITS header", testReprojectedFITSHeader},
 		{"vendor example corpus", testVendorExampleCorpus},
 		{"PGC designation normalisation", testPGCDestinationNormalisation},
 		{"PGC offline catalogue", testPGCOfflineTable},
@@ -34983,6 +35028,10 @@ func main() {
 		AnnotationLayers:       opts.AnnotationLayers,
 		AnnotationVO:           opts.AnnotationVO,
 		AnnotationNames:        opts.AnnotationNames,
+		AnnotationSAO:          opts.AnnotationSAO,
+		SurveySource:           opts.SurveySource,
+		SurveyDSSSurvey:        opts.SurveyDSSSurvey,
+		SurveyReproject:        opts.SurveyReproject,
 		AnnotationCache:        opts.AnnotationCache,
 		AnnotationLabelCollar:  opts.AnnotationLabelCollar,
 		AnnotationStarStyle:    opts.AnnotationStarStyle,

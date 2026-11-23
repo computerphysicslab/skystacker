@@ -59,6 +59,31 @@ factual coordinates, magnitudes and published major/minor axes are stored in
 instead of inventing an ellipse. These factual data are used for visual
 identification in annotation maps and are attributed here.
 
+## SAO bright-star identifiers
+
+The offline annotation bundle embeds a compact V <= 8.0 subset of the
+Smithsonian Astrophysical Observatory Star Catalog (SAO, CDS `I/131A`, SAO Staff
+1966, SAO Special Report 119) generated from the HEASARC mirror
+(`I/131A/sao`, <https://heasarc.gsfc.nasa.gov/W3Browse/star-catalog/sao.html>).
+The source is the HEASARC TDAT dump
+(`https://heasarc.gsfc.nasa.gov/FTP/heasarc/dbase/dump/heasarc_sao.tdat.gz`,
+258,944 rows); 46,136 stars with V <= 8.0 are stored in `annotation_sao.go`
+with their J2000 position, V magnitude, spectral type and `DM`/`HD`/`GC`
+cross-identifiers. HEASARC publishes this catalogue as a **U.S. Government
+Work** (<https://www.usa.gov/government-works>), free to use and redistribute;
+it is used here as factual positional/cross-ID data for bright-star labelling.
+
+## Digitized Sky Survey plates
+
+Aligned survey cutouts fetched with `--survey-source dss` come from the STScI/MAST
+Digitized Sky Survey (<https://archive.stsci.edu/dss/>). MAST distributes DSS
+data under **CC BY-NC-SA 4.0**, free for scientific, educational and non-profit
+use with attribution; the data are **not** public domain and individual plate
+rights vary. Every aligned product preserves the source `PLATEID` and
+`COPYRGHT` cards (for example `Caltech/Palomar` for POSS-II) in the FITS header
+and records the retrieval URL, licence and attribution in `<stem>_alignment.json`.
+Verify rights with the plate holder before any commercial use.
+
 ## Other catalogues
 
 Gaia DR3 tile data is fetched from the CDS/ESA services and remains subject to

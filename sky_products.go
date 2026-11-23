@@ -376,8 +376,37 @@ func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, ste
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
-	fitsData, err := fetchHiPSCutout(ctx, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits",
-		opts.SurveyHIPS, width, height, ra, dec, fov, rotation)
+	var fitsData []byte
+	var err error
+	source := strings.ToLower(strings.TrimSpace(opts.SurveySource))
+	if source == "" {
+		source = "hips"
+	}
+	sourceURL := ""
+	survey := opts.SurveyHIPS
+	switch source {
+	case "hips":
+		sourceURL = fmt.Sprintf("https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=%s&ra=%.8f&dec=%.8f&fov=%.8f&width=%d&height=%d&rotation_angle=%.8f",
+			opts.SurveyHIPS, ra, dec, fov, width, height, rotation)
+		fitsData, err = fetchHiPSCutout(ctx, "https://alasky.cds.unistra.fr/hips-image-services/hips2fits",
+			opts.SurveyHIPS, width, height, ra, dec, fov, rotation)
+	case "dss":
+		dssSurvey := opts.SurveyDSSSurvey
+		if dssSurvey == "" {
+			dssSurvey = "poss2ukstu_red"
+		}
+		_, _, hArcmin, wArcmin, gerr := surveyGeometry(wcs, width, height)
+		if gerr != nil {
+			return gerr
+		}
+		sourceURL, err = dssCutoutURL("https://archive.stsci.edu/cgi-bin/dss_search", dssSurvey, ra, dec, hArcmin, wArcmin)
+		if err == nil {
+			fitsData, err = fetchDSSCutout(ctx, "https://archive.stsci.edu/cgi-bin/dss_search", dssSurvey, ra, dec, hArcmin, wArcmin)
+		}
+		survey = dssSurvey
+	default:
+		return fmt.Errorf("survey cutout: unknown source %q", source)
+	}
 	if err != nil {
 		return err
 	}
@@ -391,20 +420,25 @@ func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, ste
 	}); err != nil {
 		return err
 	}
-	survey, err := decodeFITSNative(path, 0, 0)
+	if opts.SurveyReproject {
+		if err := surveyAlignmentRun(dir, stem, fitsData, source, survey, sourceURL, wcs, width, height); err != nil {
+			return err
+		}
+	}
+	surveyFrame, err := decodeFITSNative(path, 0, 0)
 	if err != nil {
 		logf("Survey cutout: FITS saved but preview failed: %v", err)
 		return nil
 	}
 	jpg := filepath.Join(dir, stem+".jpg")
 	if err := writeFileAtomic(jpg, func(out io.Writer) error {
-		return writePreviewJPEG(out, survey.Width, survey.Height, survey.Pix)
+		return writePreviewJPEG(out, surveyFrame.Width, surveyFrame.Height, surveyFrame.Pix)
 	}); err != nil {
 		logf("Survey cutout: preview: %v", err)
 	}
-	if refFrame != nil && refFrame.Width == survey.Width && refFrame.Height == survey.Height {
+	if refFrame != nil && refFrame.Width == surveyFrame.Width && refFrame.Height == surveyFrame.Height {
 		refStars := detectStars(refFrame, 300)
-		surveyStars := detectStars(survey, 300)
+		surveyStars := detectStars(surveyFrame, 300)
 		sim, inliers, ok := matchStarsToReference(refStars, surveyStars)
 		if ok {
 			logf("Survey cutout: star-match %d inliers, scale %.4f, rotation %.2f deg", inliers, sim.scale(), sim.rotation()*180/math.Pi)

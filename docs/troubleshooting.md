@@ -87,7 +87,7 @@ RA/Dec 0°, so a real field needs an external backend. This is documented in
 
 ## Self-test and build
 
-- `--selftest` must print `all 312 self-tests passed`; a failure exits `1`.
+- `--selftest` must print `all 318 self-tests passed`; a failure exits `1`.
 - `gofmt -l *.go` must print nothing and `go vet ./...` must be clean.
 - Always install the rebuilt binary on `PATH` and verify `which skystacker` and
   `skystacker --version` before running a production batch.

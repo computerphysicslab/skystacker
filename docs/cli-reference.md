@@ -100,13 +100,17 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--annotation-layers LIST` | all | Comma-separated SVG 2 layers (`grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, `legend` (`key`), plus aliases). |
 | `--annotation-vo LIST` | — | Optional SIMBAD/VizieR cone queries for layered annotations; offline bundle by default. |
 | `--annotation-names MODE` | `auto` | Gaia labels: `auto` (SIMBAD full-field query, AllWISE/IRSA fallback), `simbad`, `irsa` or `off` (unique `Gaia J…` designations only). |
+| `--annotation-sao` | on | Bright-star `SAO`/`HD`/`DM`/`GC` labels from the embedded V<=8.0 SAO subset; `=false` disables. Proper names always win positional ties. |
 | `--annotation-cache DIR` | Gaia cache dir | Disk cache for VO annotation queries. |
 | `--annotation-label-collar` | on | Dark `paint-order` SVG stroke behind labels, with a two-pixel raster twin. `--annotation-label-collar=false` disables it without changing placement. |
 | `--annotation-star-style MODE` | `filled` | `filled` or `open`; `open` adds the `open-star` symbol family, legend row and CSS toggle. |
 | `--sso-ephemeris FILE` | — | MPC-style SSO ephemeris with site header and mandatory `DATE-OBS`; velocity-vector layer. |
 | `--cone-catalog NAME` / `--cone-radius N` | — / `60` | SDSS/IRSA/VizieR cone search (arcsec). |
 | `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. With `--annotate`, also emits layered SVG + raster + provenance. |
-| `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | Survey selection and timeout. |
+| `--survey-hips ID` / `--survey-timeout N` | `CDS/P/DSS2/color` / `30` | HiPS survey selection and HTTP timeout. |
+| `--survey-source hips\|dss` | `hips` | Survey service: `hips` (CDS HiPS) or `dss` (STScI/MAST photographic plates). |
+| `--dss-survey NAME` | `poss2ukstu_red` | DSS plate survey: `poss2ukstu_red\|blue\|ir`, `poss1_red\|blue`, `quickv`, `phase2_gsc2\|gsc1`. |
+| `--survey-reproject` | off | Resample the survey FITS onto the target WCS (SIP aware); writes `*_aligned.fits`, `*_aligned.jpg` and `*_alignment.json` with plate/provenance/licence metadata. |
 | `--photometry` | off | Ensemble Gaia aperture photometry. |
 | `--aperture-photometry` | off | Local annulus sky, Kron/FLUX_RADIUS and neighbour masking in `--photometry`. |
 | `--matched-filter` | off | Matched-filter star detection (`T = αC⁻¹S`) instead of the high-pass threshold. |

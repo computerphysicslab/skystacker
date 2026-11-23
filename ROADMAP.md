@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-23 · **Current state:** v0.6.1, 312 registered self-tests,
+**Updated:** 2026-11-23 · **Current state:** v0.6.1, 318 registered self-tests,
 Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-23):** 127 Done · 12 Open · 7 Blocked · 5 Executed/not accepted
+**Summary (2026-11-23):** 129 Done · 12 Open · 7 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 137–141 and 143 were closed on 2026-11-22 with the layered
 annotation subsystem; item 145 (standalone `resize`) was closed the same day;
 items 146-149 closed the first atlas-style annotation iteration; item 150
@@ -17,7 +17,7 @@ items 146-149 closed the first atlas-style annotation iteration; item 150
 (interactive legend) closed the same iteration; items 151-153 closed the
 spectral/colour, catalog-footprint and motion-overlay wave; items 155-158
 closed the named-star, PGC, label-collar/open-circle and vendor example corpus
-waves on 2026-11-23; items 116–119 closed the diagnostics privacy/network-safety wave and item 106
+waves on 2026-11-23; items 159 (SAO bright-star identifiers) and 160 (aligned DSS photographic survey cutouts) closed the SAO/survey-alignment wave the same day; items 116–119 closed the diagnostics privacy/network-safety wave and item 106
 hardened the Linux diagnostics collector, item 109 made positional parsing flag-registry driven, item 120 bounded SOF3/CR2 allocations, item 121 capped SBI1 table counts, item 122 switched the density-uniform RA centre to a circular mean and item 123 exposed the embedded suite through `go test`, item 124 added compensated summation to the streaming mean stack and item 125 locked star-cache invalidation with a real modified-light regression, and item 126 made the CR2 decoder read CFA and black/white levels from container tags with validated fallbacks; the next Open work is item 127; item 142 stays Blocked by item 13 and goal 144 stays Open.
 Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
@@ -76,6 +76,8 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 158 | **Vendor-style M31 example corpus acceptance** | S (~1 h) | **Done 2026-11-23** | [assets/annotation-examples/README.md](../assets/annotation-examples/README.md) | The two local WEBP references (`m31camera-annotated.webp`, `bc9374_cacccbac9cb2432e9061aae64f812dfd.webp`) are documented as visual-only, gitignored samples. `testVendorExampleCorpus` checks documentation, WebP headers when present, catalogue coverage of Andromeda-field labels and deterministic SVG output; no pixel assertions are made against copyrighted vendor images. |
 | 156 | **PGC catalogue support for dense galaxy fields** | M (~3 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `annotation_pgc.go` embeds four NED-derived PGC galaxies, normalises `PGC`/`LEDA` aliases, and spatially cross-matches anonymous extended sources with deterministic one-to-one assignment. PGC priority 80 sits below M31 (90) but above survey identifiers (50); `annotation_provenance.json` records `pgc_matches`. The four vendor labels are locked by tests and rendered in a review fixture. |
 | 157 | **SVG label collars and open-circle star style** | M (~2 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | Labels use an SVG `paint-order` dark stroke with a two-pixel raster twin, enabled by default and disableable with `--annotation-label-collar=false`. `--annotation-star-style open` adds the `open-star` family with legend/CSS toggle and raster twin, leaving variable/double markers intact. Placement boxes are unchanged; SVG/raster state and determinism are locked by tests. |
+| 159 | **SAO bright-star identifiers and cross-IDs** | M (~3 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | Embedded V<=8.0 SAO subset (46,136 rows from the HEASARC `I/131A/sao` dump, U.S. Government Work) adds `SAO`/`HD`/`DM`/`GC` labels via a 0.1-deg declination-band index and 30-arcsec cap; rank-0 SAO candidates let proper names win positional ties. `--annotation-sao=false` disables it; `docs/catalog-attribution.md` records the provenance. Four selftests cover row count/order, a known HD/GC cross-ID and proper-name priority. |
+| 160 | **Aligned photographic survey cutouts (DSS + local WCS reprojection)** | M (~4 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `--survey-source dss`/`--dss-survey NAME` fetch STScI/MAST DSS FITS plates; `--survey-reproject` resamples onto the target WCS (SIP-aware inverse/forward + bilinear), writing `*_aligned.fits` (BITPIX=-32, 1-based CRPIX, SIP cards), JPG and `*_alignment.json` with plate ID, `COPYRGHT` and CC BY-NC-SA 4.0 attribution. `parseAstrometryWCS` now scans 64 header blocks. Four selftests cover DSS URL params, geometry/60-arcmin cap, translation/rotation reprojection and FITS header round-trip; real M31 fetch verified. CDS hips2fits timed out (external outage, reported not faked). |
 | 112 | **Fix current-section drift in PROJECT_CONTEXT.md** | S (~30 min) | **Done 2026-11-23** | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Recovery line expects 309 self-tests, spike defaults read length 10 / intensity 0.3, opening describes the multi-file Go module, and historical session logs are untouched. |
 | 113 | **Remove README self-contradictions** | S (~30 min) | **Done 2026-11-23** | [README.md](README.md) | Badge says Go 1.27.4, grid self-flat Phase 4 is documented as complete, and `COMPARISON.md` names the shipped `--deconvolve`/`--drizzle-upsample` flags without denying them. |
 | 114 | **Fix blind-solver troubleshooting and TECHNICAL_SPEC exclusion** | S (~30 min) | **Done 2026-11-23** | [docs/troubleshooting.md](docs/troubleshooting.md) | Troubleshooting lists `native`/`astrometry-local`/`astap`/`astrometry-web`; spec §2 Excluded records native CR2 decoding via `goPureRaw`. |

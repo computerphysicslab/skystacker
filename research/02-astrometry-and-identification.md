@@ -875,3 +875,88 @@ profile run (2026-11-22), <https://siril.readthedocs.io/en/stable/astrometry/ann
   the documented quota (84 for nside 16 at 100 stars/sq deg), that the chosen
   magnitudes are identical and that every wrapped selection stays near the
   wrap centre. Existing `TestDensityUniformSelection` still passes.
+
+## 44. SAO catalogue for bright-star identifiers — items 159 (2026-11-23)
+
+- The Smithsonian Astrophysical Observatory Star Catalog (SAO, CDS `I/131A`,
+  SAO Staff 1966, SAO Special Report 119) is mirrored by HEASARC as
+  `I/131A/sao`. Its live TDAT dump
+  (`https://heasarc.gsfc.nasa.gov/FTP/heasarc/dbase/dump/heasarc_sao.tdat.gz`,
+  HTTP 200 on 2026-11-23) is 13,825,579 bytes compressed / 42,849,067 bytes
+  raw with `TOTAL ROWS: 258944` (53 fewer than CDS due to HEASARC duplicate
+  removal). HEASARC publishes it as a U.S. Government Work
+  (<https://www.usa.gov/government-works>). The Harvard binary mirror
+  (`http://cfa165.harvard.edu/software/catalogs/sao.html`) distributes two
+  8,287,900-byte files (`SAO`, `SAOra`).
+- SAO is roughly complete to V≈9 and contains 4,503 stars fainter than V=10,
+  so it cannot name a faint Gaia field star. Its role here is strictly
+  **bright-star cross-identification**: `SAO`, `HD`, `DM` and `GC` IDs and a
+  label fallback, with common proper names still owned by the d3-celestial
+  bundle (item 155) and SIMBAD/AllWISE.
+- `annotation_sao.go` embeds every SAO star with V ≤ 8.0 (46,136 rows,
+  2,448,319 bytes of Go source) as `SAO|RA|Dec|V|spectral|DM|HD|GC`, positions
+  rounded to 1e-5 deg (0.036 arcsec), `-` for missing cross-IDs. A V≤9.0
+  variant would be ~5.9 MB of rows for little label value, so it is deferred.
+- `crossMatchGaiaNames` indexes SAO candidates in 0.1-deg declination bands
+  with a 30-arcsec radius cap (three bands suffice). Declination bands are used
+  instead of RA cells because RA cells fail within a few degrees of the poles.
+  SAO candidates carry rank 0, so a proper name / Bayer / Flamsteed label wins
+  at comparable separation; matched Gaia stars get `SAO n` plus HD/DM/GC
+  metadata and `crossmatch_catalog`/`crossmatch_id`. `--annotation-sao=false`
+  disables the fallback. Four selftests lock row count, ordering, bounds, a
+  known HD/GC cross-ID and proper-name priority.
+
+**Sources absorbed:** HEASARC SAO dataset record
+(<https://catalog.data.gov/dataset/smithsonian-astrophysical-observatory-star-catalog>),
+<https://heasarc.gsfc.nasa.gov/W3Browse/star-catalog/sao.html>, Harvard SAO
+mirror, and the live HEASARC TDAT dump fetched 2026-11-23. Licence status is
+recorded in `docs/catalog-attribution.md`.
+
+## 45. Aligned photographic survey cutouts — item 160 (2026-11-23)
+
+- The STScI/MAST Digitized Sky Survey (`https://archive.stsci.edu/dss/`,
+  `getting_started.html`, `cgi-bin/dss_form`, `copyright.html`) GetImage endpoint
+  `https://archive.stsci.edu/cgi-bin/dss_search` accepts `v` (survey:
+  `poss2ukstu_red|blue|ir`, `poss1_red|blue`, `quickv`, `phase2_gsc2|gsc1`),
+  `r`/`d` centre, `e=J2000|B1950`, `h`/`w` half-size in arcmin (max 60),
+  `f=fits|gif`, `c=none|z|gz`, `s`, `fov=NONE` and `v3`. The `v3` roll rotates
+  GIF overlays only — it does not rotate FITS pixels, so the FITS path leaves
+  it empty. Plates are 6.5-deg scans at ~1.0–1.7 arcsec/pixel; their FITS
+  header carries `SURVEY`, `PLATEID`, `COPYRGHT`, `DATE-OBS`, `AMDX*`/`AMDY*`
+  and a local TAN WCS several blocks after `SIMPLE`. `parseAstrometryWCS` now
+  scans up to 64 header blocks so the same CD/SIP parser handles both plate
+  solutions and survey cutouts.
+- **Licence:** the MAST DSS data-use policy is CC BY-NC-SA 4.0 (free for
+  scientific, educational and non-profit use with attribution); it is *not*
+  public domain and plate rights vary. The aligned product keeps `COPYRGHT`
+  in the FITS header and writes licence, plate ID and retrieval URL into
+  `<stem>_alignment.json`. Commercial use must be checked with the plate holder.
+  A live 0.2 x 0.2 deg M31 query returned HTTP 200, `SURVEY=POSSII-F`,
+  `PLATEID=A1HR`, `COPYRGHT=Caltech/Palomar`.
+- `survey_reproject.go` closes the gap where hips2fits returned a cutout on its
+  own TAN grid and the star match was diagnostic only. For each target pixel it
+  applies `wcsTanInverseSIP` on the target WCS (honouring quadratic SIP), then
+  `wcsTanForward` on the source WCS (including plate parity/rotation in CD),
+  bilinearly samples, counts out-of-source pixels (left black) and splits rows
+  across workers with worker-count-independent results. It writes
+  `*_aligned.fits` as 2D `BITPIX=-32` on the target WCS (CRPIX back to FITS
+  1-based, quadratic SIP cards when present) with provenance cards `SURVEY`,
+  `SERVING`, `PLATEID`, `COPYRGHT`, `LICENCE`, `SRCURL`, `ALIGNED`, plus a JPG
+  preview and `<stem>_alignment.json`. New flags: `--survey-source hips|dss`,
+  `--dss-survey NAME`, `--survey-reproject`. This still uses the single shared
+  `plate_solution.json`; per-frame WCS (item 13) and distortion-aware per-tile
+  annotation (item 142) remain out of scope.
+- Verification: four new embedded selftests (DSS URL construction, survey
+  geometry + 60-arcmin cap, translation/rotation reprojection + coverage
+  count, aligned-FITS header round trip) bring the suite to 318. A real DSS
+  fetch + alignment on a synthetic 64x64 M31 target reported 216/4096 target
+  pixels outside the source, consistent with the plate's flipped CD matrix.
+- **CDS hips2fits outage:** `https://alasky.cds.unistra.fr/hips-image-services/hips2fits`
+  timed out (60 s) from this machine during verification; this is an external
+  outage, not a code result, and no live HiPS result is claimed. The
+  `https://github.com/cds-astro/hips2fits` source URL returned 404 and was not
+  used as an API reference.
+
+**Sources absorbed:** MAST DSS documentation and `copyright.html`, live DSS
+GetImage response for M31 (2026-11-23), astroquery / hips2fits-cutout parameter
+documentation, and `survey_reproject.go` design notes.

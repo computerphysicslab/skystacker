@@ -556,6 +556,16 @@ func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec flo
 		candidates = append(candidates, candidate{id: key, name: s.Name, ra: s.RA, dec: s.Dec,
 			rank: annotationNameRank(s)})
 	}
+	// A declination-band index keeps the cross-match linear in the number of
+	// catalog rows. Bands are 0.1 deg wide and the match radius is capped at
+	// 30 arcsec (0.0083 deg), so three adjacent bands always contain every
+	// possible match, including at the poles where RA cells would fail.
+	const decBandDeg = 0.1
+	byBand := make(map[int][]int, len(candidates)/64+1)
+	for i, c := range candidates {
+		band := annotationDecBand(c.dec, decBandDeg)
+		byBand[band] = append(byBand[band], i)
+	}
 	matchedCandidate := make(map[string]bool)
 	matchedByName := make(map[string]bool)
 	report := annotationNameMatchReport{}
@@ -586,20 +596,24 @@ func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec flo
 			best := -1
 			bestSep := math.Inf(1)
 			bestScore := math.Inf(1)
-			for ci, c := range candidates {
-				if matchedCandidate[c.id] {
-					continue
-				}
-				sep := angularSeparation(ra, dec, c.ra, c.dec) * (180 / math.Pi) * 3600
-				if sep > tol {
-					continue
-				}
-				// A readable name wins only inside a very small positional
-				// advantage (0.5 arcsec per rank), so a genuinely closer
-				// anonymous source is never displaced by a distant named star.
-				score := sep - 0.5*float64(c.rank)
-				if score < bestScore || (score == bestScore && (sep < bestSep || (sep == bestSep && ci < best))) {
-					best, bestSep, bestScore = ci, sep, score
+			band := annotationDecBand(dec, decBandDeg)
+			for b := band - 1; b <= band+1; b++ {
+				for _, ci := range byBand[b] {
+					c := candidates[ci]
+					if matchedCandidate[c.id] {
+						continue
+					}
+					sep := angularSeparation(ra, dec, c.ra, c.dec) * (180 / math.Pi) * 3600
+					if sep > tol {
+						continue
+					}
+					// A readable name wins only inside a very small positional
+					// advantage (0.5 arcsec per rank), so a genuinely closer
+					// anonymous source is never displaced by a distant named star.
+					score := sep - 0.5*float64(c.rank)
+					if score < bestScore || (score == bestScore && (sep < bestSep || (sep == bestSep && ci < best))) {
+						best, bestSep, bestScore = ci, sep, score
+					}
 				}
 			}
 			if best >= 0 {
@@ -637,6 +651,24 @@ func crossMatchGaiaNames(sources, candidatesIn []annotationSource, tolArcsec flo
 		}
 	}
 	return deduped, report
+}
+
+// annotationDecBand maps a declination in radians to a fixed-width index band.
+// It is shared by the catalog index and the query so a source within the
+// 30 arcsec match radius can never fall outside the three searched bands.
+func annotationDecBand(decRad, bandDeg float64) int {
+	if bandDeg <= 0 {
+		bandDeg = 0.1
+	}
+	d := decRad*180/math.Pi + 90
+	band := int(math.Floor(d / bandDeg))
+	if band < 0 {
+		return 0
+	}
+	if band > int(math.Ceil(180/bandDeg)) {
+		return int(math.Ceil(180 / bandDeg))
+	}
+	return band
 }
 
 func candidateCatalog(sources []annotationSource, id string) string {
@@ -2055,6 +2087,19 @@ func parseAnnotationLayers(spec string) []string {
 	return out
 }
 
+// countSAOMatches returns how many Gaia sources were labelled from the
+// embedded SAO catalog. It reads the cross-match metadata already written by
+// crossMatchGaiaNames so the report cannot disagree with the rendered labels.
+func countSAOMatches(sources []annotationSource) int {
+	n := 0
+	for _, s := range sources {
+		if id := s.Metadata["crossmatch_id"]; strings.HasPrefix(id, "sao-") {
+			n++
+		}
+	}
+	return n
+}
+
 // layeredAnnotationReport is the provenance report written next to the SVG and
 // raster products. It records the exact model, layers and sources used so a
 // downstream consumer can audit or reproduce the annotation.
@@ -2088,6 +2133,7 @@ type layeredAnnotationReport struct {
 	Warnings     []string                   `json:"warnings,omitempty"`
 	GaiaCoverage *gaiaFieldCoverage         `json:"gaia_coverage,omitempty"`
 	NameMatches  *annotationNameMatchReport `json:"name_matches,omitempty"`
+	SAOMatches   int                        `json:"sao_matches,omitempty"`
 	PGCMatches   *annotationPGCMatchReport  `json:"pgc_matches,omitempty"`
 	Geometry     *annotationGeometryReport  `json:"geometry,omitempty"`
 	Overlays     *annotationOverlayReport   `json:"overlays,omitempty"`
@@ -2260,6 +2306,17 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 	}
 
 	nameCandidates := append(append([]annotationSource(nil), acq.Sources...), nameSources...)
+	// SAO V<=8.0 is a compact offline identifier catalogue with no proper
+	// names. It is appended last so SIMBAD/AllWISE/Bayer labels keep priority,
+	// and only used as a fallback for Gaia stars still lacking a name.
+	if opts.AnnotationSAO {
+		sao := saoNameCandidates()
+		nameCandidates = append(nameCandidates, sao...)
+		acq.Provenance = append(acq.Provenance, annotationProvenance{
+			Catalog: "SAO (HEASARC I/131A, V<=8.0)", Service: "offline-bundle",
+			URL: "https://heasarc.gsfc.nasa.gov/W3Browse/star-catalog/sao.html", Offline: true,
+		})
+	}
 	var nameMatch annotationNameMatchReport
 	sources, nameMatch = crossMatchGaiaNames(sources, nameCandidates, 10)
 	if nameMatch.Matched > 0 {
@@ -2349,6 +2406,7 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 		Warnings:     acq.Warnings,
 		GaiaCoverage: &coverage,
 		NameMatches:  &nameMatch,
+		SAOMatches:   countSAOMatches(sources),
 		PGCMatches:   &pgcMatch,
 		Geometry:     &geometry,
 		Overlays:     &overlays,

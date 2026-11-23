@@ -618,7 +618,9 @@ func runImageCommand(o *cliOptions) error {
 			return err
 		}
 		return runSurveyForImage(f, sol, dir, filepath.Base(paths[0]), runOptions{
-			SurveyHIPS: o.SurveyHIPS, SurveyTimeout: o.SurveyTimeout,
+			SurveyHIPS: o.SurveyHIPS, SurveySource: o.SurveySource,
+			SurveyDSSSurvey: o.SurveyDSSSurvey, SurveyReproject: o.SurveyReproject,
+			SurveyTimeout: o.SurveyTimeout,
 		})
 	}
 
