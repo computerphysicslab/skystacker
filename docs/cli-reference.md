@@ -99,6 +99,8 @@ See [plate-solving.md](plate-solving.md) and [astrometry-products.md](astrometry
 | `--annotation-vo LIST` | — | Optional SIMBAD/VizieR cone queries for layered annotations; offline bundle by default. |
 | `--annotation-names MODE` | `auto` | Gaia labels: `auto` (SIMBAD full-field query, AllWISE/IRSA fallback), `simbad`, `irsa` or `off` (unique `Gaia J…` designations only). |
 | `--annotation-cache DIR` | Gaia cache dir | Disk cache for VO annotation queries. |
+| `--annotation-label-collar` | on | Dark `paint-order` SVG stroke behind labels, with a two-pixel raster twin. `--annotation-label-collar=false` disables it without changing placement. |
+| `--annotation-star-style MODE` | `filled` | `filled` or `open`; `open` adds the `open-star` symbol family, legend row and CSS toggle. |
 | `--sso-ephemeris FILE` | — | MPC-style SSO ephemeris with site header and mandatory `DATE-OBS`; velocity-vector layer. |
 | `--cone-catalog NAME` / `--cone-radius N` | — / `60` | SDSS/IRSA/VizieR cone search (arcsec). |
 | `--sky-map` / `--survey-cutout` | off | Gaia SVG map / HiPS FITS cutout. With `--annotate`, also emits layered SVG + raster + provenance. |

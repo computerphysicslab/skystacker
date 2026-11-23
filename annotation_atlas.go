@@ -21,7 +21,7 @@ import (
 const (
 	atlasBlobVertexCount = 16
 	atlasLegendWidth     = 168.0
-	atlasLegendHeight    = 118.0
+	atlasLegendHeight    = 130.0
 	atlasLegendMargin    = 14.0
 )
 
@@ -174,10 +174,18 @@ func atlasExtendedSymbol(kind string) string {
 	}
 }
 
-// atlasSymbol is the single symbol vocabulary shared by both renderers.
+// atlasSymbol is the default symbol vocabulary shared by both renderers.
 func atlasSymbol(s annotationSource) string {
+	return atlasSymbolWithStyle(s, "filled")
+}
+
+// atlasSymbolWithStyle applies the optional open-circle variant to ordinary
+// point sources. Variable and double stars keep their own families: collapsing
+// them into open circles would lose scientific meaning rather than just style.
+func atlasSymbolWithStyle(s annotationSource, style string) string {
+	base := atlasExtendedSymbol(s.Type)
 	if s.Extended && (s.PixelA > 0 || s.Major > 0) {
-		return atlasExtendedSymbol(s.Type)
+		return base
 	}
 	if atlasDouble(s) {
 		return "double"
@@ -185,7 +193,10 @@ func atlasSymbol(s annotationSource) string {
 	if atlasVariable(s) {
 		return "variable"
 	}
-	return atlasExtendedSymbol(s.Type)
+	if base == "star" && annotationStarStyleMode(style) == "open" {
+		return "open-star"
+	}
+	return base
 }
 
 // atlasStroke returns the literal SVG colour for a symbol. The values match
@@ -204,6 +215,8 @@ func atlasStroke(symbol string) string {
 		return "#0072b2"
 	case "remnant", "sso":
 		return "#d55e00"
+	case "open-star":
+		return "#ffe9b0"
 	case "variable", "double":
 		return "#ffffff"
 	default:
@@ -522,7 +535,17 @@ func atlasLegendOrigin(width, height int) (float64, float64) {
 // <svg> element; no re-render or JavaScript is required for the common case.
 var atlasSymbolFamilies = []string{
 	"galaxy", "nebula", "dark-nebula", "planetary", "cluster",
-	"remnant", "sso", "star", "variable", "double",
+	"remnant", "sso", "star", "open-star", "variable", "double",
+}
+
+// annotationStarStyleMode normalises the optional point-source style. The
+// filled disc remains the default so existing maps are unchanged unless the
+// user explicitly asks for the open-circle style used by the vendor sample.
+func annotationStarStyleMode(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), "open") {
+		return "open"
+	}
+	return "filled"
 }
 
 // atlasLegendClass returns the stable CSS classes attached to a legend swatch.
@@ -563,6 +586,8 @@ func atlasLegendTitle(symbol string) string {
 		return "Solar system object: motion vector"
 	case "variable":
 		return "Variable star: dashed surrounding ring"
+	case "open-star":
+		return "Star: magnitude-sized open circle"
 	case "double":
 		return "Double star: two resolved components"
 	default:
@@ -584,7 +609,7 @@ func atlasToggleCSS() string {
 
 // atlasLegendSVG emits a compact, viewer-safe atlas key. Literal colours and
 // shape descriptors make the map understandable without a browser or CSS.
-func atlasLegendSVG(width, height int) string {
+func atlasLegendSVG(width, height int, starStyle string) string {
 	x, y := atlasLegendOrigin(width, height)
 	var b strings.Builder
 	fmt.Fprintf(&b, "<g id=\"legend\" class=\"skystacker-layer\" data-layer=\"legend\"><title>Atlas symbol key</title>")
@@ -600,6 +625,7 @@ func atlasLegendSVG(width, height int) string {
 		{"planetary", "PLANETARY"},
 		{"cluster", "CLUSTER"},
 		{"star", "STAR"},
+		{"open-star", "OPEN STAR"},
 		{"variable", "VARIABLE"},
 		{"double", "DOUBLE"},
 	}
@@ -620,6 +646,8 @@ func atlasLegendSVG(width, height int) string {
 			fmt.Fprintf(&b, "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"4.5\" fill=\"none\" stroke=\"%s\" stroke-width=\"1\" stroke-dasharray=\"2 2\"/>", cx, cy, col)
 		case "star":
 			fmt.Fprintf(&b, "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"2\" fill=\"#ffe9b0\"/>", cx, cy)
+		case "open-star":
+			fmt.Fprintf(&b, "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"2\" fill=\"none\" stroke=\"#ffe9b0\" stroke-width=\"1\"/>", cx, cy)
 		case "variable":
 			fmt.Fprintf(&b, "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"2\" fill=\"%s\"/><circle cx=\"%.1f\" cy=\"%.1f\" r=\"4.5\" fill=\"none\" stroke=\"%s\" stroke-width=\"0.8\" stroke-dasharray=\"2 2\"/>", cx, cy, col, cx, cy, col)
 		case "double":
@@ -647,6 +675,8 @@ func atlasRasterColour(symbol string) color.RGBA {
 		return color.RGBA{0, 114, 178, 255}
 	case "remnant", "sso":
 		return color.RGBA{213, 94, 0, 255}
+	case "open-star":
+		return color.RGBA{255, 233, 176, 255}
 	case "variable", "double":
 		return color.RGBA{255, 255, 255, 255}
 	default:
@@ -724,7 +754,7 @@ func drawAAEllipseOutline(img *image.RGBA, cx, cy, a, b, paDeg, width float64, c
 
 // renderAtlasLegendRaster paints the same key as atlasLegendSVG so the PNG
 // overlay is self-explanatory when viewed without the SVG document.
-func renderAtlasLegendRaster(img *image.RGBA) {
+func renderAtlasLegendRaster(img *image.RGBA, starStyle string) {
 	if img == nil {
 		return
 	}
@@ -755,6 +785,7 @@ func renderAtlasLegendRaster(img *image.RGBA) {
 		{"planetary", "PLANETARY"},
 		{"cluster", "CLUSTER"},
 		{"star", "STAR"},
+		{"open-star", "OPEN STAR"},
 		{"variable", "VARIABLE"},
 		{"double", "DOUBLE"},
 	}
@@ -774,6 +805,8 @@ func renderAtlasLegendRaster(img *image.RGBA) {
 			drawAAEllipseOutline(img, cx, cy, 4.5, 4.5, 0, 1, col, true)
 		case "star":
 			drawAAFilledEllipse(img, cx, cy, 2, 2, 0, color.RGBA{255, 233, 176, 255}, 1)
+		case "open-star":
+			drawAAEllipseOutline(img, cx, cy, 2, 2, 0, 1, color.RGBA{255, 233, 176, 255}, false)
 		case "variable":
 			drawAAFilledEllipse(img, cx, cy, 2, 2, 0, col, 1)
 			drawAAEllipseOutline(img, cx, cy, 4.5, 4.5, 0, 0.8, col, true)

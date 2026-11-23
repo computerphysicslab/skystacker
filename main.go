@@ -284,6 +284,8 @@ type cliOptions struct {
 	AnnotationVO           string
 	AnnotationNames        string
 	AnnotationCache        string
+	AnnotationLabelCollar  bool
+	AnnotationStarStyle    string
 	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
@@ -635,6 +637,8 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.AnnotationVO, "annotation-vo", "", "comma-separated VO catalogs for layered annotations: simbad,vizier (offline by default)")
 	fs.StringVar(&o.AnnotationNames, "annotation-names", "auto", "Gaia label names: auto (SIMBAD, AllWISE fallback), simbad, irsa, off (coordinate designations only)")
 	fs.StringVar(&o.AnnotationCache, "annotation-cache", "", "disk cache directory for VO annotation queries (default: Gaia cache dir)")
+	fs.BoolVar(&o.AnnotationLabelCollar, "annotation-label-collar", true, "draw a dark contrast collar behind annotation labels; use =false for plain labels")
+	fs.StringVar(&o.AnnotationStarStyle, "annotation-star-style", "filled", "point-source marker style in annotation maps: filled or open")
 	fs.StringVar(&o.SsoEphemeris, "sso-ephemeris", "", "MPC-style SSO ephemeris with site header and DATE-OBS for velocity-vector annotation layers")
 	fs.StringVar(&o.RejectionMode, "rejection", "", "rejection heuristic: auto, mean, median or sigma (auto maps Min/Max/Percentile/Sigma/Winsorized/Linear-Fit bands onto shipped reducers)")
 	fs.StringVar(&o.PostPreset, "post-preset", "default", "post-processing order: default or detail-last (detail enhancement after denoise)")
@@ -739,7 +743,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
 			// If it's a flag that takes a value (not a bool), skip the next arg
-			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--annotation-layers" || arg == "--annotation-vo" || arg == "--annotation-names" || arg == "--annotation-cache" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--archive-adapters" || arg == "--mast-token" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
+			if arg == "--config" || arg == "--normalize-mode" || arg == "--bpm-auto-sigma" || arg == "--deconv-sigma" || arg == "--deconv-iters" || arg == "--deconv-grid-size" || arg == "--narrowband" || arg == "--nb-a" || arg == "--nb-b" || arg == "--nb-c" || arg == "--drizzle-upsample" || arg == "--drizzle-pixfrac" || arg == "--wave-gains" || arg == "--external-bge" || arg == "--external-denoise" || arg == "--external-deconv" || arg == "--external-starless" || arg == "--external-timeout" || arg == "--annotation-catalogs" || arg == "--annotation-layers" || arg == "--annotation-vo" || arg == "--annotation-names" || arg == "--annotation-cache" || arg == "--annotation-star-style" || arg == "--sso-ephemeris" || arg == "--diagnose-timeout" || arg == "--diagnose-top" || arg == "--frame-metrics" || arg == "--xnml-dir" || arg == "--include-list" || arg == "--keep-sharpest" || arg == "--frame-expr" || arg == "--calib-library" || arg == "--batch" || arg == "--wavelet-scales" || arg == "--wavelet-sigma" || arg == "--rejection" || arg == "--post-preset" || arg == "--survey-hips" || arg == "--survey-timeout" || arg == "--process-image" || arg == "--image-op" || arg == "--image-output" || arg == "--export-stars" || arg == "--export-votable" || arg == "--classify-objects" || arg == "--output" || arg == "--workers" || arg == "--method" || arg == "--dark" || arg == "--flat" || arg == "--bias" || arg == "--calib-root" || arg == "--bg-degree" || arg == "--bg-clip-low" || arg == "--bg-clip-high" || arg == "--bg-harmonic-scale" || arg == "--bg-poly-degree" || arg == "--stretch" || arg == "--sharpen-amount" || arg == "--sharpen-radius" || arg == "--hdr-amount" || arg == "--star-radius" || arg == "--star-sigma" || arg == "--bg-percentile" || arg == "--stf-shadows" || arg == "--stf-target" || arg == "--hdr-blend-factor" || arg == "--denoise-strength" || arg == "--denoise-radius" || arg == "--denoise-chroma" || arg == "--curves-black" || arg == "--curves-gamma" || arg == "--spikes-percent" || arg == "--spikes-length" || arg == "--spikes-intensity" || arg == "--spikes-arms" || arg == "--spikes-softness" || arg == "--spikes-min-ratio" || arg == "--spikes-length-softness" || arg == "--spikes-length-min-ratio" || arg == "--spikes-min-count" || arg == "--sigma-clip" || arg == "--sigma-clip-iters" || arg == "--sigma-clip-low" || arg == "--sigma-clip-high" || arg == "--tile-size" || arg == "--scale" || arg == "--ln-tile-size" || arg == "--black-level" || arg == "--bpm" || arg == "--self-flat-model" || arg == "--reference-crop" || arg == "--cache-dir" || arg == "--test-gaia" || arg == "--test-plate" || arg == "--check-acquisition-keywords" || arg == "--check-survey-fits" || arg == "--plate-center" || arg == "--blind-benchmark" || arg == "--benchmark-solvers" || arg == "--blind-index" || arg == "--build-blind-index" || arg == "--blind-catalog" || arg == "--download-blind-catalog" || arg == "--blind-mag-limit" || arg == "--blind-density-cap" || arg == "--blind-brightest" || arg == "--blind-max-tiles" || arg == "--blind-tile-offset" || arg == "--blind-region" || arg == "--blind-index-info" || arg == "--cone-catalog" || arg == "--cone-radius" || arg == "--plate-solver" || arg == "--astrometry-cmd" || arg == "--solve-field-args" || arg == "--astap-cmd" || arg == "--astrometry-api-key" || arg == "--astrometry-url" || arg == "--astrometry-timeout" || arg == "--solver-focal-length" || arg == "--solver-pixel-size" || arg == "--limit" || arg == "--comet-center" || arg == "--comet-rate" || arg == "--comet-radec" || arg == "--comet-sky-rate-arcsec" || arg == "--comet-target" || arg == "--gaia-mirror" || arg == "--gaia-maxrec" || arg == "--gaia-verbosity" || arg == "--vo-registry" || arg == "--archive-adapters" || arg == "--mast-token" || arg == "--gaia-cache-dir" || arg == "--gaia-nside" || arg == "--gaia-mag-limit" {
 				skipNext = true
 			}
 		} else {
@@ -984,6 +988,12 @@ func parseArgs(args []string) (*cliOptions, error) {
 	default:
 		return nil, fmt.Errorf("--annotation-names must be auto, simbad, irsa or off, got %q", o.AnnotationNames)
 	}
+	switch strings.ToLower(strings.TrimSpace(o.AnnotationStarStyle)) {
+	case "", "filled", "open":
+	default:
+		return nil, fmt.Errorf("--annotation-star-style must be filled or open, got %q", o.AnnotationStarStyle)
+	}
+	o.AnnotationStarStyle = annotationStarStyleMode(o.AnnotationStarStyle)
 	switch o.PlateSolver {
 	case "", "auto", "gaia", "astrometry-local", "astap", "native", "astrometry-web":
 	default:
@@ -1558,6 +1568,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --annotation-vo LIST       optional VO services: simbad,vizier (offline by default)")
 	fmt.Fprintln(w, "  --annotation-names MODE    Gaia names: auto, simbad, irsa, off (offline uses Gaia J designations)")
 	fmt.Fprintln(w, "  --annotation-cache DIR     disk cache for VO annotation queries (default: Gaia cache dir)")
+	fmt.Fprintln(w, "  --annotation-label-collar  dark contrast stroke behind labels (default true; use =false to disable)")
+	fmt.Fprintln(w, "  --annotation-star-style    point markers: filled (default) or open")
 	fmt.Fprintln(w, "  --sso-ephemeris FILE        MPC-style SSO ephemeris (a:/c:/p:/dp:/s: IDs), site header and DATE-OBS")
 	fmt.Fprintln(w, "  --starless         write starless + star-layer float32/JPEG outputs")
 	fmt.Fprintln(w, "  --json-report      write report.json alongside report.txt")
@@ -5795,6 +5807,14 @@ func resolvedFlagLines(o runOptions) []string {
 		if o.AnnotationCache != "" {
 			add("--annotation-cache " + quoteReportArg(o.AnnotationCache))
 		}
+		if o.AnnotationLabelCollar {
+			add("--annotation-label-collar")
+		} else {
+			add("--annotation-label-collar=false")
+		}
+		if o.AnnotationStarStyle != "" && o.AnnotationStarStyle != "filled" {
+			add("--annotation-star-style " + quoteReportArg(o.AnnotationStarStyle))
+		}
 		if o.SsoEphemeris != "" {
 			add("--sso-ephemeris " + quoteReportArg(o.SsoEphemeris))
 		}
@@ -6461,6 +6481,8 @@ type runOptions struct {
 	AnnotationVO           string
 	AnnotationNames        string
 	AnnotationCache        string
+	AnnotationLabelCollar  bool
+	AnnotationStarStyle    string
 	SsoEphemeris           string
 	Starless               bool
 	JSONReport             bool
@@ -22415,6 +22437,14 @@ func runSelfTests() int {
 		{"named star catalogue", testNamedStarCatalogue},
 		{"named star crossmatch priority", testNamedStarCrossmatchPriority},
 		{"vendor example corpus", testVendorExampleCorpus},
+		{"PGC designation normalisation", testPGCDestinationNormalisation},
+		{"PGC offline catalogue", testPGCOfflineTable},
+		{"PGC cross-match priority", testPGCCrossmatchPriority},
+		{"PGC candidate de-duplication", testPGCCandidateDedup},
+		{"PGC visual fixture", testPGCVisualFixture},
+		{"annotation label collar", testAnnotationLabelCollar},
+		{"open-circle star style", testOpenStarStyle},
+		{"annotation style CLI", testAnnotationStyleCLI},
 		{"layered annotation end to end", testLayeredAnnotationEndToEnd},
 	}
 	failures := 0
@@ -34356,6 +34386,8 @@ func main() {
 		AnnotationVO:           opts.AnnotationVO,
 		AnnotationNames:        opts.AnnotationNames,
 		AnnotationCache:        opts.AnnotationCache,
+		AnnotationLabelCollar:  opts.AnnotationLabelCollar,
+		AnnotationStarStyle:    opts.AnnotationStarStyle,
 		SsoEphemeris:           opts.SsoEphemeris,
 		Starless:               opts.Starless,
 		JSONReport:             opts.JSONReport,

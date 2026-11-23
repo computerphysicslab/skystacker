@@ -252,7 +252,7 @@ func testAtlasInteractiveLegend() error {
 	svg := buildAnnotationSVG(600, 400, sources, nil, annotationRenderOptions{Layers: annotationAllLayers})
 	for _, want := range []string{
 		`class="skystacker-atlas-map"`,
-		`data-symbol-families="galaxy,nebula,dark-nebula,planetary,cluster,remnant,sso,star,variable,double"`,
+		`data-symbol-families="galaxy,nebula,dark-nebula,planetary,cluster,remnant,sso,star,open-star,variable,double"`,
 		`svg.skystacker-hide-variable [data-symbol="variable"]`,
 		`svg.skystacker-hide-galaxy .skystacker-key-galaxy{display:none}`,
 	} {
@@ -273,7 +273,7 @@ func testAtlasInteractiveLegend() error {
 	}
 
 	// Legend rows are individually addressable and accessible.
-	for _, family := range []string{"galaxy", "nebula", "planetary", "cluster", "star", "variable", "double"} {
+	for _, family := range []string{"galaxy", "nebula", "planetary", "cluster", "star", "open-star", "variable", "double"} {
 		if !strings.Contains(svg, `class="skystacker-key skystacker-key-`+family+`"`) {
 			return fmt.Errorf("legend row %q has no stable class", family)
 		}

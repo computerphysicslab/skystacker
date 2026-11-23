@@ -44,6 +44,21 @@ the renderer. The full upstream notice follows.
 > ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 > POSSIBILITY OF SUCH DAMAGE.
 
+## PGC dense-field names
+
+The offline annotation bundle also embeds four `PGC` galaxies (with `LEDA`
+aliases accepted as input) from NASA/IPAC Extragalactic Database (NED) object
+queries performed on 2026-11-23:
+
+- PGC 21991, PGC 2167368, PGC 2183568 and PGC 3087883.
+
+NED is operated by the Jet Propulsion Laboratory, California Institute of
+Technology, under contract with NASA (<https://ned.ipac.caltech.edu/>). Only
+factual coordinates, magnitudes and published major/minor axes are stored in
+`annotation_pgc.go`; where NED has no diameter, the marker stays a point
+instead of inventing an ellipse. These factual data are used for visual
+identification in annotation maps and are attributed here.
+
 ## Other catalogues
 
 Gaia DR3 tile data is fetched from the CDS/ESA services and remains subject to

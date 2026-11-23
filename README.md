@@ -440,8 +440,17 @@ The offline bundle also carries 3,241 bright-star proper names, Bayer letters an
 Flamsteed designations (V <= 6.5, BSD-2-Clause attribution in
 [docs/catalog-attribution.md](docs/catalog-attribution.md)); a readable name wins
 a cross-match inside the positional tolerance, while unique `Gaia J...`
-designations remain the offline fallback. The vendor-style reference images and
-the synthetic golden field are in `assets/annotation-examples/`.
+designations remain the offline fallback. A compact NED-derived PGC table also
+names four dense-field galaxies; `PGC`/`LEDA` aliases are normalised and
+anonymous galaxies are matched spatially with priority 80, below M31 (90) but
+above anonymous survey identifiers, with counts in `pgc_matches`.
+
+Labels carry a dark contrast collar by default; use
+`--annotation-label-collar=false` for plain text. For the open-circle stars in
+the vendor sample, add `--annotation-star-style open`: ordinary point sources
+become the toggleable `open-star` family while variable and double stars keep
+their scientific markers. Both styles are mirrored in SVG and raster without
+moving any labels.
 
 ### Comet Tracking Example
 
@@ -515,6 +524,8 @@ The input directory defaults to `.`. Flags may be passed before or after the pos
 | `--annotation-layers LIST` | Comma-separated SVG 2 annotation layers: `grid-radec`, `grid-galactic`, `grid-ecliptic`, `constellations`, `scale-bar`, `finder-chart`, `legend`/`key` (plus `grid`, `gaia-stars`/`stars`, `extended-objects`/`dso`, `sso-vectors`) | all |
 | `--annotation-vo LIST` | Optional online VO services for layered annotations: `simbad`, `vizier` (offline bundle by default) | — |
 | `--annotation-cache DIR` | Disk cache directory for VO annotation queries | Gaia cache dir |
+| `--annotation-label-collar` | Draw a dark contrast stroke behind annotation labels (`=false` for plain labels) | `true` |
+| `--annotation-star-style MODE` | Point-source markers: `filled` or `open` | `filled` |
 | `--starless` | Write `stacked_starless`/`stacked_stars` `.f32raw` + `.jpg` from the post-processing star-removal step | `false` |
 | `--json-report` | Write `report.json` alongside `report.txt` (same `processingReport` data) | `false` |
 | `--verify-solution` | Report-only whole-frame WCS verification against cached Gaia | `false` |
@@ -691,6 +702,8 @@ frames unless `--external-allow-nonlinear` is given.
 | `--astap-cmd CMD` | local ASTAP blind-solver command (needs D05–D80 database) | `astap` |
 | `--cone-catalog NAME` / `--cone-radius N` | external VOTable cone search added to annotations (sdss, irsa, vizier; arcsec) | — / `60` |
 | `--annotation-names MODE` | Gaia label names: `auto` (SIMBAD over the whole field, AllWISE fallback), `simbad`, `irsa` or `off` | `auto` |
+| `--annotation-label-collar` | Dark contrast stroke behind labels; use `=false` for plain text | on |
+| `--annotation-star-style MODE` | `open` adds the toggleable `open-star` family (variable/double markers remain distinct) | `filled` |
 | `--blind-benchmark DIR` / `--benchmark-solvers LIST` | head-to-head blind-solve CSV over a corpus | — |
 | `--astrometry-cmd CMD` / `--astrometry-api-key KEY` | local `solve-field` command / nova API key (`AN_API_KEY` also read) | `solve-field` / — |
 | `--solve-field-args ARGS` | extra quoted argv for local `solve-field` (no shell) | — |
@@ -829,7 +842,7 @@ Before Pass 1 begins, SkyStacker estimates resource usage and validates inputs:
 
 ## Development Status & Recently Implemented (v0.6.1)
 
-SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 298 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (158 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
+SkyStacker is under active development as a Go package (`main.go` + `donations.go`, plus first-party modules) (current source version: **0.6.1**, 306 registered self-tests). Feature sets, output filenames, and CLI options may evolve between revisions; treat the checked-out source and `skystacker --help` as authoritative. The authoritative milestone tracker is [ROADMAP.md](ROADMAP.md) (158 items; latest pass promoted 26 new items from a multi-provider code audit — see `audits/benchmarks.md` and `audits/roadmap-update.md`).
 
 The following capabilities have been implemented through `0.6.1`:
 

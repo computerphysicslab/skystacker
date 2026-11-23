@@ -1794,11 +1794,32 @@ rejection and disk spill. `--scale N` downsamples.
 ### Layered annotation subsystem — roadmap items 137–141 and 143 (2026-11-22)
 
 - New `annotation_layers.go` introduces one `annotationSource` model shared by the SVG 2 and raster renderers. It carries RA/Dec in radians, band/magnitude, axes/PA, epoch/proper motion, priority, label text and per-source provenance. An offline bundle (<2 MB) supplies bright stars, Messier/NGC/IC objects, LDN/Sh2 regions and constellation lines.
-- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **298**. `annotation_atlas_selftests.go` adds eight
+- `image_selftests.go` covers `--image-op resize` (directory expansion, area downsampling, output naming and atomic overwrite); `annotation_selftests.go` embeds the 40-source `synthetic-field.json` golden fixture and covers the bundle, mock SIMBAD/VizieR acquisition (success, timeout, truncation, cache reuse, redaction), Gaia name cross-matching, the AllWISE/IRSA fallback, deterministic placement, SVG layers/size, raster parity and an end-to-end plate-solved fixture. Total registered selftests: **306**. `annotation_atlas_selftests.go` adds eight
 cases for the atlas symbol vocabulary, type-aware contours, variable/double
 markers, SVG/raster legend parity, the interactive legend/toggle contract,
 spectral/index-aware tints, catalog-driven footprints and proper-motion /
-variability overlays.
+variability overlays. `annotation_pgc_selftests.go` adds five cases for PGC
+normalisation, the offline table, cross-match priority/provenance,
+de-duplication and a visual fixture; `annotation_style_selftests.go` adds three
+for SVG/raster label collars, the open-circle star family and CLI round-trips.
 - `--annotation-layers`, `--annotation-vo` and `--annotation-cache` were added to `cliOptions`, `runOptions`, `parseArgs`, `resolvedFlagLines` and the main `runOptions` literal. With `--annotate --sky-map` the pipeline now also writes `stacked_annotated.svg`, `stacked_annotated.png` and `annotation_provenance.json`.
 - Label placement uses a dense spatial grid with cell-local collision queries and a deterministic priority/magnitude/ID order; 10 000 labels are placed in ~45 ms and 20 fixtures have zero overlaps. A bug in `annotationGridStep` (ascending step order) and the rad→arcsec conversion in `annotationArcsecPerPixel` were fixed, reducing a 10k-source SVG from 11 MB to ~1.8 MB (<2 MiB budget).
 - Roadmap: 137–141 and 143 are Done; item 142 (per-tile WCS + distortion-aware projection) remains Blocked by item 13, so goal 144 stays Open. Examples and visual references are documented in `assets/annotation-examples/README.md`.
+
+### Annotation atlas wave 155-158 (2026-11-23)
+
+- `annotation_starnames.go` embeds 3,241 V <= 6.5 proper names, Bayer and
+  Flamsteed designations (BSD-2-Clause attribution in `docs/catalog-attribution.md`);
+  `annotation_pgc.go` adds four NED-derived PGC galaxies with `PGC`/`LEDA`
+  normalisation, 0.1 degree spatial indexing and deterministic one-to-one
+  assignment. PGC priority 80 outranks anonymous survey identifiers but never
+  replaces Messier/NGC/IC names. Provenance counts are in `pgc_matches`.
+- Item 157 adds `--annotation-label-collar` (default on; SVG `paint-order`
+  stroke and a two-pixel raster twin) and `--annotation-star-style filled|open`.
+  The `open-star` family has legend swatch, CSS toggle and raster twin; label
+  placement is unchanged. Both flags are wired through `parseArgs`, the
+  positional-input preprocessor, `resolvedFlagLines` and `annotationRenderOptions`.
+- Verified with `go build`, `go vet ./...`, `go test ./...`, 306 embedded
+  self-tests and a real M31 plate-solved run in
+  `review/atlas-maps/20261123-0125-m31-pgc-style/` (253 sources, 238 labels,
+  4 Gaia tiles, `label_collar=true`, `star_style=open`, 253 open-star markers).

@@ -312,6 +312,7 @@ func offlineAnnotationBundle() annotationBundle {
 			sources = append(sources, src)
 		}
 		sources = append(sources, parseDeepSkyTable(offlineDeepSky, prov, 90)...)
+		sources = append(sources, offlinePGCSources(prov)...)
 		sources = append(sources, parseDeepSkyTable(offlineDarkNebulae, prov, 60)...)
 		bundleData = annotationBundle{
 			Version:        offlineBundleVersion,
@@ -1331,6 +1332,8 @@ type annotationRenderOptions struct {
 	WCS                *wcsTan
 	Layers             []string
 	LabelFields        int
+	LabelCollar        bool
+	StarStyle          string
 	Provenance         []annotationProvenance
 	ShowGrid           bool
 	ShowConstellations bool
@@ -1581,7 +1584,7 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 			}
 			colourAttrs = fmt.Sprintf(" data-spectral=\"%s\" data-colour-mode=\"index\"", spectral)
 		}
-		symbol := atlasSymbol(s)
+		symbol := atlasSymbolWithStyle(s, opts.StarStyle)
 		label := html.EscapeString(s.Name)
 		titleText := fmt.Sprintf("%s (%s, G=%.2f)", label, html.EscapeString(s.Type), s.Mag)
 		if coloured && spectral != "" {
@@ -1608,6 +1611,14 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 			}
 			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\"/><circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\"/></g>\n",
 				s.X-dx, s.Y-dy, r*0.8, fill, opacity, s.X+dx, s.Y+dy, r*0.8, fill, opacity)
+		case "open-star":
+			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.1\" opacity=\"%.2f\" data-symbol=\"open-star\"%s",
+				s.X, s.Y, r, fill, opacity, colourAttrs)
+			if titleText != "" {
+				fmt.Fprintf(&b, "><title>%s</title></circle>\n", titleText)
+			} else {
+				b.WriteString("/>\n")
+			}
 		default:
 			fmt.Fprintf(&b, "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\" opacity=\"%.2f\" data-symbol=\"%s\"%s", s.X, s.Y, r, fill, opacity, symbol, colourAttrs)
 			if titleText != "" {
@@ -1631,7 +1642,7 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 		if s.PixelA > 0 {
 			a, bb = s.PixelA/2, s.PixelB/2
 		}
-		symbol := atlasSymbol(s)
+		symbol := atlasSymbolWithStyle(s, opts.StarStyle)
 		col := atlasStroke(symbol)
 		dash := atlasDash(symbol)
 		dashAttr := ""
@@ -1692,17 +1703,23 @@ func buildAnnotationSVG(width, height int, sources []annotationSource, velocitie
 		fmt.Fprintf(&b, "<text x=\"%.1f\" y=\"%.1f\" fill=\"#d7e3f4\" font-family=\"monospace\" font-size=\"9\">N</text></g>\n", x0+size-10, y0+11)
 	}
 	if opts.enabled("legend") {
-		b.WriteString(atlasLegendSVG(width, height))
+		b.WriteString(atlasLegendSVG(width, height, opts.StarStyle))
 	}
 	fields := opts.LabelFields
 	if fields <= 0 || fields > skyLabelFields {
 		fields = 1
 	}
-	fmt.Fprintf(&b, "<g id=\"labels\" class=\"skystacker-layer\" data-layer=\"labels\" data-fields=\"%d\" data-candidates=\"%d\" data-passes=\"%d\" data-relax=\"%d\">\n",
-		skyLabelFields, skyLabelCandidatePositions, skyLabelCollisionPasses, annotationLabelRelaxPasses)
+	collar, collarAttrs := "none", ""
+	if opts.LabelCollar {
+		collar = "dark"
+		collarAttrs = ` paint-order="stroke" stroke="#05070d" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"`
+	}
+	fmt.Fprintf(&b, "<g id=\"labels\" class=\"skystacker-layer\" data-layer=\"labels\" data-fields=\"%d\" data-candidates=\"%d\" data-passes=\"%d\" data-relax=\"%d\" data-collar=\"%s\" data-star-style=\"%s\">\n",
+		skyLabelFields, skyLabelCandidatePositions, skyLabelCollisionPasses, annotationLabelRelaxPasses,
+		collar, html.EscapeString(annotationStarStyleMode(opts.StarStyle)))
 	for _, l := range placeAnnotationLabels(width, height, sources, fields) {
-		fmt.Fprintf(&b, "<text x=\"%.2f\" y=\"%.2f\" fill=\"#d7e3f4\" font-family=\"monospace\" font-size=\"%.0f\">%s</text>\n",
-			l.X, l.Y+skyLabelFontSize, skyLabelFontSize, html.EscapeString(l.Text))
+		fmt.Fprintf(&b, "<text x=\"%.2f\" y=\"%.2f\" fill=\"#d7e3f4\" font-family=\"monospace\" font-size=\"%.0f\"%s>%s</text>\n",
+			l.X, l.Y+skyLabelFontSize, skyLabelFontSize, collarAttrs, html.EscapeString(l.Text))
 	}
 	b.WriteString("</g>\n")
 	prov := "offline-bundle"
@@ -1835,8 +1852,22 @@ var annotationFont = map[rune][7]uint8{
 	'?': {14, 17, 1, 2, 4, 0, 4},
 }
 
+// drawBitmapText keeps the historical one-pixel legibility halo used by the
+// legend and all existing raster labels. Label renderers opt into the wider
+// collar with drawBitmapTextWithCollar.
 func drawBitmapText(img *image.RGBA, text string, x, y float64, col color.RGBA) {
+	drawBitmapTextWithCollar(img, text, x, y, col, false)
+}
+
+// drawBitmapTextWithCollar is the raster twin of the SVG paint-order stroke.
+// The strong collar spans two pixels with a slightly higher alpha; placement
+// and glyph geometry are identical in both modes, so label boxes never move.
+func drawBitmapTextWithCollar(img *image.RGBA, text string, x, y float64, col color.RGBA, strong bool) {
 	halo := color.RGBA{5, 7, 13, 255}
+	radius, alpha := 1, 0.85
+	if strong {
+		radius, alpha = 2, 0.95
+	}
 	cursor := int(math.Round(x))
 	top := int(math.Round(y))
 	for _, r := range text {
@@ -1852,9 +1883,9 @@ func drawBitmapText(img *image.RGBA, text string, x, y float64, col color.RGBA) 
 				if bits&(1<<uint(4-colIdx)) == 0 {
 					continue
 				}
-				for dy := -1; dy <= 1; dy++ {
-					for dx := -1; dx <= 1; dx++ {
-						blendPixel(img, cursor+colIdx+dx, top+row+dy, halo, 0.85)
+				for dy := -radius; dy <= radius; dy++ {
+					for dx := -radius; dx <= radius; dx++ {
+						blendPixel(img, cursor+colIdx+dx, top+row+dy, halo, alpha)
 					}
 				}
 				blendPixel(img, cursor+colIdx, top+row, col, 1)
@@ -1888,7 +1919,7 @@ func renderAnnotationRasterWithOptions(base *image.RGBA, sources []annotationSou
 	out := image.NewRGBA(base.Bounds())
 	copy(out.Pix, base.Pix)
 	for _, s := range sources {
-		symbol := atlasSymbol(s)
+		symbol := atlasSymbolWithStyle(s, opts.StarStyle)
 		col := atlasRasterColour(symbol)
 		if s.Extended && s.PixelA > 0 && s.PixelB > 0 {
 			a, bb := s.PixelA/2, s.PixelB/2
@@ -1919,6 +1950,8 @@ func renderAnnotationRasterWithOptions(base *image.RGBA, sources []annotationSou
 			dx, dy := 2.6*math.Cos(pa), 2.6*math.Sin(pa)
 			drawAAFilledEllipse(out, s.X-dx, s.Y-dy, r*0.8, r*0.8, 0, starCol, alpha)
 			drawAAFilledEllipse(out, s.X+dx, s.Y+dy, r*0.8, r*0.8, 0, starCol, alpha)
+		case "open-star":
+			drawAAEllipseOutline(out, s.X, s.Y, r, r, 0, 1.1, starCol, false)
 		default:
 			drawAAFilledEllipse(out, s.X, s.Y, r, r, 0, starCol, alpha)
 		}
@@ -1931,10 +1964,10 @@ func renderAnnotationRasterWithOptions(base *image.RGBA, sources []annotationSou
 	}
 	textCol := color.RGBA{215, 227, 244, 255}
 	for _, l := range labels {
-		drawBitmapText(out, l.Text, l.X, l.Y+annotationGlyphTopOffset, textCol)
+		drawBitmapTextWithCollar(out, l.Text, l.X, l.Y+annotationGlyphTopOffset, textCol, opts.LabelCollar)
 	}
 	if opts.enabled("legend") {
-		renderAtlasLegendRaster(out)
+		renderAtlasLegendRaster(out, opts.StarStyle)
 	}
 	return out
 }
@@ -2047,12 +2080,15 @@ type layeredAnnotationReport struct {
 	Sources      int                        `json:"sources"`
 	Labels       int                        `json:"labels"`
 	Layers       []string                   `json:"layers"`
+	LabelCollar  bool                       `json:"label_collar"`
+	StarStyle    string                     `json:"star_style"`
 	SVG          string                     `json:"svg"`
 	Raster       string                     `json:"raster"`
 	Provenance   []annotationProvenance     `json:"provenance"`
 	Warnings     []string                   `json:"warnings,omitempty"`
 	GaiaCoverage *gaiaFieldCoverage         `json:"gaia_coverage,omitempty"`
 	NameMatches  *annotationNameMatchReport `json:"name_matches,omitempty"`
+	PGCMatches   *annotationPGCMatchReport  `json:"pgc_matches,omitempty"`
 	Geometry     *annotationGeometryReport  `json:"geometry,omitempty"`
 	Overlays     *annotationOverlayReport   `json:"overlays,omitempty"`
 }
@@ -2235,6 +2271,13 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 	}
 	logf("Layered annotation: named %d/%d Gaia sources (%s)", nameMatch.Matched,
 		nameMatch.Designated, nameMode)
+	var pgcMatch annotationPGCMatchReport
+	sources, pgcMatch = crossMatchPGCNames(sources, nameCandidates, 10)
+	if pgcMatch.Matched > 0 {
+		logf("Layered annotation: named %d/%d extended sources from PGC candidates",
+			pgcMatch.Matched, pgcMatch.Candidates)
+	}
+
 	sources = projectAnnotationSources(&ww, w, h, sources)
 
 	var vectors []skyVelocityVector
@@ -2249,7 +2292,10 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 
 	layers := parseAnnotationLayers(opts.AnnotationLayers)
 	renderOpts := annotationRenderOptions{
-		WCS: &ww, Layers: layers, LabelFields: 1, Provenance: acq.Provenance,
+		WCS: &ww, Layers: layers, LabelFields: 1,
+		LabelCollar: opts.AnnotationLabelCollar,
+		StarStyle:   annotationStarStyleMode(opts.AnnotationStarStyle),
+		Provenance:  acq.Provenance,
 	}
 	svg := buildAnnotationSVG(w, h, sources, vectors, renderOpts)
 	labels := placeAnnotationLabels(w, h, sources, 1)
@@ -2295,12 +2341,15 @@ func runLayeredAnnotation(outputDir string, opts runOptions) error {
 		Sources:      len(sources),
 		Labels:       len(labels),
 		Layers:       layers,
+		LabelCollar:  renderOpts.LabelCollar,
+		StarStyle:    renderOpts.StarStyle,
 		SVG:          filepath.Base(svgPath),
 		Raster:       filepath.Base(pngPath),
 		Provenance:   acq.Provenance,
 		Warnings:     acq.Warnings,
 		GaiaCoverage: &coverage,
 		NameMatches:  &nameMatch,
+		PGCMatches:   &pgcMatch,
 		Geometry:     &geometry,
 		Overlays:     &overlays,
 	}

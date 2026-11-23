@@ -21,16 +21,20 @@ the vendor JPGs and are used for visual acceptance only (no pixel assertions):
 - `m31camera-annotated.webp` (640x572) — wide field around Andromeda. Readable
   labels mix proper names (`Mirach`, `Alpheratz / Sirrah`) with Flamsteed
   numbers (`45 And`, `65 Psc`, `69 Psc`) and the constellation name
-  `Andromeda`; stars are small open circles. Acceptance mapping: roadmap item
-  155 (offline proper-name/Bayer/Flamsteed catalogue and cross-match priority).
+  `Andromeda`; stars are small open circles. Acceptance mapping: roadmap items
+  155 (offline proper-name/Bayer/Flamsteed catalogue and cross-match priority)
+  and 157 (`--annotation-star-style open`).
 - `bc9374_cacccbac9cb2432e9061aae64f812dfd.webp` (860x552) — dense galaxy
   field labelled by PGC number (`PGC 2167368`, `PGC 2183568`, `PGC 21991`,
-  ...). Acceptance mapping: roadmap item 156 (PGC catalogue support, still
-  Open); it is the reference for the next density/label-collision wave.
+  ...). Acceptance mapping: roadmap item 156 (PGC catalogue support, Done
+  2026-11-23); the offline table and spatial cross-match lock the four labels
+  and keep readable names above survey identifiers.
 
 `testVendorExampleCorpus` checks that these files are documented, carry a valid
 WebP header when present locally, and that the bundled name catalogue can
 produce the Andromeda-field labels seen in the first example.
+`testAnnotationLabelCollar`, `testOpenStarStyle` and `testAnnotationStyleCLI`
+cover the SVG/raster style twins, symbol toggles and CLI round-trips.
 
 ## Synthetic fixture
 
@@ -42,13 +46,16 @@ produce the Andromeda-field labels seen in the first example.
 - `synthetic-field.svg` — SVG 2 output from `buildAnnotationSVG` with every
   stable `<g data-layer>` group enabled.
 - `synthetic-field.png` — raster output generated from the same unified source
-  model and the same label placement as the SVG.
+  model and the same label placement as the SVG, on an opaque dark canvas so the
+  default label collar is visible.
 
 The golden JSON is embedded in `annotation_selftests.go` so the bundle/golden
 field test runs from any working directory. The checked-in SVG and PNG are the
 reference outputs emitted by the same renderer and placement code; they can be
 regenerated with a temporary Go harness that calls `projectAnnotationSources`,
-`buildAnnotationSVG`, `placeAnnotationLabels` and `renderAnnotationRaster`.
+`buildAnnotationSVG`, `placeAnnotationLabels`, `atlasTestBase` and
+`renderAnnotationRasterWithOptions`. Default options are used (label collar on,
+filled star markers).
 
 ## Acceptance checks
 
