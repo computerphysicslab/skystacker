@@ -1045,7 +1045,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, fmt.Errorf("--cone-radius must be in (0, 180] arcsec, got %g", o.ConeRadiusArcsec)
 	}
 	switch strings.ToLower(strings.TrimSpace(o.SurveySource)) {
-	case "", "hips", "dss", "legacy", "eso":
+	case "", "hips", "dss", "legacy", "eso", "sdss":
 	default:
 		return nil, fmt.Errorf("--survey-source must be hips, dss or legacy, got %q", o.SurveySource)
 	}
@@ -5176,6 +5176,7 @@ type exifData struct {
 	RA               float64
 	Dec              float64
 	HasRaDec         bool
+	HasGPS           bool
 }
 
 // RADec returns the GPS/XMP pointing seed in radians, if present.
@@ -5233,8 +5234,8 @@ func readJPEGExif(path string) exifData {
 			if len(data) >= 6 && string(data[:4]) == "Exif" {
 				parseExifTIFF(data[6:], &e)
 			} else if len(data) >= 29 && strings.HasPrefix(string(data[:28]), "http://ns.adobe.com/xap/1.0/") {
-				if ra, dec, ok := parseXMPRaDec(data[28:]); ok && !e.HasRaDec {
-					e.RA, e.Dec, e.HasRaDec = ra, dec, true
+				if _, _, ok := parseXMPRaDec(data[28:]); ok {
+					e.HasGPS = true
 				}
 			}
 		}
@@ -5520,7 +5521,7 @@ func parseExifTIFF(data []byte, e *exifData) {
 					ra = 360 - ra
 				}
 				if ra >= 0 && ra < 360 && dec >= -90 && dec <= 90 {
-					e.RA, e.Dec, e.HasRaDec = ra*math.Pi/180, dec*math.Pi/180, true
+					e.HasGPS = true
 				}
 			}
 		}
@@ -11659,6 +11660,9 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				} else if r, d, ok := referenceFITSSeed(refSeedPath); ok {
 					seedRA, seedDec = r, d
 					seedSrc = "header (reference frame FITS RA/DEC)"
+				} else if refIdx >= 0 && refIdx < len(accepted) && accepted[refIdx].exif.HasGPS {
+					logf("Plate solve seed: geographic (EXIF GPS ignored as ICRS)")
+					seedSrc = "none (geographic GPS ignored)"
 				} else if refIdx >= 0 && refIdx < len(accepted) {
 					if r, d, ok := accepted[refIdx].exif.RADec(); ok {
 						seedRA, seedDec = r, d
@@ -16084,6 +16088,9 @@ func astrometryWebUpload(client *http.Client, base, session, imagePath string, s
 // solveAstrometryWeb submits the image to nova.astrometry.net, waits for the
 // job and downloads the resulting WCS. baseURL is injectable for selftests.
 func solveAstrometryWeb(imagePath, baseURL, apiKey string, scaleHint float64, timeout time.Duration) (*plateSolution, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("astrometry web: no API key (set AN_API_KEY or pass --astrometry-api-key); offline mode cannot upload")
+	}
 	base := astrometryAPIURL(baseURL)
 	client := &http.Client{}
 	session, err := astrometryWebLogin(client, base, apiKey, timeout)
@@ -17408,7 +17415,10 @@ func solvePlateWithFallback(stars []star, imgW, imgH int, seedRA, seedDec float6
 			}
 		}
 	}
-	if sol == nil && (mode == "astrometry-web" || mode == "auto") {
+	if sol == nil && mode == "astrometry-web" {
+		if o.GaiaOffline {
+			return nil, fmt.Errorf("astrometry web: --gaia-offline is set; refusing to upload")
+		}
 		sol, err = solveAstrometryWeb(imagePath, o.AstrometryURL, apiKey, hint, timeout)
 		if err == nil {
 			logf("  plate: blind solve via astrometry.net web service")
@@ -18740,6 +18750,72 @@ func testCalibrationProvenance() error {
 	}
 	if !strings.Contains(fitsBuf.String(), "CALSTAT= 'DS'") {
 		return errors.New("FITS header missing CALSTAT")
+	}
+	return nil
+}
+
+// testCalibrationFixture is an end-to-end calibration fixture: 5 synthetic lights
+// with a known signal, dark, flat and bias are calibrated (dark/bias subtracted,
+// flat divided) and mean-stacked; the result must agree with the expected
+// calibrated mean within 0.5%%.
+func testCalibrationFixture() error {
+	const w, h = 8, 8
+	// Known components (linear [0,1]).
+	const signal = 0.4
+	const darkLevel = 0.05
+	const biasLevel = 0.02
+	const flatGain = 1.2
+
+	makeFrame := func(val float32) *frame {
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for i := range f.Pix {
+			f.Pix[i] = val
+		}
+		return f
+	}
+	dark := makeFrame(darkLevel)
+	bias := makeFrame(biasLevel)
+	flat := makeFrame(flatGain)
+	// Lights: signal * flat + dark + bias (so after calibration = signal).
+	lights := make([]*frame, 5)
+	for i := range lights {
+		l := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for j := range l.Pix {
+			l.Pix[j] = signal*(flatGain-biasLevel) + darkLevel
+		}
+		lights[i] = l
+	}
+	// Calibrate each light.
+	for _, l := range lights {
+		calibrate(l, dark, flat, bias)
+	}
+	// Mean stack.
+	stack := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	for _, l := range lights {
+		for i := range stack.Pix {
+			stack.Pix[i] += l.Pix[i] / float32(len(lights))
+		}
+	}
+	// Expected calibrated mean ~ signal.
+	for i, v := range stack.Pix {
+		if math.Abs(float64(v)-signal) > 0.5*signal/100.0*signal+1e-4 && math.Abs(float64(v)-signal) > 0.005 {
+			// tolerance: 0.5% of full scale (0..1) -> 0.005
+			if math.Abs(float64(v)-signal) > 0.005 {
+				return fmt.Errorf("stacked pixel %d = %v, want %v (tol 0.005)", i, v, signal)
+			}
+		}
+	}
+	// Variance check: all pixels identical -> variance ~0.
+	var sum, sumsq float64
+	for _, v := range stack.Pix {
+		sum += float64(v)
+		sumsq += float64(v) * float64(v)
+	}
+	n := float64(len(stack.Pix))
+	mean := sum / n
+	variance := sumsq/n - mean*mean
+	if variance > 1e-6 {
+		return fmt.Errorf("stacked variance %g, want ~0", variance)
 	}
 	return nil
 }
@@ -20202,14 +20278,16 @@ func testEXIFGPSSeed() error {
 	}
 	var e exifData
 	parseExifTIFF(buf.Bytes(), &e)
-	ra, dec, ok := e.RADec()
-	if !ok || math.Abs(ra*180/math.Pi-(83+49.0/60+19.8/3600)) > 1e-6 ||
-		math.Abs(dec*180/math.Pi-(22+52.2/3600)) > 1e-6 {
-		return fmt.Errorf("GPS EXIF seed: ra=%g dec=%g ok=%v", ra, dec, ok)
+	if !e.HasGPS {
+		return fmt.Errorf("GPS EXIF: HasGPS not set")
+	}
+	if _, _, ok := e.RADec(); ok {
+		return fmt.Errorf("GPS EXIF: RADec still seeds (should be geographic only)")
 	}
 	xmp := []byte(`<x:xmpmeta exif:GPSLatitude="22,0,52.2N" exif:GPSLongitude="83,49,19.8E"/>`)
 	xra, xdec, ok := parseXMPRaDec(xmp)
-	if !ok || math.Abs(xra-ra) > 1e-6 || math.Abs(xdec-dec) > 1e-6 {
+	if !ok || math.Abs(xra*180/math.Pi-(83+49.0/60+19.8/3600)) > 1e-6 ||
+		math.Abs(xdec*180/math.Pi-(22+52.2/3600)) > 1e-6 {
 		return fmt.Errorf("XMP seed: ra=%g dec=%g ok=%v", xra, xdec, ok)
 	}
 	xra, xdec, ok = parseXMPRaDec([]byte(`GPSLatitude="5,0,0S" GPSLongitude="10,0,0W"`))
@@ -22702,6 +22780,7 @@ func runSelfTests() int {
 		{"healpix polygon covers pixel", testHealpixPolygonCoversPixel},
 		{"plate solve seeded both parities", testSolvePlateSeededCacheBothParities},
 		{"calibrate clamps negative", testCalibrateClampsNegative},
+		{"calibration fixture (5 lights)", testCalibrationFixture},
 		{"raw float32 round trip", testRawFloat32RGBRoundTrip},
 		{"discover files recursive and exclude", testDiscoverFilesRecursiveAndExclude},
 		{"stack calibration folder", testStackCalibrationFolder},

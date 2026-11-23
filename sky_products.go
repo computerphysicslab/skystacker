@@ -581,6 +581,78 @@ func writeESOSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, 
 		fitsData, "eso", "eso-dss", "", invalid, nil)
 }
 
+// fetchSDSSCutout downloads a JPEG cutout from the SDSS SkyServer ImgCutout
+// service. SDSS does not provide FITS cutouts through this endpoint, so the
+// result is a JPEG preview without WCS; reprojection is not possible.
+func fetchSDSSCutout(ctx context.Context, ra, dec float64, width, height int, scale float64) ([]byte, error) {
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("sdss cutout: invalid dimensions")
+	}
+	if scale <= 0 {
+		scale = 0.396 // SDSS native plate scale ~0.396 arcsec/px
+	}
+	u := fmt.Sprintf("https://skyserver.sdss.org/dr18/SkyServerWS/ImgCutout/getjpeg?ra=%.6f&dec=%.6f&scale=%.4f&width=%d&height=%d&opt=G",
+		ra, dec, scale, width, height)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("sdss cutout HTTP %d", resp.StatusCode)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, io.LimitReader(resp.Body, 64<<20)); err != nil {
+		return nil, err
+	}
+	data := buf.Bytes()
+	if len(data) < 100 || string(data[:2]) != "\xff\xd8" {
+		return nil, fmt.Errorf("sdss cutout returned non-JPEG data (%d bytes)", len(data))
+	}
+	return data, nil
+}
+
+// writeSDSSSurveyCutout fetches an SDSS JPEG cutout and saves it. Because
+// SDSS ImgCutout provides no WCS, no reprojection is performed; the JPEG is
+// saved with a small JSON sidecar recording the request parameters.
+func writeSDSSSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, productDir, stem string, refFrame *frame, timeout int) error {
+	ra, dec := wcs.CRVAL1*180/math.Pi, wcs.CRVAL2*180/math.Pi
+	scale := math.Hypot(wcs.CD[0][0], wcs.CD[0][1]) * 180 / math.Pi * 3600
+	if scale <= 0 {
+		scale = 0.396
+	}
+	if timeout <= 0 {
+		timeout = 30
+	}
+	logf("Survey cutout: HTTP timeout %d s", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	data, err := fetchSDSSCutout(ctx, ra, dec, width, height, scale)
+	if err != nil {
+		return err
+	}
+	outPath := filepath.Join(productDir, stem+"_sdss.jpg")
+	if err := writeFileAtomic(outPath, func(out io.Writer) error {
+		_, err := out.Write(data)
+		return err
+	}); err != nil {
+		return err
+	}
+	meta := map[string]any{
+		"source": "sdss", "ra": ra, "dec": dec, "width": width, "height": height,
+		"scale_arcsec_per_px": scale, "note": "JPEG only; no WCS, no reprojection",
+	}
+	if err := writeJSON(filepath.Join(productDir, stem+"_sdss.json"), meta); err != nil {
+		logf("SDSS cutout: metadata write failed: %v", err)
+	}
+	logf("Survey cutout: SDSS JPEG %dx%d -> %s", width, height, filepath.Base(outPath))
+	return nil
+}
+
 func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, stem string, refFrame *frame) error {
 	scale := math.Hypot(wcs.CD[0][0], wcs.CD[0][1]) * 180 / math.Pi
 	if scale <= 0 {
@@ -620,6 +692,8 @@ func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, ste
 		return writeESOSurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
 	case "legacy":
 		return writeLegacySurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
+	case "sdss":
+		return writeSDSSSurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
 	default:
 		return fmt.Errorf("survey cutout: unknown source %q", source)
 	}

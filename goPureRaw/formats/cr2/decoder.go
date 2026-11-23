@@ -128,7 +128,11 @@ func findLosslessJPEG(r io.ReaderAt, size int64) ([]byte, error) {
 			}
 		}
 		carry = 2
-		copy(buf[:2], data[len(data)-2:])
+		if len(data) >= 2 {
+			copy(buf[:2], data[len(data)-2:])
+		} else {
+			carry = 0
+		}
 	}
 	return nil, errors.New("cr2: lossless JPEG stream not found")
 }

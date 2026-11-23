@@ -140,3 +140,17 @@ func TestOversizedSOF3RejectedBeforeAllocation(t *testing.T) {
 		t.Fatalf("oversized SOF3 error = %v, want ErrTooLarge", err)
 	}
 }
+
+// FuzzLJPEG feeds arbitrary bytes to Decode and asserts it never panics.
+func FuzzLJPEG(f *testing.F) {
+	f.Add(minimalStream())
+	f.Add(minimalStreamWithRestart())
+	f.Fuzz(func(t *testing.T, data []byte) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v", r)
+			}
+		}()
+		_, _ = Decode(data)
+	})
+}

@@ -172,3 +172,17 @@ func TestFindLosslessJPEGCapsStreamTail(t *testing.T) {
 		t.Fatalf("oversized stream tail error = %v, want ErrTooLarge", err)
 	}
 }
+
+// FuzzFindLosslessJPEG feeds arbitrary bytes to findLosslessJPEG and asserts
+// it never panics. It uses a reported size equal to the data length.
+func FuzzFindLosslessJPEG(f *testing.F) {
+	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x0B, 0x08, 0x00, 0x02, 0x00, 0x02, 0x01, 0x01, 0x11, 0x00})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v", r)
+			}
+		}()
+		_, _ = findLosslessJPEG(bytes.NewReader(data), int64(len(data)))
+	})
+}
