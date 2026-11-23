@@ -1,0 +1,431 @@
+# Parallel post-processing research
+
+## Context
+SkyStacker has a sequential post-processing pipeline (runPostProcessing) that
+applies ~10 dependent image transformations (stretch, background removal,
+star removal, denoise, HDR, curves, weighted mixes) to a stacked astronomical
+image. Each step consumes the previous step's output. The goal (roadmap item
+136) is >=1.7x speedup with 4 workers while keeping JPEG outputs byte-identical
+to the sequential path.
+
+## Question
+Analyze the pipeline below and propose a safe, deterministic parallelization
+strategy. Identify:
+1. Which steps are truly independent (can run concurrently)?
+2. Which steps only differ by parameters (same transform, different constants)
+   and can be computed in parallel from a shared input?
+3. Data-race risks and shared mutable state.
+4. Memory budget implications (each frame is 3 floats * w * h).
+5. A minimal, low-risk first increment (not the full refactor).
+6. Whether the acceptance criteria (>=1.7x with 4 workers, byte-identical JPEGs)
+   is realistic.
+
+## Code
+func runPostProcessing(outputDir string, opts runOptions) ([]string, error) {
+	workPath := filepath.Join(outputDir, "_work", "stacked_mean.f32raw")
+	w, h, pix, err := readRawFloat32RGB(workPath)
+	if err != nil {
+		return nil, fmt.Errorf("post-process: read work file: %w", err)
+	}
+	src := &frame{Width: w, Height: h, Pix: pix}
+	if solData, jerr := os.ReadFile(filepath.Join(outputDir, "plate_solution.json")); jerr == nil {
+		var sol plateSolution
+		if jerr := json.Unmarshal(solData, &sol); jerr == nil && (sol.WCS.CRVAL1 != 0 || sol.WCS.CD[0][0] != 0) {
+			sol.WCS.SIP = append([]float64(nil), sol.WCS.SIP...)
+			if len(sol.WCS.SIP) == 0 {
+				sol.WCS.SIP = append([]float64(nil), sol.SIP...)
+			}
+			src.WCS = &sol.WCS
+		}
+	}
+	if opts.Narrowband != "" {
+		loadMono := func(path string) *frame {
+			mw, mh, mpix, err := readRawFloat32RGB(path)
+			if err != nil {
+				logf("WARNING: narrowband channel %s: %v", path, err)
+				return nil
+			}
+			return &frame{Width: mw, Height: mh, Pix: mpix}
+		}
+		a := loadMono(opts.NBChannelA)
+		b := loadMono(opts.NBChannelB)
+		c := loadMono(opts.NBChannelC)
+		mapped, err := narrowbandCombine(a, b, c, opts.Narrowband)
+		if err != nil {
+			return nil, fmt.Errorf("narrowband: %w", err)
+		}
+		src = mapped
+		w, h = src.Width, src.Height
+		logf("  narrowband: %s from %s / %s / %s", strings.ToUpper(opts.Narrowband),
+			filepath.Base(opts.NBChannelA), filepath.Base(opts.NBChannelB), filepath.Base(opts.NBChannelC))
+		if err := writeFileAtomic(filepath.Join(outputDir, "_work", "stacked_narrowband.f32raw"),
+			func(out io.Writer) error { return writeRawFloat32RGB(out, w, h, src.Pix) }); err != nil {
+			logf("  WARNING: narrowband work file: %v", err)
+		}
+	}
+
+	var outputs []string
+	cur := src
+	var step1Frame, step4Frame, step5Frame, step6Frame, step7Frame *frame
+	extTimeout := time.Duration(opts.ExternalTimeoutSec) * time.Second
+	if opts.ExternalBGE != "" {
+		processed, eerr := runExternalSidecar("bge", opts.ExternalBGE, cur, opts.ExternalAllowNonlinear, extTimeout)
+		if eerr != nil {
+			return nil, eerr
+		}
+		cur = processed
+		if err := writeFileAtomic(filepath.Join(outputDir, "_work", "external_bge.f32raw"),
+			func(out io.Writer) error { return writeRawFloat32RGB(out, cur.Width, cur.Height, cur.Pix) }); err != nil {
+			logf("  WARNING: external-bge work file: %v", err)
+		}
+	}
+
+	if opts.BGMultiscale {
+		logf("  post: multiscale background removal")
+		cur = multiscaleBackground(cur, 256)
+	}
+	if opts.Wavelets {
+		if opts.WaveletAdaptive {
+			logf("  post: adaptive à trous wavelet denoise (%d scales, %.1f sigma, 32px tiles)", opts.WaveletScales, opts.WaveletSigma)
+			cur = waveletDenoiseAdaptive(cur, opts.WaveletScales, opts.WaveletSigma, 32)
+		} else {
+			logf("  post: à trous wavelet denoise (%d scales, %.1f sigma)", opts.WaveletScales, opts.WaveletSigma)
+			cur = waveletDenoise(cur, opts.WaveletScales, opts.WaveletSigma)
+		}
+	}
+	// Step 1: background removal (ALWAYS)
+	logf("  post: background removal (degree %d)", opts.BGDegree)
+	cur = removeBackgroundWithOptions(cur, opts.BGDegree, opts.MaskBG, opts)
+	step1Frame = cur
+	p := filepath.Join(outputDir, "post_step1_background_removed.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+		logf("  WARNING: %v", err)
+	}
+	outputs = append(outputs, p)
+
+	for _, ext := range []struct {
+		stage   string
+		command string
+	}{
+		{"denoise", opts.ExternalDenoise},
+		{"deconv", opts.ExternalDeconv},
+	} {
+		if ext.command == "" {
+			continue
+		}
+		processed, eerr := runExternalSidecar(ext.stage, ext.command, cur, opts.ExternalAllowNonlinear, extTimeout)
+		if eerr != nil {
+			return nil, eerr
+		}
+		cur = processed
+		step1Frame = cur
+		if err := writeFileAtomic(filepath.Join(outputDir, "_work", "external_"+ext.stage+".f32raw"),
+			func(out io.Writer) error { return writeRawFloat32RGB(out, cur.Width, cur.Height, cur.Pix) }); err != nil {
+			logf("  WARNING: external-%s work file: %v", ext.stage, err)
+		}
+	}
+
+	if opts.Deconvolve {
+		if opts.DeconvolveWiener {
+			logf("  post: Wiener deconvolution (sigma=%g, FFT tile 128)", opts.DeconvSigma)
+			cur = deconvolveWiener(cur, opts.DeconvSigma)
+		} else if opts.DeconvolveGrid {
+			logf("  post: gridded Richardson-Lucy deconvolution (base sigma=%g, grid=%dx%d, iters=%d)",
+				opts.DeconvSigma, opts.DeconvGridSize, opts.DeconvGridSize, opts.DeconvIters)
+			cur = richardsonLucyGrid(cur, opts.DeconvSigma, opts.DeconvIters, opts.DeconvGridSize)
+		} else {
+			logf("  post: Richardson-Lucy deconvolution (sigma=%g, iters=%d)", opts.DeconvSigma, opts.DeconvIters)
+			cur = richardsonLucy(cur, opts.DeconvSigma, opts.DeconvIters)
+		}
+		step1Frame = cur
+	}
+	if opts.WaveSharpen && opts.PostPreset != "detail-last" {
+		gains, perr := parseWaveGains(opts.WaveGains)
+		if perr != nil {
+			logf("WARNING: --wavesharp: %v", perr)
+		} else {
+			logf("  post: multi-scale detail enhancement (gains=%v)", gains)
+			cur = multiScaleSharpen(cur, gains)
+			step1Frame = cur
+		}
+	}
+
+	if opts.PostCA {
+		logf("  post: chromatic aberration reduction")
+		cur = suppressChromaticAberration(cur)
+		p = filepath.Join(outputDir, "post_step_ca.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	if opts.PostColor {
+		logf("  post: color calibration")
+		cur = calibrateColor(cur)
+		p = filepath.Join(outputDir, "post_step_color_calibrated.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	if opts.PostFlatten {
+		logf("  post: vignette flattening")
+		cur = flattenBackground(cur, 2, opts.MaskBG)
+		p = filepath.Join(outputDir, "post_step_flattened.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	if opts.PostSharpen {
+		logf("  post: unsharp mask (amount=%g radius=%g)", opts.SharpenAmount, opts.SharpenRadius)
+		cur = unsharpMask(cur, opts.SharpenAmount, opts.SharpenRadius)
+		p = filepath.Join(outputDir, "post_step_sharpened.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	if opts.PostHDR {
+		logf("  post: HDR local contrast (amount=%g)", opts.HDRAmount)
+		cur = applyHDR(cur, opts.HDRAmount)
+		p = filepath.Join(outputDir, "post_step_hdr.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	// Star removal (ALWAYS): replace detected stars with local background
+	logf("  post: star removal (sigma=%g, radius=%d)", opts.StarSigma, opts.StarRadius)
+	if opts.Starless || opts.ExternalStarless != "" {
+		beforeStars := &frame{Width: cur.Width, Height: cur.Height, Pix: append([]float32(nil), cur.Pix...)}
+		if opts.ExternalStarless != "" {
+			starless, eerr := runExternalSidecar("starless", opts.ExternalStarless, cur, opts.ExternalAllowNonlinear, extTimeout)
+			if eerr != nil {
+				return nil, eerr
+			}
+			cur = starless
+		} else {
+			cur = removeStarsForOptions(cur, opts)
+		}
+		starLayer := &frame{Width: cur.Width, Height: cur.Height, Pix: make([]float32, len(cur.Pix))}
+		for i, v := range beforeStars.Pix {
+			d := v - cur.Pix[i]
+			if d < 0 {
+				d = 0
+			}
+			starLayer.Pix[i] = d
+		}
+		for _, out := range []struct {
+			name string
+			fr   *frame
+		}{
+			{"stacked_starless", cur},
+			{"stacked_stars", starLayer},
+		} {
+			rawPath := filepath.Join(outputDir, "_work", out.name+".f32raw")
+			if err := writeFileAtomic(rawPath, func(w io.Writer) error {
+				return writeRawFloat32RGB(w, out.fr.Width, out.fr.Height, out.fr.Pix)
+			}); err != nil {
+				logf("  WARNING: %s: %v", out.name, err)
+			}
+			jpgPath := filepath.Join(outputDir, out.name+".jpg")
+			if err := writePostPreview(outputDir, filepath.Base(jpgPath), out.fr); err != nil {
+				logf("  WARNING: %s preview: %v", out.name, err)
+			}
+		}
+	} else {
+		cur = removeStarsForOptions(cur, opts)
+	}
+	p = filepath.Join(outputDir, "post_step2_star_removed.jpg")
+	if err := writePostPreview(outputDir, filepath.Base(p), cur); err != nil {
+		logf("  WARNING: %v", err)
+	}
+	outputs = append(outputs, p)
+
+	// Black point polish (ALWAYS, unless --bg-percentile 0): subtract the
+	// configured percentile of luminance so the darkest parts of the image
+	// are truly black. Combined with the star removal above, this gives the
+	// "near-dark background" that makes faint stars disappear into the sky.
+	if opts.BgPercentile > 0 {
+		logf("  post: black point shift (P%g, intermediate, not written)", opts.BgPercentile)
+		cur = blackPointShift(cur, opts.BgPercentile)
+		// post_step3_dark_background.jpg is intentionally NOT written:
+		// in typical runs the black-point shift is tiny (P10 near
+		// -0.003), so the resulting JPEG is visually identical to
+		// post_step2. The transformation still runs because step 4
+		// (auto-stretch) consumes its output.
+	}
+
+	// Auto-stretch (FINAL): PixInsight-style STF/MTF.  Lifts the
+	// background to a target level and reveals faint detail without
+	// clipping bright stars.  Disable with --no-auto-stretch.
+	if !opts.NoAutoStretch {
+		logf("  post: auto-stretch (STF: shadows=%.1f target=%.2f linked=%v)",
+			opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		var stretched *frame
+		if opts.StretchColorPreserving {
+			stretched = colorPreservingStretch(cur, opts.STFShadowsClip, opts.STFTargetBG)
+		} else {
+			stretched = autoStretch(cur, opts.STFShadowsClip, opts.STFTargetBG, opts.STFLinked)
+		}
+		stretched.Nonlinear = true
+		step4Frame = stretched
+		p = filepath.Join(outputDir, "post_step4_auto_stretched.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), stretched); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	// Step 5: denoise the auto-stretched frame. The guided filter
+	// smooths flat regions while preserving edges and stars. Skippable
+	// with --no-denoise, tunable with --denoise-strength / --denoise-radius.
+	step5Frame = step4Frame
+	if step4Frame != nil && !opts.NoDenoise && opts.DenoiseStrength > 0 {
+		logf("  post: denoise (guided filter, radius=%d, strength=%g)",
+			opts.DenoiseRadius, opts.DenoiseStrength)
+		denoised := denoiseFrame(step4Frame, opts.DenoiseRadius, 0.01, opts.DenoiseStrength, opts.DenoiseChroma)
+		step5Frame = denoised
+		p = filepath.Join(outputDir, "post_step5_denoised.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), denoised); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	} else {
+		logf("  post: denoise skipped")
+	}
+	if opts.WaveSharpen && opts.PostPreset == "detail-last" && step5Frame != nil {
+		gains, gerr := parseWaveGains(opts.WaveGains)
+		if gerr != nil {
+			logf("WARNING: --wavesharp: %v", gerr)
+		} else {
+			logf("  post: detail enhancement after denoise (--post-preset detail-last, gains=%v)", gains)
+			step5Frame = multiScaleSharpen(step5Frame, gains)
+			p = filepath.Join(outputDir, "post_step5_detail.jpg")
+			if err := writePostPreview(outputDir, filepath.Base(p), step5Frame); err != nil {
+				logf("  WARNING: %v", err)
+			}
+			outputs = append(outputs, p)
+		}
+	}
+
+	// Step 6 (NEW): curves. Darken the background by crushing the
+	// deepest shadows and pushing midtones down slightly, while
+	// preserving highlights. This is the equivalent of a GIMP Curves
+	// adjustment with an S-shaped curve; the effect is a deeper black
+	// floor and richer shadow contrast. Both parameters are applied
+	// identically to each channel so hue is preserved.
+	step6Frame = step5Frame
+	if step5Frame != nil && !opts.NoCurves &&
+		(opts.CurvesBlack > 0 || math.Abs(opts.CurvesGamma-1.0) > 1e-6) {
+		logf("  post: curves (black=%g gamma=%g)", opts.CurvesBlack, opts.CurvesGamma)
+		curved := applyCurves(step5Frame, opts.CurvesBlack, opts.CurvesGamma)
+		step6Frame = curved
+		p = filepath.Join(outputDir, "post_step6_curves.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), curved); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	} else {
+		logf("  post: curves skipped")
+	}
+
+	// Step 7 (HDR): add the display base (curves output from step 6,
+	// or step 4 if curves is disabled) to the background-removed frame
+	// (step 1). The display base gives the overall tone; the linear
+	// detail recovers bright-core and high-contrast regions that the
+	// auto-stretch compressed.
+	if step1Frame != nil && step6Frame != nil && !opts.NoHDRBlend && opts.HDRBlendFactor > 0 {
+		logf("  post: HDR blend (base + %g*step1)", opts.HDRBlendFactor)
+		blended := blendHDR(step6Frame, step1Frame, opts.HDRBlendFactor)
+		step7Frame = blended
+		p = filepath.Join(outputDir, "post_step7_hdr.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), blended); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	} else if opts.NoAutoStretch {
+		logf("  post: HDR blend skipped (auto-stretch disabled)")
+	} else if opts.NoHDRBlend {
+		logf("  post: HDR blend skipped (--no-hdr-blend)")
+	}
+
+	// Step 8: weighted mix of step 1 (background removed) and step 7 (HDR).
+	// Produces four variants spanning from "mostly step 1" to "mostly
+	// step 7", so the user can pick whichever balance of linear detail
+	// and HDR-processed tone looks best on their image.
+	if step1Frame != nil && step7Frame != nil && !opts.NoHDRMix {
+		weights := []float64{0.90, 0.80, 0.70, 0.60}
+		logf("  post: HDR mix (%d weighted variants: step8_1..step8_%d)", len(weights), len(weights))
+
+		// If spikes are requested, detect stars ONCE (using the HDR base
+		// step7Frame as the reference) and generate a single random base
+		// angle. Reusing the same star list and base angle across all
+		// four variants means post_step8_1..4 show spikes on the same
+		// stars, at the same orientation, with the same brightness
+		// ordering. Without this the four outputs would spike slightly
+		// different stars because their relative fluxes differ.
+		var spikedStars []star
+		var spikesBaseAngle float64
+		if opts.AddSpikes {
+			spikedStars = selectSpikeStars(step7Frame, opts.SpikesPercent, opts.SpikesMinCount)
+			if len(spikedStars) > 0 {
+				rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+				spikesBaseAngle = rng.Float64() * 2 * math.Pi
+				logf("  spikes: %d star(s) selected (base angle = %.1f°, arms=%d)",
+					len(spikedStars), spikesBaseAngle*180/math.Pi, opts.SpikesArms)
+			} else {
+				logf("  spikes: no stars detected, skipping")
+			}
+		}
+
+		for i, w1 := range weights {
+			mixed := blendWeighted(step1Frame, step7Frame, w1)
+			if opts.AddSpikes && len(spikedStars) > 0 {
+				mixed = overlaySpikes(mixed, spikedStars, opts.SpikesLength, opts.SpikesIntensity, opts.SpikesArms, spikesBaseAngle, opts.SpikesSoftness, opts.SpikesMinRatio, opts.SpikesLengthSoftness, opts.SpikesLengthMinRatio)
+			}
+			p = filepath.Join(outputDir, fmt.Sprintf("post_step8_%d.jpg", i+1))
+			if err := writePostPreview(outputDir, filepath.Base(p), mixed); err != nil {
+				logf("  WARNING: %v", err)
+			}
+			outputs = append(outputs, p)
+			logf("  post: step8_%d (%.2f*step1 + %.2f*step7)", i+1, w1, 1-w1)
+		}
+	} else if opts.NoHDRMix {
+		logf("  post: HDR mix skipped (--no-hdr-mix)")
+	} else if step7Frame == nil {
+		logf("  post: HDR mix skipped (step 7 not produced)")
+	}
+
+	if opts.PostStretch {
+		logf("  post: stretch gentle")
+		s := stretchContrast(cur, 1)
+		p = filepath.Join(outputDir, "post_step_stretch_gentle.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), s); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+		logf("  post: stretch moderate")
+		s = stretchContrast(cur, 2)
+		p = filepath.Join(outputDir, "post_step_stretch_moderate.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), s); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+		logf("  post: stretch full")
+		s = stretchContrast(cur, 3)
+		p = filepath.Join(outputDir, "post_step_stretch_full.jpg")
+		if err := writePostPreview(outputDir, filepath.Base(p), s); err != nil {
+			logf("  WARNING: %v", err)
+		}
+		outputs = append(outputs, p)
+	}
+
+	return outputs, nil
+}
