@@ -290,6 +290,7 @@ type cliOptions struct {
 	AnnotationStarStyle    string
 	AnnotationEpoch        float64
 	SsoEphemeris           string
+	ParallelDetect         bool
 	Starless               bool
 	JSONReport             bool
 	Provenance             bool
@@ -540,6 +541,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.ConfigPath, "config", "", "JSON config file; flags inside are applied before CLI arguments (CLI wins)")
 	fs.StringVar(&o.OutputDir, "output", "", "output directory (default: <input>/0_skystacker_results)")
 	fs.IntVar(&o.Workers, "workers", runtime.NumCPU(), "maximum concurrent workers")
+	fs.BoolVar(&o.ParallelDetect, "parallel-detect", false, "use worker pool for star detection high-pass stage")
 	fs.BoolVar(&o.Recursive, "recursive", false, "search subdirectories")
 	fs.BoolVar(&o.Overwrite, "overwrite", false, "permit replacing files in the output directory")
 	fs.BoolVar(&o.Version, "version", false, "print version and exit")
@@ -1734,6 +1736,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --reference-crop P warp every light into the star-matched frame of image P (output size = P)")
 	fmt.Fprintln(w, "  --gaia-mirror URL  Gaia TAP mirror URL (default: ESA)")
 	fmt.Fprintln(w, "  --gaia-cache-dir D Gaia tile cache directory (default: OS user cache dir)")
+	fmt.Fprintln(w, "  --parallel-detect          use worker pool for star detection high-pass stage")
 	fmt.Fprintf(w, "  --gaia-nside N     HEALPix nside for Gaia queries (power of 2, 2-8192, default %d)\n", gaiaDefaultNside)
 	fmt.Fprintln(w, "  --gaia-mag-limit M Gaia G-band magnitude limit (0-20, default 14.0)")
 	fmt.Fprintln(w, "  --gaia-offline     never query the Gaia mirror; cache misses are a hard error")
@@ -2816,6 +2819,9 @@ func estimateBackgroundNoise(gray []float32) (bg, noise float64) {
 // workable star list. This is a simple form of multi-scale matching: at
 // each level the threshold is relaxed until at least ~20 stars are found.
 func detectStars(f *frame, maxStars int) []star {
+	if detectWorkerCount > 1 {
+		return detectStarsWorkers(f, maxStars, detectWorkerCount)
+	}
 	stars := detectStarsSigma(f, maxStars, 5.0)
 	if len(stars) >= 20 {
 		return stars
@@ -5945,6 +5951,9 @@ func resolvedFlagLines(o runOptions) []string {
 		if o.AnnotationNames != "" && o.AnnotationNames != "auto" {
 			add("--annotation-names " + quoteReportArg(o.AnnotationNames))
 		}
+		if o.ParallelDetect {
+			add("--parallel-detect")
+		}
 		if !o.AnnotationSAO {
 			add("--annotation-sao=false")
 		}
@@ -6649,6 +6658,7 @@ type runOptions struct {
 	AnnotationStarStyle    string
 	AnnotationEpoch        float64
 	SsoEphemeris           string
+	ParallelDetect         bool
 	Starless               bool
 	JSONReport             bool
 	ExtinctionReport       bool
@@ -10716,6 +10726,12 @@ func selfFlatGammaNote(linear bool) string {
 }
 
 func runPipeline(ctx context.Context, opts runOptions) error {
+	if opts.ParallelDetect && opts.Workers > 1 {
+		detectWorkerCount = opts.Workers
+	} else {
+		detectWorkerCount = 1
+	}
+	defer func() { detectWorkerCount = 1 }()
 	start := time.Now()
 	if opts.ExtinctionReport || opts.VerifySolution || opts.TransformationReport || opts.GaiaAsync || opts.WCSRefine {
 		opts.JSONReport = true
@@ -35247,6 +35263,7 @@ func main() {
 		AnnotationNames:        opts.AnnotationNames,
 		AnnotationSAO:          opts.AnnotationSAO,
 		AnnotationDeepSky:      opts.AnnotationDeepSky,
+		ParallelDetect:         opts.ParallelDetect,
 		AnnotationEpoch:        opts.AnnotationEpoch,
 		SurveySource:           opts.SurveySource,
 		SurveyDSSSurvey:        opts.SurveyDSSSurvey,
