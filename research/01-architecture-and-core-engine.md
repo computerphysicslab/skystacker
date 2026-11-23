@@ -811,3 +811,25 @@ Corpus check: on the 14 `assets/Blind-Plate-Solving/` frames the exporter recove
   race detector is active: `raceBuild` is defined by two `//go:build`
   files, so production builds and the CLI keep the strict 200 ms budget while
   `go test -race ./...` stays meaningful instead of flaky.
+
+## Compensated streaming mean — item 124 (2026-11-23, append-only)
+
+- `accumulator` now carries a per-pixel `comp` buffer alongside `Pix`.
+  `kahanAdd` implements Neumaier's improved Kahan summation: `Pix` keeps the
+  running plain sum and `comp` accumulates the rounding error, which also
+  survives cancellation between positive and negative calibrated pixels
+  (plain Kahan drifted by ~6e-5 on a signed 4096-frame fixture).
+  `finalizeComp` folds the correction into `Pix` and is idempotent;
+  `divide`/`divideByCount` call it before dividing in float64, so the final
+  float32 mean is correctly rounded.
+- `releaseComp` finalizes the sum and drops `comp` after the last frame of
+  Pass 1 / registration: `unregAcc` is released before the tiled reduction,
+  and `regAcc`/`cometAcc` before the reduction branch. The extra buffer is
+  therefore absent during the measured peak RSS phase and the memory
+  pre-flight model does not change. `cropAccumulator` copies both the sums
+  and the pending compensation (and the frame count) so a cropped streaming
+  sum remains correct.
+- `testAccumulatorKahan` adds the 100000-value regression required by item 124
+  (sum and mean within 1 ULP of float64, with the naive sum shown to drift),
+  the masked path, byte-identical 4-worker vs sequential compensation,
+  crop preservation and post-release division. Registered suite: 310.

@@ -1,6 +1,6 @@
 # SkyStacker roadmap
 
-**Updated:** 2026-11-23 · **Current state:** v0.6.1, 309 registered self-tests,
+**Updated:** 2026-11-23 · **Current state:** v0.6.1, 310 registered self-tests,
 Go 1.27.4, goPureRaw v0.1.1.
 
 Ordered by ascending estimated effort. Work the first item marked **Open**;
@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-23):** 124 Done · 15 Open · 7 Blocked · 5 Executed/not accepted
+**Summary (2026-11-23):** 125 Done · 14 Open · 7 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 137–141 and 143 were closed on 2026-11-22 with the layered
 annotation subsystem; item 145 (standalone `resize`) was closed the same day;
 items 146-149 closed the first atlas-style annotation iteration; item 150
@@ -18,7 +18,7 @@ items 146-149 closed the first atlas-style annotation iteration; item 150
 spectral/colour, catalog-footprint and motion-overlay wave; items 155-158
 closed the named-star, PGC, label-collar/open-circle and vendor example corpus
 waves on 2026-11-23; items 116–119 closed the diagnostics privacy/network-safety wave and item 106
-hardened the Linux diagnostics collector, item 109 made positional parsing flag-registry driven, item 120 bounded SOF3/CR2 allocations, item 121 capped SBI1 table counts, item 122 switched the density-uniform RA centre to a circular mean and item 123 exposed the embedded suite through `go test`; the next Open work is item 124; item 142 stays Blocked by item 13 and goal 144 stays Open.
+hardened the Linux diagnostics collector, item 109 made positional parsing flag-registry driven, item 120 bounded SOF3/CR2 allocations, item 121 capped SBI1 table counts, item 122 switched the density-uniform RA centre to a circular mean and item 123 exposed the embedded suite through `go test`, item 124 added compensated summation to the streaming mean stack; the next Open work is item 125; item 142 stays Blocked by item 13 and goal 144 stays Open.
 Items 104–110 were added on 2026-11-21 from a deep code review
 (correctness, fragility, performance, robustness and maintainability);
 items 104 and 105 were investigated the same day and **closed as false
@@ -88,7 +88,7 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 121 | **Cap SBI1 tile and quad counts before allocation** | S (~1 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | A single `nativeIndexHeader` type and `validateNativeIndexCounts`/`validateNativeIndexSectionCount` reject bands >1024, tiles >1 Mi, quads/stars >16 Mi, tile stars >1 Mi and quad hits >1 Mi before any loop allocation. Writer and reader share the checks; hostile-header and inner-count Go tests pass, and the small round-trip now compares quad hit IPix, band, longest edge and all four RA/Dec pairs. |
 | 122 | **Use a circular mean in `selectDensityUniformStars`** | S (~1 h) | **Done 2026-11-23** | [research/02-astrometry-and-identification.md](research/02-astrometry-and-identification.md) | `circularMeanAngle` replaces the arithmetic RA mean, with a relative resultant threshold for the degenerate uniform ring. `TestCircularMeanAngle` covers single/tight/across-zero/across-pi/uniform/empty inputs; `TestDensityUniformSelectionWrappedRA` checks that 400 stars at 0.01/6.27 rad select the same brightest quota as the identical cluster at RA 1, and that a non-wrapping tile is still capped. Suite unchanged at 309. |
 | 123 | **Expose the embedded suite through `go test` without splitting main.go** | S (~1 h) | **Done 2026-11-23** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | `embedded_selftest_test.go` adds `TestEmbeddedSelftest` (calls `runSelfTests`, fails on any failure) and a `TestMain` that dispatches the three internal mock flags so the four subprocess cases work when `os.Executable()` is the test binary. `main.go` is not split and the 309 cases are untouched (P4-1 remains separate). Build-tagged `raceBuild` relaxes the 10k-label latency budget only under `-race`, so the full suite also passes with race instrumentation. |
-| 124 | **Kahan summation for the streaming mean stack** | S (~1 h) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | Stack 100000 random float32 values; result within 1 LSB of a float64 reference. |
+| 124 | **Kahan summation for the streaming mean stack** | S (~1 h) | **Done 2026-11-23** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | `accumulator` uses Kahan–Neumaier compensated summation (`kahanAdd`, `finalizeComp`, `releaseComp`) in both `addFrame` and `addFrameMasked`; float64 division avoids a second rounding. `testAccumulatorKahan` stacks 100000 seeded float32 values and checks the sum and mean within 1 ULP of float64, plus masked, parallel, crop and release paths. The compensation buffer is released before the reduction phase, so peak RSS and the memory pre-flight model are unchanged. Suite 310. |
 | 125 | **Cache-invalidation sanity regression test** | S (~30 min) | **Open** | [research/01-architecture-and-core-engine.md](research/01-architecture-and-core-engine.md) | Modify one light after cache creation; the next run logs a cache miss and re-detects that frame. |
 | 126 | **Read CR2 black/white/CFA from the container, not EOS 40D constants** | M (~2 h) | **Open** | [research/07-native-cr2-decoding.md](research/07-native-cr2-decoding.md) | Synthetic CR2/TIFF header with a non-1018 black tag and non-RGGB CFA yields those values on `Image`; the 40D oracle still reports 14 bits and current geometry. |
 | 127 | **Delete the `fitsBlackLevelFor` side channel** | M (~2 h) | **Open** | [research/04-calibration-and-self-flat.md](research/04-calibration-and-self-flat.md) | `fitsBlackLevelFor` is gone from the function map; two FITS files with different `BLACK_LVL` return their own levels from a pure, order-independent function. |

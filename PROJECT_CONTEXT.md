@@ -14,7 +14,7 @@ builds with a fresh build date, installs `skystacker` in `~/.local/bin` and
 `~/go/bin`, refreshes `./skystacker`, runs the selftest and `go test ./...`,
 then prints the active PATH binary and its build date.
 
-**Self-test count: 309 passing.** Update this number after any test change.
+**Self-test count: 310 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -636,7 +636,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 309 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 310 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -1970,3 +1970,13 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
 - `raceBuild` (two `//go:build` files) relaxes the 10k-label placement budget
   from 200 ms to 800 ms only under `-race`, keeping the full embedded suite
   green with race instrumentation and strict in production binaries.
+
+### Compensated streaming mean — item 124 (2026-11-23)
+
+- `accumulator` uses Kahan–Neumaier summation in both accumulation paths;
+  `finalizeComp` folds the correction before any consumer reads `Pix`, and
+  division happens in float64. `releaseComp` frees the extra buffer before
+  the memory-heavy reduction, so the calibrated peak-RSS model stays valid.
+- `testAccumulatorKahan` covers 100000 random float32 values against a
+  float64 reference (1 ULP for sum and mean), masked pixels, 4-worker
+  parallelism, cropped compensation and post-release division. Suite 310.

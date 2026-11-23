@@ -2,7 +2,7 @@
 
 **Current version:** 0.6.1
 **Implementation language:** Go 1.27.4 (single executable; first-party modules `goPureRaw v0.1.1`, `goDiagnostics v0.0.0` and `goTiff v0.0.0`, plus MIT-licensed `github.com/skip2/go-qrcode` for terminal donation QR codes)
-**Status:** Active Development. Registered `--selftest` cases: 309. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
+**Status:** Active Development. Registered `--selftest` cases: 310. Star/transform cache version: 2. Persistent fixtures: `assets/testdata/`.
 
 ## 1. Purpose
 SkyStacker is a local command-line program that discovers, aligns, normalizes, calibrates, and stacks astronomical images. It produces high-dynamic-range float32 TIFFs and a fully post-processed display image, using robust statistical stacking and PixInsight-style luminance stretching.
@@ -20,7 +20,7 @@ SkyStacker is a local command-line program that discovers, aligns, normalizes, c
 - 8-step post-processing pipeline (background, star removal, black point, STF/MTF auto-stretch, denoise, curves, HDR blend, weighted mix + optional diffraction spikes).
 - Star/transform cache (`_work/cache/`) skipping Pass 1 detection and Pass 2 registration on re-runs.
 - Memory and disk pre-flight checks; calibrated time estimates.
-- 309 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
+- 310 embedded self-tests (the count printed by `./skystacker --selftest` is authoritative; `runSelfTests` in `main.go` is the source of truth).
 
 ### Excluded
 - Native decoding for RAW formats other than CR2 (delegated to ImageMagick / dcraw at runtime); CR2 is decoded natively through the embedded `goPureRaw` module. `internal/ljpeg.ValidateGeometry` rejects SOF3 planes above 200 Mpix or more than 400 M samples before allocation, and the CR2 adapter caps the Bayer raster at 200 Mpix and the stream tail at 512 MiB. FITS decoding is native with ImageMagick fallback.
@@ -172,7 +172,7 @@ Consumed by `--plate-solve` (seeded via `--plate-center` or FITS RA/DEC when pre
 
 Before processing:
 - **Time**: `sigma: 1.03 * N^1.20 * MP`; `median: 0.88 * N^1.18 * MP`; `mean: 0.55 * N * MP`. CR2/CR3 inputs add ~12 s/frame for dcraw+ImageMagick. Post-processing adds a base of 15 s plus `5 × denoise-strength` and 3 s for spike overlay. Calibrated against the Orion (70 frames, 9 m 58 s) and M42 (152 frames, 25 m 22 s) reference runs.
-- **Memory**: mean = `frameMB * 5`; median/sigma = `frameMB * 4 + tileBufMB` (tile buffer capped at 256 MB). Real peak = `1.5 × naive + 2000 MB` safety margin. Compared against `/proc/meminfo` `MemAvailable`.
+- **Memory**: mean = `frameMB * 5`; median/sigma = `frameMB * (5.33 + 2.67 × regSets) + 256 MB` (one compensation buffer per accumulator is freed before the reduction phase, so the 2026-11-22 calibration still holds). Real peak = `1.6 × naive + 2000 MB` safety margin. Compared against `/proc/meminfo` `MemAvailable`.
 - **Disk** (median/sigma only): `int64(frames) * frameBytes * 2 + 500 MB` headroom, compared against `syscall.Statfs(outputDir).Bavail * Bsize × 1.20`. Mean has no spill, no disk check. `--force` bypasses both guards.
 
 ## 6. Output Format
@@ -190,4 +190,4 @@ Before processing:
 - Memory and disk pre-flight checks abort before Pass 1; `--force` bypasses both.
 
 ## 8. Self-tests
-`./skystacker --selftest` runs 309 embedded tests, and `go test ./...` runs the same 309 cases through `TestEmbeddedSelftest` (plus a Go 1.26 `testing/synctest` rate-limiter test), covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only), plus FITS/XISF writers, config/resume, narrowband, deconvolution, annotation, native CR2 decoding and detector QA.
+`./skystacker --selftest` runs 310 embedded tests, and `go test ./...` runs the same 310 cases through `TestEmbeddedSelftest` (plus a Go 1.26 `testing/synctest` rate-limiter test), covering accumulators, TIFF round-trip, decoding, discovery, similarity/affine transforms, star detection (uniform / noisy / nebula / edge / single-pixel), registration robustness with outliers, bilinear resampling round-trip, safe crop, weighted sigma clipping, tile reduction, chroma denoise, curves, diffraction spikes, HDR blend, guided filter, per-frame quality, norm stats (uniform / offset / identity / gradient / masked), normalization helpers, disk pre-flight, intrinsic-quality edge cases, frame limiter flags, report contents, intermediate map file naming (suffix + coverage map), star/transform cache round-trip and invalidation, HEALPix nested math (exact vs healpy at nside 1/16/64/256, round-trip), HEALPix tile corners vs healpy and polygon-covers-pixel (incl. polar caps), WCS fit with rotated/mirrored CD and RA wrap, Gaia star matcher stress (rotation, both parities, noise, distractors, RA wrap, unrelated-list rejection), plate solve end-to-end from a seeded cache (both parities), Gaia TAP retry + cache + ADQL + CLI parsing, and end-to-end pipeline (stack-only, post-only), plus FITS/XISF writers, config/resume, narrowband, deconvolution, annotation, native CR2 decoding and detector QA.

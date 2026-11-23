@@ -3900,10 +3900,56 @@ type accumulator struct {
 	Width, Height int
 	Pix           []float32
 	Count         int
+	// comp holds the running Kahan compensation for each Pix entry. It is
+	// allocated with Pix and only touched by addFrame/addFrameMasked, whose
+	// workers own disjoint pixel ranges, so it needs no separate locking.
+	comp []float32
 }
 
 func newAccumulator(w, h int) *accumulator {
-	return &accumulator{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+	n := w * h * 3
+	return &accumulator{Width: w, Height: h, Pix: make([]float32, n), comp: make([]float32, n)}
+}
+
+// kahanAdd adds v to the compensated sum at index i using Neumaier's
+// improvement of Kahan summation. Pix holds the running plain sum and comp
+// accumulates its rounding error; the correction also survives cancellation
+// between positive and negative pixels, where plain Kahan loses accuracy.
+func (a *accumulator) kahanAdd(i int, v float32) {
+	t := a.Pix[i] + v
+	absSum, absV := a.Pix[i], v
+	if absSum < 0 {
+		absSum = -absSum
+	}
+	if absV < 0 {
+		absV = -absV
+	}
+	if absSum >= absV {
+		a.comp[i] += (a.Pix[i] - t) + v
+	} else {
+		a.comp[i] += (v - t) + a.Pix[i]
+	}
+	a.Pix[i] = t
+}
+
+// finalizeComp folds the pending rounding correction into Pix and resets comp.
+// It is idempotent and is a no-op after releaseComp.
+func (a *accumulator) finalizeComp() {
+	if len(a.comp) != len(a.Pix) {
+		return
+	}
+	for i := range a.Pix {
+		a.Pix[i] += a.comp[i]
+		a.comp[i] = 0
+	}
+}
+
+// releaseComp finalizes the sum and drops the compensation buffer once the last
+// frame has been added. Freeing it before the memory-heavy reduction phase
+// keeps peak RSS unchanged. No further addFrame calls may follow.
+func (a *accumulator) releaseComp() {
+	a.finalizeComp()
+	a.comp = nil
 }
 
 func (a *accumulator) addFrame(f *frame, workers int) error {
@@ -3916,7 +3962,7 @@ func (a *accumulator) addFrame(f *frame, workers int) error {
 	}
 	addRows := func(start, end int) {
 		for i := start; i < end; i++ {
-			a.Pix[i] += f.Pix[i]
+			a.kahanAdd(i, f.Pix[i])
 		}
 	}
 	if workers <= 1 || a.Height < workers {
@@ -3953,9 +3999,9 @@ func (a *accumulator) addFrameMasked(f *frame, workers int, validCount []int32) 
 			g := f.Pix[p*3+1]
 			b := f.Pix[p*3+2]
 			if r >= 0 && g >= 0 && b >= 0 {
-				a.Pix[p*3] += r
-				a.Pix[p*3+1] += g
-				a.Pix[p*3+2] += b
+				a.kahanAdd(p*3, r)
+				a.kahanAdd(p*3+1, g)
+				a.kahanAdd(p*3+2, b)
 				validCount[p]++
 			}
 		}
@@ -3988,17 +4034,21 @@ func (a *accumulator) divide() {
 	if a.Count == 0 {
 		return
 	}
-	inv := 1.0 / float32(a.Count)
+	a.finalizeComp()
+	// Divide in float64 so the final float32 is the correctly rounded mean;
+	// multiplying by a rounded float32 reciprocal costs an extra ULP.
+	count := float64(a.Count)
 	for i := range a.Pix {
-		a.Pix[i] *= inv
+		a.Pix[i] = float32(float64(a.Pix[i]) / count)
 	}
 }
 
 func (a *accumulator) divideByCount(counts []int32) {
+	a.finalizeComp()
 	for i := 0; i < len(a.Pix); i++ {
 		c := counts[i/3]
 		if c > 0 {
-			a.Pix[i] /= float32(c)
+			a.Pix[i] = float32(float64(a.Pix[i]) / float64(c))
 		} else {
 			a.Pix[i] = 0
 		}
@@ -4006,6 +4056,7 @@ func (a *accumulator) divideByCount(counts []int32) {
 }
 
 func (a *accumulator) maxValue() float32 {
+	a.finalizeComp()
 	m := float32(0)
 	for _, v := range a.Pix {
 		if v > m {
@@ -4022,7 +4073,9 @@ func cropAccumulator(a *accumulator, r image.Rectangle) *accumulator {
 		srcOff := ((r.Min.Y+y)*a.Width + r.Min.X) * 3
 		dstOff := y * w * 3
 		copy(out.Pix[dstOff:dstOff+w*3], a.Pix[srcOff:srcOff+w*3])
+		copy(out.comp[dstOff:dstOff+w*3], a.comp[srcOff:srcOff+w*3])
 	}
+	out.Count = a.Count
 	return out
 }
 
@@ -11423,6 +11476,7 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 				len(accepted), before, opts.KeepSharpest)
 		}
 	}
+	unregAcc.releaseComp()
 	if unregAcc.Count == 0 && len(spillPaths1) == 0 {
 		return fmt.Errorf("no frames accumulated")
 	}
@@ -12273,6 +12327,13 @@ func runPipeline(ctx context.Context, opts runOptions) error {
 			f.Pix = nil
 		}
 		runtime.GC()
+	}
+
+	if regAcc != nil {
+		regAcc.releaseComp()
+	}
+	if cometAcc != nil {
+		cometAcc.releaseComp()
 	}
 
 	// ============== Tiled median/sigma reduction (spill-based)
@@ -22179,6 +22240,7 @@ func runSelfTests() int {
 	cases := []testCase{
 		{"accumulator sum and mean", testAccumulatorSumMean},
 		{"accumulator overflow", testAccumulatorOverflow},
+		{"accumulator Kahan precision", testAccumulatorKahan},
 		{"accumulator dimension mismatch", testAccumulatorDimensionMismatch},
 		{"accumulator parallel vs sequential", testAccumulatorParallel},
 		{"accumulator max", testAccumulatorMax},
@@ -22529,6 +22591,173 @@ func testAccumulatorSumMean() error {
 	for i, v := range a.Pix {
 		if math.Abs(float64(v-0.5)) > 1e-6 {
 			return fmt.Errorf("mean[%d] = %v, want 0.5", i, v)
+		}
+	}
+	return nil
+}
+
+// float32WithinULP compares two float32 values in ULPs of want. It is used
+// by the Kahan precision test, where a fixed absolute tolerance would be
+// meaningless for sums of very different magnitudes.
+func float32WithinULP(got, want float32, maxULP int) bool {
+	if got == want {
+		return true
+	}
+	step := math.Nextafter32(want, float32(math.Inf(1))) - want
+	if step <= 0 || math.IsNaN(float64(got)) {
+		return false
+	}
+	return math.Abs(float64(got-want)) <= float64(step)*float64(maxULP)
+}
+
+// testAccumulatorKahan verifies that the streaming mean stack accumulates
+// 100000 random float32 values within one ULP of a float64 reference, that
+// the compensated masked path is equally accurate, and that parallel workers
+// and cropAccumulator preserve the compensation state.
+func testAccumulatorKahan() error {
+	const n = 100000
+	rng := rand.New(rand.NewSource(20261123))
+
+	a := newAccumulator(1, 1)
+	f := &frame{Width: 1, Height: 1, Pix: make([]float32, 3)}
+	var ref, naive [3]float64
+	var naive32 [3]float32
+	for range n {
+		for c := range 3 {
+			v := rng.Float32()
+			f.Pix[c] = v
+			ref[c] += float64(v)
+			naive[c] += float64(v)
+			naive32[c] += v
+		}
+		if err := a.addFrame(f, 1); err != nil {
+			return err
+		}
+	}
+	a.finalizeComp()
+	naiveDrifted := false
+	for c := range 3 {
+		want := float32(ref[c])
+		if !float32WithinULP(a.Pix[c], want, 1) {
+			return fmt.Errorf("channel %d compensated sum %v, want %v (1 ULP)", c, a.Pix[c], want)
+		}
+		if !float32WithinULP(naive32[c], float32(naive[c]), 0) ||
+			!float32WithinULP(naive32[c], want, 1) {
+			naiveDrifted = true
+		}
+	}
+	if !naiveDrifted {
+		return errors.New("test inputs did not exercise float32 accumulation drift")
+	}
+	a.divide()
+	for c := range 3 {
+		want := float32(ref[c] / n)
+		if !float32WithinULP(a.Pix[c], want, 1) {
+			return fmt.Errorf("channel %d compensated mean %v, want %v (1 ULP)", c, a.Pix[c], want)
+		}
+	}
+
+	// The masked path must apply the same compensation to valid pixels only.
+	masked := newAccumulator(2, 1)
+	mf := &frame{Width: 2, Height: 1, Pix: make([]float32, 6)}
+	counts := make([]int32, 2)
+	var maskedRef [3]float64
+	for range n {
+		for c := range 3 {
+			v := rng.Float32()
+			mf.Pix[c] = v
+			maskedRef[c] += float64(v)
+		}
+		for c := range 3 {
+			mf.Pix[3+c] = -1 // invalid pixel
+		}
+		if err := masked.addFrameMasked(mf, 1, counts); err != nil {
+			return err
+		}
+	}
+	if counts[0] != n || counts[1] != 0 {
+		return fmt.Errorf("masked counts = %v, want [%d 0]", counts, n)
+	}
+	masked.finalizeComp()
+	for c := range 3 {
+		want := float32(maskedRef[c])
+		if !float32WithinULP(masked.Pix[c], want, 1) {
+			return fmt.Errorf("masked channel %d sum %v, want %v (1 ULP)", c, masked.Pix[c], want)
+		}
+		if masked.Pix[3+c] != 0 {
+			return fmt.Errorf("invalid pixel channel %d = %v, want 0", c, masked.Pix[3+c])
+		}
+	}
+
+	// Parallel workers own disjoint rows of both Pix and comp; they must
+	// reproduce the sequential compensated sum exactly.
+	const pw, ph, frames = 16, 8, 4096
+	par := newAccumulator(pw, ph)
+	seq := newAccumulator(pw, ph)
+	pf := &frame{Width: pw, Height: ph, Pix: make([]float32, pw*ph*3)}
+	parRef := make([]float64, len(pf.Pix))
+	for k := range frames {
+		for i := range pf.Pix {
+			v := float32(((k*37+i*13)%201)-100) / 101.0
+			pf.Pix[i] = v
+			parRef[i] += float64(v)
+		}
+		if err := par.addFrame(pf, 4); err != nil {
+			return err
+		}
+		if err := seq.addFrame(pf, 1); err != nil {
+			return err
+		}
+	}
+	par.finalizeComp()
+	seq.finalizeComp()
+	for i := range par.Pix {
+		if par.Pix[i] != seq.Pix[i] {
+			return fmt.Errorf("parallel pixel %d = %v, sequential %v", i, par.Pix[i], seq.Pix[i])
+		}
+		if !float32WithinULP(par.Pix[i], float32(parRef[i]), 1) {
+			return fmt.Errorf("parallel pixel %d = %v, want %v (1 ULP)", i, par.Pix[i], float32(parRef[i]))
+		}
+	}
+
+	// Cropping copies the pending compensation, and releasing it after the
+	// last frame keeps the final mean correct without retaining the buffer.
+	sub := cropAccumulator(par, image.Rect(3, 2, 8, 6))
+	if len(sub.comp) != len(sub.Pix) {
+		return fmt.Errorf("cropped compensation length %d, want %d", len(sub.comp), len(sub.Pix))
+	}
+	for y := range 4 {
+		for x := range 5 {
+			src := ((y+2)*pw + x + 3) * 3
+			dst := (y*5 + x) * 3
+			for c := range 3 {
+				if sub.comp[dst+c] != par.comp[src+c] {
+					return fmt.Errorf("cropped compensation %d = %v, want %v", dst+c, sub.comp[dst+c], par.comp[src+c])
+				}
+			}
+		}
+	}
+	par.releaseComp()
+	sub.releaseComp()
+	if par.comp != nil || sub.comp != nil {
+		return errors.New("releaseComp did not drop the compensation buffer")
+	}
+	par.divide()
+	sub.divide()
+	for i := range par.Pix {
+		if !float32WithinULP(par.Pix[i], float32(parRef[i]/frames), 1) {
+			return fmt.Errorf("released mean pixel %d = %v, want %v (1 ULP)", i, par.Pix[i], float32(parRef[i]/frames))
+		}
+	}
+	for y := range 4 {
+		for x := range 5 {
+			src := (y+2)*pw + x + 3
+			dst := y*5 + x
+			for c := range 3 {
+				if sub.Pix[dst*3+c] != par.Pix[src*3+c] {
+					return fmt.Errorf("cropped mean pixel %d = %v, want %v", dst*3+c, sub.Pix[dst*3+c], par.Pix[src*3+c])
+				}
+			}
 		}
 	}
 	return nil
