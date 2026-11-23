@@ -1047,7 +1047,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 		return nil, fmt.Errorf("--cone-radius must be in (0, 180] arcsec, got %g", o.ConeRadiusArcsec)
 	}
 	switch strings.ToLower(strings.TrimSpace(o.SurveySource)) {
-	case "", "hips", "dss", "legacy", "eso", "sdss":
+	case "", "hips", "dss", "legacy", "eso", "sdss", "hapcut", "zcut":
 	default:
 		return nil, fmt.Errorf("--survey-source must be hips, dss or legacy, got %q", o.SurveySource)
 	}

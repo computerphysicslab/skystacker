@@ -694,6 +694,8 @@ func writeSurveyCutout(width, height int, wcs *wcsTan, opts runOptions, dir, ste
 		return writeLegacySurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
 	case "sdss":
 		return writeSDSSSurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
+	case "hapcut", "zcut":
+		return writeMASTSurveyCutout(width, height, wcs, opts, dir, productDir, stem, refFrame, timeout)
 	default:
 		return fmt.Errorf("survey cutout: unknown source %q", source)
 	}

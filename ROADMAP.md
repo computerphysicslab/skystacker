@@ -9,7 +9,7 @@ scale: **S** ≤ 1 h, **M** 1–4 h, **L** 4–8 h, **XL** > 8 h. Each item list
 canonical research file that owns the evidence; acceptance criteria there are
 authoritative. Numbers are stable IDs, not sort keys; rows are ordered by effort.
 
-**Summary (2026-11-23):** 153 Done · 3 Open · 9 Blocked · 5 Executed/not accepted
+**Summary (2026-11-23):** 154 Done · 2 Open · 9 Blocked · 5 Executed/not accepted
 · 7 Deferred. Items 137–141 and 143 were closed on 2026-11-22 with the layered
 annotation subsystem; item 145 (standalone `resize`) was closed the same day;
 items 146-149 closed the first atlas-style annotation iteration; item 150
@@ -128,7 +128,7 @@ The tracker is split into **not achieved** (Open, Blocked and Executed/not accep
 | 172 | **SDSS DR cutout (JPEG adapter)** | S (~1 h) | **Done 2026-11-23** | research/02-astrometry-and-identification.md | `--survey-source sdss` fetches an SDSS SkyServer ImgCutout JPEG (ra, dec, scale from plate scale, width/height) and saves `survey_reference_sdss.jpg` plus a JSON sidecar with request params. No WCS/reprojection (JPEG only). Verified on M31. |
 | 173 | **Survey ID discovery (`--list-survey-hips`)** | S (~1 h) | **Done 2026-11-23** | research/02-astrometry-and-identification.md | `--list-survey-hips` (with optional `--survey-hips-keyword`) fetches the CDS HiPS registry (15 s timeout), caches to `~/.cache/skystacker/hipslist.txt`, falls back to a built-in 20-ID popular list when CDS is unreachable. Prints sorted, filtered IDs. |
 | 174 | **Survey service health probe** | S (~30 min) | **Done 2026-11-23** | research/02-astrometry-and-identification.md | `--survey-service-health` probes CDS HiPS registry, STScI/MAST DSS and ESO DSS with 10 s timeouts and prints latency + HTTP status. Verified: CDS down, DSS up, ESO up. |
-| 175 | **JWST/HST MAST cutout adapter** | M (~3 h) | **Open** | research/02-astrometry-and-identification.md | MAST cutout API requires per-observation product enumeration and auth for proprietary data. Public JWST/HST images already available via HiPS. Deferred. |
+| 175 | **HST (MAST HAPCut/ZCut) cutout adapter** | M (~3 h) | **Done 2026-11-23** | research/02-astrometry-and-identification.md | `--survey-source hapcut`/`zcut` fetch positional ZIP cutouts from MAST HAPCut (HST Advanced Products) / ZCut (deep fields), extract the first SCI/CUTOUT FITS extension with WCS (synthesized single-HDU FITS), reproject onto target WCS with alignment shift correction. No auth for public data. `TestMASTFITSFromZip` locks ZIP extraction on a captured M31 cutout. Large full-frame requests (>1k px) can time out at the service; small cutouts verified. JWST cutouts remain unavailable via a public positional API. |
 
 ### Achieved (Done)
 
