@@ -303,3 +303,84 @@ func TestReadNativeIndexBinaryRejectsHostileCounts(t *testing.T) {
 		})
 	}
 }
+
+func TestCircularMeanAngle(t *testing.T) {
+	cases := []struct {
+		name   string
+		angles []float64
+		want   float64
+	}{
+		{"single", []float64{5.5}, 5.5},
+		{"tight cluster", []float64{1.0, 1.02, 0.98}, 1.0},
+		{"across RA zero", []float64{0.01, 2*math.Pi - 0.01}, 0},
+		{"across +/-pi", []float64{math.Pi - 0.1, -math.Pi + 0.1}, math.Pi},
+		{"uniform ring", []float64{0, math.Pi / 2, math.Pi, 3 * math.Pi / 2}, 0},
+		{"empty", nil, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := circularMeanAngle(c.angles)
+			if math.Abs(normalizedAngle(got-c.want)) > 1e-9 {
+				t.Fatalf("circularMeanAngle(%v) = %.12f, want %.12f (wrapped)",
+					c.angles, got, c.want)
+			}
+		})
+	}
+}
+
+// densityUniformQuota mirrors the quota formula in selectDensityUniformStars
+// so the test can assert the exact documented cap without duplicating it in
+// the production code.
+func densityUniformQuota(nside int, maxPerSqDeg float64) int {
+	tileRad := math.Sqrt(4 * math.Pi / float64(12*nside*nside))
+	cellDeg := tileRad / 4 * 180 / math.Pi
+	q := int(math.Ceil(maxPerSqDeg * cellDeg * cellDeg))
+	if q < 2 {
+		q = 2
+	}
+	return q
+}
+
+func TestDensityUniformSelectionWrappedRA(t *testing.T) {
+	// Straddle RA=0: half just above zero, half just below 2*pi. An arithmetic
+	// RA mean would put the tile centre near pi and split the cluster into two
+	// far-apart sub-cells, doubling the selected count. The same stars placed
+	// near RA=1 (no wrap) are the control.
+	const (
+		n     = 400
+		nside = 16
+		cap   = 100.0
+	)
+	wrapped, unwrapped := make([]gaiaStar, n), make([]gaiaStar, n)
+	for i := range wrapped {
+		ra := 0.01 + float64(i%2)*0.002
+		if i%2 == 1 {
+			ra = 2*math.Pi - ra
+		}
+		dec := 0.2 + float64(i%7)*0.0005
+		mag := 8 + float64(i)*0.001
+		wrapped[i] = gaiaStar{RA: ra, Dec: dec, MagG: mag}
+		unwrapped[i] = gaiaStar{RA: 1.0 + float64(i%2)*0.002, Dec: dec, MagG: mag}
+	}
+	gotWrapped := selectDensityUniformStars(wrapped, nside, cap)
+	gotUnwrapped := selectDensityUniformStars(unwrapped, nside, cap)
+	quota := densityUniformQuota(nside, cap)
+	if len(gotWrapped) != quota {
+		t.Fatalf("wrapped cluster selected %d stars, quota %d", len(gotWrapped), quota)
+	}
+	if len(gotWrapped) >= n || len(gotUnwrapped) != quota {
+		t.Fatalf("expected both clusters capped to %d: wrapped %d, unwrapped %d",
+			quota, len(gotWrapped), len(gotUnwrapped))
+	}
+	for i := range gotWrapped {
+		if math.Abs(gotWrapped[i].MagG-gotUnwrapped[i].MagG) > 1e-12 {
+			t.Fatalf("wrapped/unwrapped selection differs at %d: %.6f vs %.6f",
+				i, gotWrapped[i].MagG, gotUnwrapped[i].MagG)
+		}
+	}
+	for _, s := range gotWrapped {
+		if s.RA > 0.02 && s.RA < 2*math.Pi-0.02 {
+			t.Fatalf("selected star away from the wrap centre: RA %.6f", s.RA)
+		}
+	}
+}

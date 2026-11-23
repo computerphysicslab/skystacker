@@ -1943,3 +1943,16 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   with a tiny crafted stream; `TestValidateNativeIndexCounts` locks the exact
   boundaries; `TestBinaryIndexRoundTrip` now compares quad IPix, band, longest
   edge and the four RA/Dec star pairs after a write/read cycle.
+
+### Circular RA centre for density-uniform selection — item 122 (2026-11-23)
+
+- `blind_index.go` gained `circularMeanAngle`, which uses the summed sin/cos
+  unit vectors and a relative resultant threshold for the degenerate uniform
+  ring. `selectDensityUniformStars` uses it for the RA centre so a field
+  straddling RA=0 no longer has its centre near pi and its stars split into
+  two far-apart sub-cells.
+- `TestCircularMeanAngle` covers single, tight, across-zero, across-pi,
+  uniform-ring and empty inputs. `TestDensityUniformSelectionWrappedRA`
+  verifies that 400 stars at 0.01/6.27 rad select the same brightest quota as
+  an identical non-wrapping cluster at RA 1, and that the non-wrapping tile is
+  still capped. The 309 embedded self-tests are unchanged.

@@ -377,6 +377,28 @@ func isNativeBinaryIndex(path string) bool {
 	return magic == nativeBinaryMagic
 }
 
+// circularMeanAngle returns the circular mean of angles in radians using the
+// atan2 of the summed unit vectors. A plain arithmetic mean places stars that
+// straddle RA=0 near pi, which splits one physical tile into two far-apart
+// sub-cells; the circular mean keeps the cluster centre on the correct side
+// of the wrap. A distribution with no preferred direction has a near-zero
+// resultant; the relative threshold returns 0 instead of the arbitrary angle
+// that floating-point rounding of atan2(0, 0) would otherwise produce.
+func circularMeanAngle(angles []float64) float64 {
+	if len(angles) == 0 {
+		return 0
+	}
+	var sinSum, cosSum float64
+	for _, a := range angles {
+		sinSum += math.Sin(a)
+		cosSum += math.Cos(a)
+	}
+	if math.Hypot(sinSum, cosSum) < 1e-12*float64(len(angles)) {
+		return 0
+	}
+	return math.Atan2(sinSum, cosSum)
+}
+
 // selectDensityUniformStars caps stars per sub-cell so that sparse high-latitude
 // fields and dense Galactic tiles contribute comparable numbers of reference
 // stars. The quota follows the surface-density limit used by ASTAP D50/D80.
@@ -384,12 +406,13 @@ func selectDensityUniformStars(stars []gaiaStar, nside int, maxPerSqDeg float64)
 	if nside <= 0 || maxPerSqDeg <= 0 || len(stars) < 8 {
 		return stars
 	}
-	centerRA, centerDec := 0.0, 0.0
-	for _, s := range stars {
-		centerRA += s.RA
+	ras := make([]float64, len(stars))
+	centerDec := 0.0
+	for i, s := range stars {
+		ras[i] = s.RA
 		centerDec += s.Dec
 	}
-	centerRA /= float64(len(stars))
+	centerRA := circularMeanAngle(ras)
 	centerDec /= float64(len(stars))
 	tileRad := math.Sqrt(4 * math.Pi / float64(12*nside*nside))
 	cellRad := tileRad / 4

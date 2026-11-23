@@ -857,3 +857,21 @@ profile run (2026-11-22), <https://siril.readthedocs.io/en/stable/astrometry/ann
   checks exact boundaries without large allocations, and `TestBinaryIndexRoundTrip`
   now verifies quad IPix, band, longest edge and all four RA/Dec pairs, not
   only the band id. The 309 embedded self-tests are unchanged.
+
+## 43. Circular RA centre for density-uniform selection — item 122 (2026-11-23)
+
+- `selectDensityUniformStars` previously averaged RA arithmetically. A field
+  straddling RA=0 (for example stars at 0.01 and 6.27 rad) produced a centre
+  near pi, so `normalizedAngle` placed the two halves at roughly -3.13 and
+  +3.13 rad and the density cap selected from two separate far-apart cells.
+- `circularMeanAngle` now sums the unit vectors and returns `atan2(sinSum,
+  cosSum)`. A near-zero resultant (uniform ring, exact antipodes) is detected
+  with a relative `1e-12*n` threshold and returns 0 instead of the arbitrary
+  angle that floating-point noise gives to `atan2(0, 0)`. Dec keeps its plain
+  arithmetic mean because it does not wrap.
+- `TestCircularMeanAngle` locks six cases including both wrap boundaries and
+  the degenerate ring. `TestDensityUniformSelectionWrappedRA` builds 400 stars
+  at RA 0.01/6.27 rad and the same stars at RA 1, asserts both select exactly
+  the documented quota (84 for nside 16 at 100 stars/sq deg), that the chosen
+  magnitudes are identical and that every wrapped selection stays near the
+  wrap centre. Existing `TestDensityUniformSelection` still passes.
