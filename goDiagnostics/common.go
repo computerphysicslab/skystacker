@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"net/url"
@@ -51,6 +52,151 @@ func runCommand(ctx context.Context, timeout time.Duration, name string, args ..
 	return strings.TrimSpace(out.String()), err
 }
 
+// lifetimeCPUSharePct converts cumulative process ticks and total system ticks
+// into the percentage of all CPU time used since boot. It is a pure helper so
+// the formula and its 0..100 clamp can be unit-tested on every platform.
+func lifetimeCPUSharePct(ticks, totalTicks uint64) float64 {
+	if totalTicks == 0 {
+		return 0
+	}
+	v := float64(ticks) / float64(totalTicks) * 100
+	if v > 100 {
+		return 100
+	}
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+// redactedMarker replaces any token identified as sensitive. It matches the
+// marker returned by RedactValue so JSON and text reports stay consistent.
+const redactedMarker = "***REDACTED***"
+
+// sensitiveCmdToken reports whether a command-line token names a credential.
+// It is deliberately broad: hiding an innocent flag costs a little detail,
+// while leaking a key would defeat the whole diagnostics redaction policy.
+func sensitiveCmdToken(token string) bool {
+	lower := strings.ToLower(token)
+	for _, needle := range []string{"token", "secret", "password", "passwd", "api_key", "apikey", "api-key", "credential", "bearer ", "auth"} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// RedactProcessCmd masks credentials in a process command line while keeping
+// ordinary flags readable. Both `--api_key=secret` and `--mast-token hunter2`
+// become visibly redacted without dropping the rest of the command. The
+// injected redact function is also applied to every token so custom policies
+// (for example URL credential stripping) remain effective.
+func RedactProcessCmd(cmd string, redact func(string) string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return cmd
+	}
+	if redact == nil {
+		redact = RedactValue
+	}
+	maskNext := false
+	for i, field := range fields {
+		if maskNext {
+			fields[i] = redactedMarker
+			maskNext = false
+			continue
+		}
+		name, value, hasValue := strings.Cut(field, "=")
+		switch {
+		case hasValue && sensitiveCmdToken(name):
+			// Named credentials are masked wholesale, whatever their value.
+			if value == "" {
+				fields[i] = redactedMarker
+			} else {
+				fields[i] = name + "=" + redactedMarker
+			}
+		case hasValue && strings.Contains(value, "://"):
+			// urls to redact: url.Redacted handles embedded userinfo.
+			if masked := redact(value); masked != value {
+				fields[i] = name + "=" + masked
+			}
+		case !hasValue && strings.Contains(field, "://"):
+			if masked := redact(field); masked != field {
+				fields[i] = masked
+			}
+		case sensitiveCmdToken(name):
+			// A bare flag such as --mast-token: keep the name, mask the value.
+			fields[i] = name
+			maskNext = true
+		default:
+			if masked := redact(field); masked != field {
+				fields[i] = masked
+			}
+		}
+	}
+	return strings.Join(fields, " ")
+}
+
+// redactProcessCmds applies redactProcessCmd to every collected process and
+// is called once by Collect, after the platform collectors have run. Keeping
+// it here (rather than in each OS-specific file) guarantees the same policy
+// on Linux, macOS and Windows.
+func redactProcessCmds(procs []ProcessInfo, redact func(string) string) {
+	for i := range procs {
+		procs[i].Cmd = RedactProcessCmd(procs[i].Cmd, redact)
+	}
+}
+
+// parseDarwinSwapUsage reads the two useful fields of `sysctl vm.swapusage`,
+// for example "total = 1024.00M used = 512.00M free = 512.00M". It is kept in
+// this build-tag-free file so the macOS parsing logic has unit tests on every
+// platform. Sizes may use K, M or G suffixes; unparseable output returns ok=false.
+func parseDarwinSwapUsage(out string) (totalMB, usedMB float64, ok bool) {
+	fields := strings.Fields(out)
+	for i := 0; i+2 < len(fields); i++ {
+		if fields[i] != "total" && fields[i] != "used" {
+			continue
+		}
+		if fields[i+1] != "=" {
+			continue
+		}
+		v, err := parseByteSuffixMB(fields[i+2])
+		if err != nil {
+			continue
+		}
+		if fields[i] == "total" {
+			totalMB = v
+		} else {
+			usedMB = v
+		}
+		ok = true
+	}
+	return totalMB, usedMB, ok
+}
+
+// parseByteSuffixMB converts values such as "512.00M" or "1024K" to MB.
+func parseByteSuffixMB(v string) (float64, error) {
+	if v == "" {
+		return 0, errors.New("empty size")
+	}
+	factor := 1.0
+	switch last := v[len(v)-1:]; last {
+	case "K", "k":
+		factor = 1.0 / 1024.0
+		v = v[:len(v)-1]
+	case "M", "m":
+		v = v[:len(v)-1]
+	case "G", "g":
+		factor = 1024.0
+		v = v[:len(v)-1]
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n * factor, nil
+}
+
 // RedactValue masks values that look like credentials or URLs with embedded
 // credentials. It is intentionally conservative: false positives only hide
 // diagnostic detail, false negatives would leak secrets.
@@ -61,17 +207,17 @@ func RedactValue(v string) string {
 	lower := strings.ToLower(v)
 	for _, needle := range []string{"token", "secret", "password", "api_key", "apikey", "bearer "} {
 		if strings.Contains(lower, needle) {
-			return "***REDACTED***"
+			return redactedMarker
 		}
 	}
 	if strings.Contains(v, "://") {
 		if u, err := url.Parse(v); err == nil && u != nil {
 			return u.Redacted()
 		}
-		return "***REDACTED***"
+		return redactedMarker
 	}
 	if len(v) > 40 && !strings.ContainsAny(v, " /\\") {
-		return "***REDACTED***"
+		return redactedMarker
 	}
 	return v
 }

@@ -208,18 +208,16 @@ func (linuxPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, error
 		}
 		threads, _ := strconv.Atoi(status["Threads"])
 		ppid := 0
-		cpu := 0.0
+		lifetimeShare := 0.0
 		stat, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
 		if err == nil {
 			parts := strings.Fields(string(stat))
 			if len(parts) > 3 {
 				ppid, _ = strconv.Atoi(parts[3])
 			}
-			if len(parts) > 14 && totalTicks > 0 {
-				ticks := parseUInt64(parts[13]) + parseUInt64(parts[14])
-				cpu = float64(ticks) / float64(totalTicks) * 100
-				if cpu > 100 {
-					cpu = 100
+			if len(parts) > 14 {
+				if ticks := parseUInt64(parts[13]) + parseUInt64(parts[14]); ticks > 0 {
+					lifetimeShare = lifetimeCPUSharePct(ticks, totalTicks)
 				}
 			}
 		}
@@ -232,8 +230,9 @@ func (linuxPlatform) Processes(ctx context.Context, n int) ([]ProcessInfo, error
 		}
 		fds, _ := os.ReadDir(filepath.Join("/proc", e.Name(), "fd"))
 		procs = append(procs, ProcessInfo{
-			PID: pid, PPID: ppid, User: "-", Cmd: cmd, RSSMB: rss, CPUPct: cpu,
-			Threads: threads, FDs: len(fds), Self: pid == self,
+			PID: pid, PPID: ppid, User: "-", Cmd: cmd, RSSMB: rss,
+			LifetimeCPUSharePct: lifetimeShare,
+			Threads:             threads, FDs: len(fds), Self: pid == self,
 		})
 	}
 	sort.Slice(procs, func(i, j int) bool { return procs[i].RSSMB > procs[j].RSSMB })

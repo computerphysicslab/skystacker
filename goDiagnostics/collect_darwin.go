@@ -94,7 +94,13 @@ func (darwinPlatform) Memory(ctx context.Context) (MemoryInfo, error) {
 	inactive := pages("Pages inactive")
 	m.AvailableMB = free + inactive
 	m.CachedMB = pages("Pages purgeable") + inactive
-	m.SwapTotalMB = pages("Swapused") // best-effort; many macOS builds omit swap stats
+	// vm.swapusage reports real totals in MB; vm_stat's Swapused is only a
+	// page count of swapped-in memory and must never populate SwapTotalMB.
+	if total, used, ok := parseDarwinSwapUsage(sysctl(ctx, "vm.swapusage")); ok {
+		m.SwapTotalMB, m.SwapUsedMB = total, used
+	} else if used := pages("Swapused"); used > 0 {
+		m.SwapUsedMB = used // best effort; many macOS builds omit swap stats
+	}
 	if m.TotalMB > 0 {
 		m.UsedMB = m.TotalMB - m.AvailableMB
 	}

@@ -22153,6 +22153,7 @@ func runSelfTests() int {
 		{"bigtiff round trip", testBigTIFFRoundTrip},
 		{"provenance DM graph", testProvenanceDM},
 		{"goDiagnostics module", testDiagnosticsCollect},
+		{"goDiagnostics redaction and CPU label", testDiagnosticsReportRedaction},
 		{"frame metrics and culling", testFrameMetricsCulling},
 		{"frame expression engine", testFrameExpressionEngine},
 		{"matched-filter source detection", testMatchedFilterDetection},

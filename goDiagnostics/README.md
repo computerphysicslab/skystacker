@@ -11,7 +11,8 @@ program, as text or JSON.
 * `go 1.22` baseline: reusable in older Go projects than SkyStacker.
 * Every collector is bounded by a context timeout and a 64 KiB output cap.
 * Collector failures are recorded in `Report.Errors`; they never abort a run.
-* Environment values are whitelisted and redacted; no tokens are emitted.
+* Environment values are whitelisted and redacted; process command lines are
+  masked by `RedactProcessCmd` on every platform, so no tokens are emitted.
 * OS-specific code lives in files with build tags behind the `platform`
   interface, so unknown systems degrade gracefully with `ErrUnsupported`.
 

@@ -73,7 +73,11 @@ func (r Report) Text() string {
 			if p.Self {
 				mark = " *"
 			}
-			line(fmt.Sprintf("pid %d%s", p.PID, mark), fmt.Sprintf("%.1f MB %s", p.RSSMB, shorten(p.Cmd, 90)))
+			detail := fmt.Sprintf("%.1f MB", p.RSSMB)
+			if p.LifetimeCPUSharePct > 0 {
+				detail += fmt.Sprintf(", lifetime CPU share %.1f%% (since boot)", p.LifetimeCPUSharePct)
+			}
+			line(fmt.Sprintf("pid %d%s", p.PID, mark), detail+" "+shorten(p.Cmd, 90))
 		}
 	}
 	if len(r.Tools) > 0 {

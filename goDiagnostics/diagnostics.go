@@ -140,15 +140,20 @@ type DiskInfo struct {
 }
 
 type ProcessInfo struct {
-	PID     int     `json:"pid"`
-	PPID    int     `json:"ppid"`
-	User    string  `json:"user"`
-	Cmd     string  `json:"cmd"`
-	RSSMB   float64 `json:"rss_mb"`
-	CPUPct  float64 `json:"cpu_pct"`
-	Threads int     `json:"threads,omitempty"`
-	FDs     int     `json:"fds,omitempty"`
-	Self    bool    `json:"self,omitempty"`
+	PID   int     `json:"pid"`
+	PPID  int     `json:"ppid"`
+	User  string  `json:"user"`
+	Cmd   string  `json:"cmd"`
+	RSSMB float64 `json:"rss_mb"`
+	// CPUPct is the platform-provided instantaneous/average CPU percentage.
+	// Linux does not populate it: the kernel exposes only cumulative ticks.
+	CPUPct float64 `json:"cpu_pct,omitempty"`
+	// LifetimeCPUSharePct is the share of all CPU time since boot (Linux only).
+	// It is never presented as an instantaneous utilisation in Text().
+	LifetimeCPUSharePct float64 `json:"lifetime_cpu_share_pct,omitempty"`
+	Threads             int     `json:"threads,omitempty"`
+	FDs                 int     `json:"fds,omitempty"`
+	Self                bool    `json:"self,omitempty"`
 }
 
 type EnvInfo struct {
@@ -269,6 +274,7 @@ func Collect(ctx context.Context, o Options) Report {
 		if err != nil && !errors.Is(err, ErrUnsupported) {
 			r.Errors = append(r.Errors, CollectorError{Collector: "processes", Reason: err.Error()})
 		}
+		redactProcessCmds(r.Processes, o.Redact)
 	})
 	if o.IncludeUpdates {
 		run("updates", func() {
