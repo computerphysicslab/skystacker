@@ -833,3 +833,18 @@ Corpus check: on the 14 `assets/Blind-Plate-Solving/` frames the exporter recove
   (sum and mean within 1 ULP of float64, with the naive sum shown to drift),
   the masked path, byte-identical 4-worker vs sequential compensation,
   crop preservation and post-release division. Registered suite: 310.
+
+## Star-cache invalidation — item 125 (2026-11-23, append-only)
+
+- `loadOrDetectStars` now logs `[cache miss] <light>` when the mtime/size-keyed
+  JSON entry is missing or its detection signature no longer matches. The
+  existing `[cache hit]` log in the pipeline remains unchanged, so a re-run
+  shows explicitly which frames were served from cache and which were
+  re-detected.
+- `testStarCacheMissOnLightChange` writes a synthetic 100x100 FITS light with
+  five blobs, loads it twice (miss then hit), rewrites the same path with the
+  blobs shifted 12 px and an explicitly newer mtime, and loads again. It
+  asserts that the cache key changed, the miss was logged, the returned stars
+  equal a fresh detection and differ from the stale cached positions, a new
+  keyed JSON entry was written and a fourth load is a hit. `matchedFilterEnabled`
+  is saved and restored so the test is independent of other cases.

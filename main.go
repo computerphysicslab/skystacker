@@ -7599,6 +7599,7 @@ func loadOrDetectStars(path string, f *frame, cacheDir string, scale int) ([]sta
 			if sc, ok := loadStarCache(cpath, starDetectionSig(scale)); ok {
 				return sc.Stars, sc.MedianBlob, sc.MedianEcc, sc.BgNoise, true
 			}
+			logf("  [cache miss] %s (file changed or detection settings differ)", filepath.Base(path))
 			stars := detectStarsForOptions(f, 100)
 			mb := medianBlobSize(stars)
 			me := medianStarEcc(stars)
@@ -22429,6 +22430,7 @@ func runSelfTests() int {
 		{"frame limiter flags rotation aware", testFrameLimiterFlagsRotationAware},
 		{"star cache round trip", testStarCacheRoundTrip},
 		{"star cache invalidation", testStarCacheInvalidation},
+		{"star cache miss after light change", testStarCacheMissOnLightChange},
 		{"xf cache invalidation", testXfCacheInvalidation},
 		{"report contains", testReportContains},
 		{"report shows weight columns", testReportShowsWeightColumns},
@@ -28477,6 +28479,176 @@ func testStarCacheInvalidation() error {
 	}
 	if _, ok := loadStarCache(path, "x"); !ok {
 		return errors.New("expected matching cache to be accepted")
+	}
+	return nil
+}
+
+// captureLogOutput redirects logf to a temporary file for the duration of fn
+// and returns the captured text. It is only used by embedded self-tests.
+func captureLogOutput(fn func()) (string, error) {
+	old := os.Stderr
+	f, err := os.CreateTemp("", "skystacker-log-")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(f.Name())
+	os.Stderr = f
+	func() {
+		defer func() { os.Stderr = old }()
+		fn()
+	}()
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(f.Name())
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// testStarCacheMissOnLightChange writes a light, caches its detected stars,
+// then rewrites the same path with a shifted star field. The next load must
+// report a miss, re-detect the frame from the new pixels and cache it under a
+// new key, while the next load is a hit.
+func testStarCacheMissOnLightChange() error {
+	dir, err := os.MkdirTemp("", "skystacker-starcache-miss-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	cacheDir := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return err
+	}
+	light := filepath.Join(dir, "light.fits")
+
+	oldFilter := matchedFilterEnabled
+	matchedFilterEnabled = false
+	defer func() { matchedFilterEnabled = oldFilter }()
+
+	makeFrame := func(shift int) *frame {
+		const w, h = 100, 100
+		f := &frame{Width: w, Height: h, Pix: make([]float32, w*h*3)}
+		for i := range f.Pix {
+			f.Pix[i] = 0.05
+		}
+		for _, c := range [][2]int{{20, 20}, {50, 50}, {80, 30}, {30, 80}, {70, 70}} {
+			for dy := -3; dy <= 3; dy++ {
+				for dx := -3; dx <= 3; dx++ {
+					x, y := c[0]+shift+dx, c[1]+dy
+					if x < 0 || y < 0 || x >= w || y >= h {
+						continue
+					}
+					v := float32(0.9 * math.Exp(-float64(dx*dx+dy*dy)/4))
+					i := (y*w + x) * 3
+					f.Pix[i] += v
+					f.Pix[i+1] += v
+					f.Pix[i+2] += v
+				}
+			}
+		}
+		return f
+	}
+	writeFrame := func(f *frame) error {
+		var buf bytes.Buffer
+		if err := writeFloat32RGBFITS(&buf, f.Width, f.Height, f.Pix, 1.0); err != nil {
+			return err
+		}
+		return os.WriteFile(light, buf.Bytes(), 0o644)
+	}
+	decodeLight := func() (*frame, error) {
+		w, h, pix, _, err := readFloat32RGBFITS(light)
+		if err != nil {
+			return nil, err
+		}
+		return &frame{Width: w, Height: h, Pix: pix}, nil
+	}
+
+	// First load creates the cache; the second one is a hit.
+	if err := writeFrame(makeFrame(0)); err != nil {
+		return err
+	}
+	first, err := decodeLight()
+	if err != nil {
+		return err
+	}
+	keyBefore, _, _, _ := frameCacheKey(light)
+	firstStars, _, _, _, hit := loadOrDetectStars(light, first, cacheDir, 1)
+	if hit {
+		return errors.New("first load unexpectedly hit the cache")
+	}
+	if len(firstStars) < 3 {
+		return fmt.Errorf("first load detected %d stars, want at least 3", len(firstStars))
+	}
+	cacheBefore := filepath.Join(cacheDir, fmt.Sprintf("stars_s1_%s.json", keyBefore))
+	cached, ok := loadStarCache(cacheBefore, starDetectionSig(1))
+	if !ok {
+		return errors.New("first load did not write the star cache")
+	}
+	if _, _, _, _, hit := loadOrDetectStars(light, first, cacheDir, 1); !hit {
+		return errors.New("unchanged light did not hit the cache")
+	}
+
+	// Modify the light: new pixels and a new mtime both change the cache key.
+	if err := writeFrame(makeFrame(12)); err != nil {
+		return err
+	}
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(light, later, later); err != nil {
+		return err
+	}
+	keyAfter, _, _, _ := frameCacheKey(light)
+	if keyAfter == keyBefore {
+		return errors.New("modified light kept the same cache key")
+	}
+	changed, err := decodeLight()
+	if err != nil {
+		return err
+	}
+	var log string
+	var detected []star
+	log, err = captureLogOutput(func() {
+		detected, _, _, _, hit = loadOrDetectStars(light, changed, cacheDir, 1)
+	})
+	if err != nil {
+		return err
+	}
+	if hit {
+		return errors.New("modified light unexpectedly hit the stale cache")
+	}
+	if !strings.Contains(log, "[cache miss] light.fits") {
+		return fmt.Errorf("miss was not logged: %q", log)
+	}
+	fresh := detectStarsForOptions(changed, 100)
+	if len(detected) != len(fresh) {
+		return fmt.Errorf("re-detected %d stars, fresh detection found %d", len(detected), len(fresh))
+	}
+	for i := range detected {
+		if detected[i].X != fresh[i].X || detected[i].Y != fresh[i].Y || detected[i].Flux != fresh[i].Flux {
+			return fmt.Errorf("re-detected star %d %+v differs from fresh %+v", i, detected[i], fresh[i])
+		}
+	}
+	if len(detected) == len(cached.Stars) {
+		same := true
+		for i := range detected {
+			if detected[i].X != cached.Stars[i].X || detected[i].Y != cached.Stars[i].Y {
+				same = false
+				break
+			}
+		}
+		if same {
+			return errors.New("modified light returned the stale cached star positions")
+		}
+	}
+	cacheAfter := filepath.Join(cacheDir, fmt.Sprintf("stars_s1_%s.json", keyAfter))
+	if newCached, ok := loadStarCache(cacheAfter, starDetectionSig(1)); !ok {
+		return errors.New("modified light did not write a new cache entry")
+	} else if len(newCached.Stars) != len(detected) {
+		return fmt.Errorf("new cache has %d stars, want %d", len(newCached.Stars), len(detected))
+	}
+	if _, _, _, _, hit := loadOrDetectStars(light, changed, cacheDir, 1); !hit {
+		return errors.New("modified light did not hit its new cache entry")
 	}
 	return nil
 }

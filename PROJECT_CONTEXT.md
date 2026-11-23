@@ -14,7 +14,7 @@ builds with a fresh build date, installs `skystacker` in `~/.local/bin` and
 `~/go/bin`, refreshes `./skystacker`, runs the selftest and `go test ./...`,
 then prints the active PATH binary and its build date.
 
-**Self-test count: 310 passing.** Update this number after any test change.
+**Self-test count: 311 passing.** Update this number after any test change.
 Earlier counts in the history sections below are historical and must not be edited.
 Research paths below mentioning former partial files (for example
 `SYNTHETIC_CALIBRATION_RESEARCH.md`, `RESEARCH_SYNTHESIS.md`, `GEMINI_*`,
@@ -636,7 +636,7 @@ field rotation (|rotation| > 5°). Self-tests: 93 → 94.
 
 - Repo: https://github.com/computerphysicslab/skystacker
 - Build: `gofmt -w main.go && go build -ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skystacker .`
-- Test: `./skystacker --selftest` (expect: **all 310 self-tests passed**)
+- Test: `./skystacker --selftest` (expect: **all 311 self-tests passed**)
 - Post-only re-run: `skystacker --post-only --overwrite <dir>`
 - Full re-run: `skystacker --overwrite <dir>`
 - Sample data layouts (from validated runs):
@@ -1980,3 +1980,10 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
 - `testAccumulatorKahan` covers 100000 random float32 values against a
   float64 reference (1 ULP for sum and mean), masked pixels, 4-worker
   parallelism, cropped compensation and post-release division. Suite 310.
+
+### Star-cache invalidation — item 125 (2026-11-23)
+
+- Added `[cache miss] <light>` logging in `loadOrDetectStars` and a real
+  modified-light regression: cache a synthetic FITS light, rewrite it with
+  shifted stars and a new mtime, then verify the logged miss, fresh
+  re-detection, a new cache entry and a following hit. Suite 311.
