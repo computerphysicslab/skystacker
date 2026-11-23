@@ -789,3 +789,25 @@ The detector was tuned for faint recovery and silently discarded bright stars. `
 Item 97 replaces the hard cap with a bright-component path: a component above 200 px is retained when its peak is ≥4σ, it contains a compact core of ≥4 and ≤2000 pixels at ≥½ peak, the core holds at least half the total residual flux, the whole component is ≤2000 px and ≤6× the core. Centroid, eccentricity, aspect and HFR use that core for bright components, so spikes no longer displace the measurement, while ordinary small stars keep the previous all-pixel behaviour. `TestSaturatedStarDetection`, `TestSaturatedStarWithSpikesDetection` and `TestBrightStarSurvivesFluxTruncation` cover the regression.
 
 Corpus check: on the 14 `assets/Blind-Plate-Solving/` frames the exporter recovered 113 additional bright components (M51: +79), with top flux rising from 91.7 to 217.5; the native blind solve remains 0/14, so the change is a detector improvement, not a plate-solving acceptance. The 274 embedded self-tests and `go test ./...` stay green.
+
+## Embedded suite under go test — item 123 (2026-11-23, append-only)
+
+- `embedded_selftest_test.go` introduces `TestEmbeddedSelftest`, which calls
+  `runSelfTests()` and fails the Go test if any embedded case fails. The 309
+  registered cases are not copied, deleted or rewritten; extracting them into
+  individual Go tests (P4-1) remains a separate refactor and `main.go` is not
+  split.
+- Four embedded cases (`testAstrometryLocalSolver`, `testASTAPAdapter`,
+  `testBlindBenchmark` and `testExternalAISidecar`) spawn `os.Executable()`
+  with an internal mock flag. Under `go test` that executable is the test
+  binary, whose generated `main` never reaches the production flag dispatch,
+  so those cases exited with status 2. A `TestMain` in the same test file now
+  forwards `--internal-astrometry-mock`, `--internal-astap-mock` and
+  `--internal-ai-sidecar-mock` to the existing mock runners before `m.Run()`,
+  making the harness self-contained without any prebuilt CLI binary.
+- `go test -run TestEmbeddedSelftest -count=1` passes all 309 cases; the CLI
+  entry point `skystacker --selftest` is unchanged. The one latency assertion
+  (`testAnnotationPlacement`, 10k labels in ≤200 ms) is relaxed 4x when the
+  race detector is active: `raceBuild` is defined by two `//go:build`
+  files, so production builds and the CLI keep the strict 200 ms budget while
+  `go test -race ./...` stays meaningful instead of flaky.

@@ -36,7 +36,7 @@ All documents are written in English.
   them with your own results directory in production.
 - Every example can be checked locally: `--version` prints the build version and
   `--selftest` runs the embedded regression suite (309 registered cases in
-  v0.6.1).
+  `main.go`); `go test ./...` exercises the same cases via `TestEmbeddedSelftest`.
 
 ## Status
 

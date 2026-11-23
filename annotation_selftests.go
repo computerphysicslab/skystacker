@@ -335,8 +335,14 @@ func testAnnotationPlacement() error {
 	start := time.Now()
 	boxes := placeAnnotationLabels(2000, 2000, many, 1)
 	elapsed := time.Since(start)
-	if elapsed > 200*time.Millisecond {
-		return fmt.Errorf("10k label placement took %v (>200ms), %d labels", elapsed, len(boxes))
+	// The race detector instruments every access, so the same work can take
+	// well over the production 200 ms budget without any algorithmic regression.
+	budget := 200 * time.Millisecond
+	if raceBuild {
+		budget *= 4
+	}
+	if elapsed > budget {
+		return fmt.Errorf("10k label placement took %v (>%v), %d labels", elapsed, budget, len(boxes))
 	}
 	return nil
 }

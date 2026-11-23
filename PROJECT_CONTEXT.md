@@ -1956,3 +1956,17 @@ for SVG/raster label collars, the open-circle star family and CLI round-trips.
   verifies that 400 stars at 0.01/6.27 rad select the same brightest quota as
   an identical non-wrapping cluster at RA 1, and that the non-wrapping tile is
   still capped. The 309 embedded self-tests are unchanged.
+
+### Embedded suite under go test — item 123 (2026-11-23)
+
+- Added `embedded_selftest_test.go` with `TestEmbeddedSelftest`, which calls
+  `runSelfTests()` directly so `go test ./...` and `skystacker --selftest`
+  exercise the same 309 cases without duplicating or rewriting them.
+- A `TestMain` in that file dispatches the three internal mock flags
+  (`--internal-astrometry-mock`, `--internal-astap-mock`,
+  `--internal-ai-sidecar-mock`) to their existing runners. This fixes the four
+  subprocess-based cases whose `os.Executable()` is the test binary under
+  `go test`; no prebuilt CLI is required.
+- `raceBuild` (two `//go:build` files) relaxes the 10k-label placement budget
+  from 200 ms to 800 ms only under `-race`, keeping the full embedded suite
+  green with race instrumentation and strict in production binaries.
