@@ -1157,3 +1157,27 @@ connection reset on this machine, as recorded in the earlier review.
 2. PS1 — wait for service restoration, or use HiPS (`CDS/P/PanSTARRS/DR1/color`).
 3. JWST/HST — MAST adapter with product enumeration — item 175.
 4. ESO DSS WCS: handle DSHEARED rotation.
+
+## §50 — Offline fine-nside rebin for the native blind solver (2026-11-23)
+
+The open R&D gate for item 73 was "full-sky generation at fine nside" — blocked
+by Gaia TAP being unavailable. The cached all-sky nside=4 tiles (192 tiles,
+333,567 G≤10 stars) already contain every star's RA/Dec, so a finer-nside index
+can be derived **offline** by reassigning each star to its fine HEALPix pixel
+with `healpixAng2PixNested` — no new Gaia queries required.
+
+Implemented `--blind-rebin-nside N` (used with `--build-blind-index` and a
+coarser `--gaia-nside`): `rebinGaiaCache` reads every cached coarse tile and
+writes finer `healpix_nN_p*.json` tiles, then the index is built at the fine
+nside. `TestRebinGaiaCacheOffline` locks star conservation and pixel assignment.
+
+Verified on the real cached all-sky G≤10 data (into a temp cache):
+- nside 4 → 8: 333,567 stars → 768 fine tiles; index 768 tiles / 779,274 quads
+  / 653 MB uncompressed (brightest=100), built in ~12 s.
+- nside 4 → 16: 333,567 stars → 3,027 fine tiles; index 192 tiles (brightest cap
+  per tile) / 360,898 quads / 230 MB (62 MB gzipped).
+
+Fine-nside publication is deferred: even gzipped, a full-sky nside=8/16 index
+is 60+ MB and the existing published indexes are nside=4 (≤25 MB). The offline
+rebin lowers the generation barrier; the remaining gate is distribution size
+and narrow-field solve accuracy, not data availability.

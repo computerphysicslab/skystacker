@@ -242,6 +242,7 @@ type cliOptions struct {
 	BlindBenchmark         string
 	BenchmarkSolvers       string
 	BlindIndex             string
+	BlindRebinNside        int
 	BuildBlindIndex        string
 	BlindDensityCap        float64
 	BlindCatalog           string
@@ -617,6 +618,7 @@ func parseArgs(args []string) (*cliOptions, error) {
 	fs.StringVar(&o.PlateCenter, "plate-center", "", "RA,DEC seed for plate solve in decimal degrees (falls back to the reference frame's FITS RA/DEC)")
 	fs.StringVar(&o.BlindBenchmark, "blind-benchmark", "", "run a head-to-head blind-solve benchmark on a corpus directory and write blind_benchmark.csv")
 	fs.StringVar(&o.BlindIndex, "blind-index", "", "native Gaia quad index for --plate-solver native (default: <gaia-cache-dir>/blind_index.json)")
+	fs.IntVar(&o.BlindRebinNside, "blind-rebin-nside", 0, "offline: rebin cached coarse Gaia tiles into this finer nside (requires --build-blind-index with a coarser --gaia-nside)")
 	fs.StringVar(&o.BuildBlindIndex, "build-blind-index", "", "build a native Gaia quad index from the Gaia cache and write it to this file, then exit")
 	fs.StringVar(&o.BlindCatalog, "blind-catalog", "", "use a published magnitude-limited catalog by id (see --list-blind-catalogs)")
 	fs.BoolVar(&o.ListBlindCatalogs, "list-blind-catalogs", false, "list downloadable plate-solving catalogs and exit")
@@ -6207,6 +6209,9 @@ func resolvedFlagLines(o runOptions) []string {
 	if o.BlindIndex != "" {
 		add("--blind-index " + quoteReportArg(o.BlindIndex))
 	}
+	if o.BlindRebinNside > 0 {
+		add(fmt.Sprintf("--blind-rebin-nside %d", o.BlindRebinNside))
+	}
 	if o.AstrometryURL != "" && o.AstrometryURL != astrometryDefaultAPIURL {
 		add("--astrometry-url " + quoteReportArg(o.AstrometryURL))
 	}
@@ -6772,6 +6777,7 @@ type runOptions struct {
 	// PlateSolver selects the solve chain: auto (seeded Gaia, then
 	// astrometry.net), gaia, astrometry-local or astrometry-web.
 	BlindIndex        string
+	BlindRebinNside   int
 	BlindCatalog      string
 	BuildBlindIndex   string
 	ConeCatalog       string
@@ -35066,6 +35072,14 @@ func main() {
 	}
 	if opts.BuildBlindIndex != "" {
 		nativeDensityCap = opts.BlindDensityCap
+		if opts.BlindRebinNside > 0 {
+			written, nstars, rerr := rebinGaiaCache(opts.GaiaCacheDir, opts.GaiaNside, opts.BlindRebinNside)
+			if rerr != nil {
+				fmt.Fprintln(os.Stderr, "skystacker:", rerr)
+				os.Exit(1)
+			}
+			logf("Blind rebin: %d stars -> %d nside=%d tiles (offline)", nstars, written, opts.BlindRebinNside)
+		}
 		var err error
 		if opts.BlindAllSky || opts.BlindRegion != "" {
 			var region *blindRegion
@@ -35081,7 +35095,11 @@ func main() {
 				opts.GaiaNside, opts.BlindMaxTiles, opts.BlindTileOffset, opts.BlindBrightest,
 				opts.BlindMagLimit, opts.GaiaOffline, opts.BlindRefresh, region)
 		} else {
-			err = runBuildBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, opts.GaiaNside, opts.BlindBrightest)
+			buildNside := opts.GaiaNside
+			if opts.BlindRebinNside > 0 {
+				buildNside = opts.BlindRebinNside
+			}
+			err = runBuildBlindIndex(opts.BuildBlindIndex, opts.GaiaCacheDir, buildNside, opts.BlindBrightest)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "skystacker:", err)
